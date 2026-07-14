@@ -1,0 +1,30 @@
+# secrets & local config
+config.json
+.wrangler/
+.dev.vars
+.env
+*.local
+
+# node
+node_modules/
+package-lock.json
+package.json.bak
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# editor
+.vscode/
+.idea/
+*.swp
+
+# logs
+*.log
