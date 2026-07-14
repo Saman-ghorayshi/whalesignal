@@ -1,0 +1,43 @@
+# wrangler.scanner.toml
+# Worker #1: cron-triggered chain scanner. No HTTP fetch handler.
+# Deploy with:  npx wrangler deploy -c wrangler.scanner.toml
+#               (deploy_all.py does this for you)
+#
+# Bindings:
+#   DB        D1 (whalesignal-db)
+#   KV        KV namespace (whalesignal-kv)
+#   ANALYSTQ  Queue producer -> analyst worker
+#
+# The KV namespace id and the D1 database id are filled in automatically
+# by deploy_all.py after it creates them.
+
+name = "whalesignal-scanner"
+main = "src/scanner.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Queue producer — scanner sends "analyze this whale" messages to analyst
+[[queues.producers]]
+binding = "ANALYSTQ"
+queue = "whalesignal-q"
+
+# D1 binding — set database_id here OR let deploy_all.py inject it
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+# placeholder — replaced by deploy_all.py after `wrangler d1 create`
+database_id = "__FILL_ME__"
+
+# KV binding — set id here OR let deploy_all.py inject it
+[[kv_namespaces]]
+binding = "KV"
+# placeholder — replaced by deploy_all.py after `wrangler kv namespace create`
+id = "__FILL_ME__"
+
+# Free Workers cron floor is once per minute. The plan targets every 30s;
+# that isn't achievable on a real cron trigger. We set every minute here.
+[triggers]
+crons = ["* * * * *"]
+
+# Optional: free etherscan key can be set via `wrangler secret put ETHSCAN_KEY`
+# If left unset, scanner falls back to no-key requests (lower rate limit).
