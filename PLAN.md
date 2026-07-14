@@ -21,9 +21,9 @@ A `[done]` beside a task means it's actually implemented, tested, and committed.
 
 ### Source — workers
 - [done] src/worker-utils.js — shared helpers (timeouts, D1/KV/Queue, env checks)
-- [done] src/scanner.js — BTC + ETH block scan, batched catch-up, market cache to KV
+- [done] src/scanner.js — BTC + ETH block scan, batched catch-up, market cache to KV (TTL-based)
 - [done] src/analyst.js — queue consumer, reads KV market+news, Gemini call, queues delivery
-- [done] src/bot.js — Telegram webhook, public-channel posting, /ping /help
+- [ ] src/bot.js — Telegram webhook, public-channel posting, /ping /help
 
 ### Tooling
 - [ ] wizard.py — interactive setup
