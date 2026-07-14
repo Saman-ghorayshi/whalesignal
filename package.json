@@ -1,0 +1,11 @@
+{
+  "name": "whalesignal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-powered whale-intelligence Telegram bot. Runs on Cloudflare free tier.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

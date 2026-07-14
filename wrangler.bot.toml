@@ -1,0 +1,46 @@
+# wrangler.bot.toml
+# Worker #3: Telegram webhook + alert delivery queue consumer.
+# Deploy with:  npx wrangler deploy -c wrangler.bot.toml
+#
+# Bindings:
+#   DB      D1
+#   KV      KV (for /latest market footer)
+#   BOTQ    Queue CONSUMER (whalesignal-bot-q, populated by analyst)
+#
+# Secrets (set once via wrangler secret put):
+#   BOT_TOKEN        Telegram bot token from @BotFather
+#   PUBLIC_CHANNEL   e.g. @whalesignalnews  (can be set as a var, since not secret)
+
+name = "whalesignal-bot"
+main = "src/bot.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Consumes "post this alert" messages from the analyst worker
+[[queues.consumers]]
+queue = "whalesignal-bot-q"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+# placeholder — replaced by deploy_all.py
+database_id = "__FILL_ME__"
+
+[[kv_namespaces]]
+binding = "KV"
+# placeholder — replaced by deploy_all.py
+id = "__FILL_ME__"
+
+# Non-secret vars are fine to set as plain vars. Set the channel via:
+#   wrangler secret put PUBLIC_CHANNEL  -> @yourchannel
+# or hardcode here if you prefer (not recommended).
+[vars]
+PUBLIC_CHANNEL = "@yourchannel"
+
+# Routes: this worker is the one that gets a public URL.
+# Deploy script will print the workers.dev URL after deploy; you use that
+# to set the Telegram webhook:
+#   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://whalesignal-bot.<acct>.workers.dev/tg/<TOKEN>"
