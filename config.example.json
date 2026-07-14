@@ -1,0 +1,37 @@
+{
+  "_comment": "Copy to config.json, fill in your keys. NEVER commit config.json. wizard.py can do this for you interactively.",
+  "cloudflare_names": {
+    "_comment": "Must match wrangler.toml. Used by deploy_all.py.",
+    "d1_database": "whalesignal-db",
+    "kv_namespace": "whalesignal-kv",
+    "queue": "whalesignal-q"
+  },
+  "thresholds": {
+    "_comment": "Minimum USD value to flag a tx as a whale move. Plan uses $500K.",
+    "min_whale_usd": 500000,
+    "max_blocks_per_scan": 10,
+    "market_cache_ttl_seconds": 300,
+    "news_cache_ttl_seconds": 3600,
+    "scanner_cron": "*/30 * * * * *"
+  },
+  "blockchain_apis": {
+    "_note_freelimits": "All below are free tiers as of mid-2026.",
+    "blockchain_info": "https://blockchain.info",
+    "etherscan_base": "https://api.etherscan.io/api",
+    "etherscan_key": "PUT_ETHERSCAN_FREE_KEY_HERE",
+    "bscscan_base": "https://api.bscscan.com/api",
+    "bscscan_key": "PUT_BSCSCAN_FREE_KEY_HERE"
+  },
+  "market_data": {
+    "coingecko_base": "https://api.coingecko.com/api/v3",
+    "alternative_me_fng": "https://api.alternative.me/fng/"
+  },
+  "ai": {
+    "_note": "Gemini 2.0 Flash free tier: 15 req/min, 1500 req/day.",
+    "gemini_api_key": "PUT_GEMINI_API_KEY_HERE",
+    "gemini_base": "https://generativelanguage.googleapis.com/v1beta",
+    "gemini_model": "gemini-2.0-flash"
+  },
+  "telegram_bot_token": "PUT_BOT_TOKEN_HERE",
+  "telegram_public_channel": "@yourchannel"
+}
