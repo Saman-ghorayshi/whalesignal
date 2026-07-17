@@ -13,7 +13,7 @@ A `[done]` beside a task means it's actually implemented, tested, and committed.
 
 ### Repo & infra
 - [done] git repo initialized, .gitignore, README.md
-- [ ] wrangler.toml — 3 worker bindings (D1, KV, Queue)
+- [done] wrangler.toml — 3 worker bindings (D1, KV, Queue) — three files: wrangler.scanner.toml, wrangler.analyst.toml, wrangler.bot.toml
 - [done] schema/whalesignal.sql — Phase 1 tables + indexes + scanner_state
 - [done] wallet_labels/exchanges.json — seed exchange addresses (BTC + ETH)
 - [done] wallet_labels/seed.py — load exchange seed into D1
@@ -23,12 +23,13 @@ A `[done]` beside a task means it's actually implemented, tested, and committed.
 - [done] src/worker-utils.js — shared helpers (timeouts, D1/KV/Queue, env checks)
 - [done] src/scanner.js — BTC + ETH block scan, batched catch-up, market cache to KV (TTL-based)
 - [done] src/analyst.js — queue consumer, reads KV market+news, Gemini call, queues delivery
-- [ ] src/bot.js — Telegram webhook, public-channel posting, /ping /help
+- [done] src/bot.js — Telegram webhook, public-channel posting, /ping /help /latest
 
 ### Tooling
-- [ ] wizard.py — interactive setup
-- [ ] deploy_all.py — one-shot: D1/KV/Queue + schema + seed + deploy
-- [ ] run tests green locally with node
+- [done] wizard.py — interactive setup
+- [done] deploy_all.py — one-shot: D1/KV/Queue + schema + seed + deploy
+- [done] run tests green locally with node — `npm test`, 25/25 passing
+- [done] wrangler --dry-run validates all 3 worker configs bundle cleanly
 
 ### Honest scope cuts in Phase 1 (deferred, not silently dropped)
 - SOL/TRX/BSC scanning → Phase 4
