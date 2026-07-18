@@ -266,11 +266,11 @@ export async function fetchLatestBlockHeight(env, chain) {
     return j.height;
   }
   if (chain === "eth") {
-    // etherscan: getblocknobytime returns the latest block, but free tier simpler
-    // is to use eth_blockNumber via proxy
+    // etherscan V2 (V1 was deprecated — returns "switch to V2 migration").
+    // V2 requires a key even for free tier; ETHSCAN_KEY env var is mandatory.
     const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
     const j = await fetchJSON(
-      `https://api.etherscan.io/api?module=proxy&action=eth_blockNumber${key}`
+      `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
     );
     return parseInt(j.result, 16);
   }
@@ -288,7 +288,7 @@ export async function fetchBlock(chain, blockNum, env) {
     const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
     const hex = "0x" + Number(blockNum).toString(16);
     const j = await fetchJSON(
-      `https://api.etherscan.io/api?module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`
+      `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`
     );
     return j.result;
   }
@@ -300,7 +300,7 @@ export async function fetchERC20Logs(blockNum, env) {
   const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
   const fromBlock = "0x" + Number(blockNum).toString(16);
   const toBlock = fromBlock;
-  const url = `https://api.etherscan.io/api?module=logs&action=getLogs` +
+  const url = `https://api.etherscan.io/v2/api?chainid=1&module=logs&action=getLogs` +
     `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
     `&topic0=${TRANSFER_TOPIC}${key}`;
   try {
