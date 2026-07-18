@@ -59,7 +59,7 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   lines.push(`${usd} ${txTypeLabel}`);
   lines.push("");
   lines.push(`💰 ${amtStr} (${usd})`);
-  lines.push(`📍 ${whale.chain} → ${toShort}${analysis?.related_factor ? "" : ""}`);
+  lines.push(`📍 ${whale.chain} → ${toShort}`);
   if (whale.block_number) lines.push(`🧱 Block ${whale.block_number.toString()}`);
   lines.push("");
   if (analysis?.headline || analysis?.interpretation) {
@@ -114,6 +114,12 @@ export async function fetchHandler(request, env, ctx) {
   }
 
   // DM commands. Phase 1 has /ping, /help, /latest.
+  //
+  // NOTE: we send the reply synchronously inside the webhook request here.
+  // Telegram's webhook timeout is generous (~60s) and our sendMessage has an
+  // 8s AbortController cap, so this is fine for Phase 1. Phase 2 should switch
+  // to `ctx.waitUntil(tgSendMessage(...))` and return 200 immediately so we
+  // don't hold the request open for slow /latest queries.
   const msg = update.message || update.channel_post;
   if (msg?.text) {
     const chatId = String(msg.chat.id);
