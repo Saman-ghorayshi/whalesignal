@@ -3,7 +3,7 @@
 // Does NOT test fetchBlock() or fetchLatestBlockHeight() — those hit the network.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCandidatesBTC, extractCandidatesETH, extractERC20Candidates, filterWhales, classifyWhales } from "../src/scanner.js";
+import { extractCandidatesBTC, extractCandidatesETH, extractERC20Candidates, filterWhales, classifyWhales, statTargets } from "../src/scanner.js";
 import { buildWalletMap } from "../src/worker-utils.js";
 
 const MARKET = {
@@ -144,4 +144,21 @@ test("classifyWhales stamps tx_type using lowercase evm labels", () => {
   const out = classifyWhales(cands, wallets);
   assert.equal(out[0].tx_type, "exchange_inflow");
   assert.equal(out[1].tx_type, "wallet_to_wallet");
+});
+
+test("statTargets skips exchange-address stat bumps (fix: don't make Binance look like a whale)", () => {
+  // both sides non-exchange -> both targets
+  assert.deepEqual(statTargets("0xALICE", "0xBOB", null, null), ["0xALICE", "0xBOB"]);
+  // to_address is exchange -> only `from` bumped
+  assert.deepEqual(statTargets("0xWHALE", "0xBINANCE", null, "exchange"), ["0xWHALE"]);
+  // from_address is exchange -> only `to` bumped
+  assert.deepEqual(statTargets("0xBINANCE", "0xCOLD", "exchange", null), ["0xCOLD"]);
+  // both exchange (exchange_internal) -> nobody bumped
+  assert.deepEqual(statTargets("0xBINANCE", "0xOKX", "exchange", "exchange"), []);
+  // self-send (same addr on both sides) -> dedup, only one bump if not exchange
+  assert.deepEqual(statTargets("0xSELF", "0xSELF", null, null), ["0xSELF"]);
+  // self-send to exchange address -> empty (we counted as exchange for the to check too)
+  assert.deepEqual(statTargets("0xSELF", "0xSELF", "exchange", "exchange"), []);
+  // empty from address -> skipped
+  assert.deepEqual(statTargets("", "0xBOB", null, null), ["0xBOB"]);
 });

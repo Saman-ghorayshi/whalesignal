@@ -12,7 +12,7 @@
     "max_blocks_per_scan": 10,
     "market_cache_ttl_seconds": 300,
     "news_cache_ttl_seconds": 3600,
-    "scanner_cron": "*/30 * * * * *"
+    "scanner_cron": "* * * * *"
   },
   "blockchain_apis": {
     "_note_freelimits": "All below are free tiers as of mid-2026.",
