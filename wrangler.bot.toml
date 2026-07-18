@@ -34,6 +34,11 @@ binding = "KV"
 # placeholder — replaced by deploy_all.py
 id = "__FILL_ME__"
 
+# R2 bucket: append-only NDJSON of alerts for the Python trading loop to poll.
+[[r2_buckets]]
+binding = "ALERTS_R2"
+bucket_name = "whalesignal-alerts"
+
 # Non-secret vars are fine to set as plain vars. Set the channel via:
 #   wrangler secret put PUBLIC_CHANNEL  -> @yourchannel
 # or hardcode here if you prefer (not recommended).

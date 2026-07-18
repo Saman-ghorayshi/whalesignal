@@ -14,6 +14,60 @@
 
 import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
 
+// ─── R2 alert export (for paper-trading consumer) ─────────────────────
+
+/**
+ * Build the NDJSON line shape that the Python trading loop consumes.
+ * Pure. This is the CONTRACT between whalesignal and trading_loop.py.
+ *
+ * @param {object} whale — whales + analysis row (joined in postPublicAlert)
+ * @param {object|null} market — KV market_cache
+ * @returns {object} alert JSON or null if required fields missing
+ */
+export function buildAlertJSON(whale, market) {
+  if (!whale || !whale.from_address || !whale.chain || !whale.usd_value) return null;
+  const m = market || {};
+  return {
+    id: whale.id,
+    whale: whale.from_address,
+    chain: whale.chain?.toUpperCase() || "?",
+    signal: whale.signal || "neutral",
+    from_label: whale.from_label || null,
+    to_label: whale.to_label || null,
+    tx_type: whale.tx_type || "unknown",
+    usd_value: whale.usd_value,
+    amount: whale.amount,
+    symbol: whale.symbol,
+    detected_at: whale.detected_at,
+    market: {
+      btc_price: m.btc?.price ?? null,
+      eth_price: m.eth?.price ?? null,
+      fear_greed: m.fear_greed ?? null,
+    },
+    analyst_interpretation: whale.interpretation || "",
+    headline: whale.headline || "",
+    confidence: whale.confidence ?? null,
+  };
+}
+
+/**
+ * Append an alert as one NDJSON line to R2.
+ * Uses conditional PUT with a fixed key — reads existing, appends, writes back.
+ * ponytail: read-modify-write on the whole file, not a per-alert key. One file
+ * is simple to poll and parse. Add per-hour rotation if the file grows > 1MB.
+ */
+async function postAlertToR2(env, alertJSON) {
+  if (!env.ALERTS_R2) { console.warn("[bot] ALERTS_R2 not bound — skipping R2 export"); return; }
+  const key = "alerts.ndjson";
+  let existing = "";
+  try {
+    const obj = await env.ALERTS_R2.get(key);
+    if (obj) existing = await obj.text();
+  } catch (e) { /* file may not exist yet */ }
+  const ndjsonLine = JSON.stringify(alertJSON) + "\n";
+  await env.ALERTS_R2.put(key, existing + ndjsonLine);
+}
+
 // ─── alert formatting (pure, testable) ────────────────────────────────
 
 /**
@@ -238,6 +292,10 @@ async function postPublicAlert(env, whaleId) {
   }, market);
 
   await tgSendMessage(env.BOT_TOKEN, chatId, text, { parse_mode: "" /* plain text */ });
+
+  // R2 export for the Python trading loop (trading_loop.py polls this)
+  const alertJSON = buildAlertJSON(whale, market);
+  if (alertJSON) await postAlertToR2(env, alertJSON);
 
   await env.DB.prepare(
     "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
