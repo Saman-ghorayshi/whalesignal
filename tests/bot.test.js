@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatAlert } from "../src/bot.js";
+import { buildAlertJSON } from "../src/bot.js";
 
 const WHALE = {
   chain: "eth",
@@ -78,4 +79,40 @@ test("formatAlert maps all four tx_types to a label", () => {
     const out = formatAlert({ ...WHALE, tx_type: t }, ANALYSIS, MARKET);
     assert.ok(/→ exchange \(likely sell\)|← exchange \(likely withdraw\)|↔ exchange-to-exchange|↔ wallet to wallet|wallet move/.test(out), `type ${t}`);
   }
+});
+
+// ─── buildAlertJSON (R2 export contract) ──────────────────────────────
+
+test("buildAlertJSON produces the NDJSON contract shape for trading_loop.py", () => {
+  const out = buildAlertJSON({ ...WHALE, id: 42, ...ANALYSIS }, MARKET);
+  assert.ok(out, "should return an object");
+  // required fields the plan says the Python loop keys on
+  assert.equal(out.id, 42);
+  assert.equal(typeof out.whale, "string");
+  assert.equal(out.chain, "ETH");
+  assert.equal(typeof out.signal, "string");
+  assert.equal(typeof out.usd_value, "number");
+  assert.equal(typeof out.detected_at, "number");
+  // market nested object
+  assert.equal(typeof out.market.btc_price, "number");
+  assert.equal(typeof out.market.eth_price, "number");
+  assert.equal(typeof out.market.fear_greed, "number");
+  // analyst fields carried for the LLM prompt
+  assert.equal(typeof out.analyst_interpretation, "string");
+  assert.equal(typeof out.headline, "string");
+  assert.equal(out.confidence, 0.71);
+});
+
+test("buildAlertJSON returns null when required fields are missing", () => {
+  assert.equal(buildAlertJSON(null, MARKET), null);
+  assert.equal(buildAlertJSON({}, MARKET), null);
+  assert.equal(buildAlertJSON({ from_address: "0x1" }, MARKET), null); // no chain/usd
+});
+
+test("buildAlertJSON handles missing market (nulls, not crash)", () => {
+  const out = buildAlertJSON({ ...WHALE, ...ANALYSIS }, null);
+  assert.ok(out);
+  assert.equal(out.market.btc_price, null);
+  assert.equal(out.market.eth_price, null);
+  assert.equal(out.market.fear_greed, null);
 });
