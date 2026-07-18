@@ -295,23 +295,36 @@ export async function fetchBlock(chain, blockNum, env) {
   throw new Error(`unsupported chain: ${chain}`);
 }
 
-/** Fetch ERC20 Transfer logs for a single block. Filter tracked tokens. */
+/**
+ * Fetch ERC20 Transfer logs for a single block, scoped to tracked tokens
+ * only. One fetch per tracked contract.
+ *
+ * ponytail: etherscan's free-tier getLogs ignores fromBlock/toBlock when the
+ * topic-only query is too wide — it just returns the 1000 latest Transfer
+ * logs on the whole chain (confirmed live: querying block 0x185e703 with
+ * only topic0 came back with logs from block 447767, year 2017). Scoping
+ * per-contract (address=) keeps each response < 1000 and makes fromBlock/
+ * toBlock actually be honoured. Cost: |TOKENS_BY_CONTRACT| calls per block
+ * (currently 5) — well within 5 req/s free-tier cap.
+ */
 export async function fetchERC20Logs(blockNum, env) {
   const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
   const fromBlock = "0x" + Number(blockNum).toString(16);
   const toBlock = fromBlock;
-  const url = `https://api.etherscan.io/v2/api?chainid=1&module=logs&action=getLogs` +
-    `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
-    `&topic0=${TRANSFER_TOPIC}${key}`;
-  try {
-    const j = await fetchJSON(url);
-    return Array.isArray(j.result) ? j.result : [];
-  } catch (e) {
-    // topic0-only queries on eth_getLogs can exceed etherscan response size
-    // on very busy blocks. degrade gracefully — skip this block's ERC20 scan.
-    console.warn("erc20 logs fetch failed:", e.message);
-    return [];
+  const out = [];
+  for (const contract of Object.keys(TOKENS_BY_CONTRACT)) {
+    const url = `https://api.etherscan.io/v2/api?chainid=1&module=logs&action=getLogs` +
+      `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
+      `&address=${contract}&topic0=${TRANSFER_TOPIC}${key}`;
+    try {
+      const j = await fetchJSON(url, { timeoutMs: 12000 });
+      if (Array.isArray(j.result)) out.push(...j.result);
+    } catch (e) {
+      // degrade gracefully — skip this token for this block
+      console.warn(`erc20 logs fetch failed for ${contract}:`, e.message);
+    }
   }
+  return out;
 }
 
 /** Refresh the market_cache key in KV from CoinGecko + alternative.me. */
