@@ -6,10 +6,28 @@ context (market + news + wallet history), and posts interpreted alerts — not r
 
 Runs 100% on Cloudflare free tier (Workers + D1 + KV + Queues).
 
-## Status
+## Build progress
 
 Phase 1 (MVP): public channel with AI-enhanced whale alerts from BTC + ETH.
-See `PLAN.md` for the full roadmap and `[done]` markers.
+All Phase 1 items **done**: 4 src files, 3 wrangler configs, schema, seed,
+wizard, deploy script, 26/26 tests green, 3-worker bundle validates clean
+via `wrangler --dry-run`. See `PLAN.md` for per-item `[done]` markers.
+
+**To actually ship it** you still need:
+1. Run `python wizard.py` — answer questions, copy the printed
+   `wrangler secret put` commands and run them.
+2. `python deploy_all.py` — creates D1 + KV, runs schema, seeds wallet
+   labels, deploys all 3 workers.
+3. Set the Telegram webhook: `export BOT_TOKEN=...` then
+   `python deploy_all.py --set-webhook`.
+4. Add the bot as admin to your public channel.
+5. Watch logs: `npx wrangler tail whalesignal-scanner`.
+
+The first scan primes `last_block` to the current tip (no historical
+whales get scanned); from the next scan onward, BTC + ETH blocks within
+your USD threshold get queued → analyzed → posted. Realistic latency is
+_block time + 1min scan + 3-5s Gemini + 1s Telegram_, not the plan's
+"30s cron" — that isn't achievable on free-tier cron (real floor is 1min).
 
 ## Stack
 
