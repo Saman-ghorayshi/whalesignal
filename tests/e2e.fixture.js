@@ -68,17 +68,17 @@ function makeFetches() {
     { match: "https://blockchain.info/rawblock/",
       handler: (url) => ({ json: makeBtcBlock(parseInt(url.pathname.split('/').pop(), 10)) }) },
 
-    // etherscan eth_blockNumber — tick 1 (priming): 500000. Tick 2: 500001 so scanner
+    // etherscan V2 eth_blockNumber — tick 1 (priming): 500000. Tick 2: 500001 so scanner
     // sees a new block. Subsequent ticks increment. My whale lives at block 500001.
-    { match: "https://api.etherscan.io/api?module=proxy&action=eth_blockNumber",
+    { match: "https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber",
       handler: () => {
         ethLatestCallNum++;
         const height = 500000 + ethLatestCallNum - 1;
         return { json: { result: "0x" + height.toString(16) } };
       } },
-    { match: "https://api.etherscan.io/api?module=proxy&action=eth_getBlockByNumber",
+    { match: "https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber",
       handler: (url) => ({ json: { result: makeEthBlock(url) } }) },
-    { match: "https://api.etherscan.io/api?module=logs",
+    { match: "https://api.etherscan.io/v2/api?chainid=1&module=logs",
       handler: (url) => ({ json: { result: [] } }) }, // no erc20 transfers in this block
 
     // coingecko prices
