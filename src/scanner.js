@@ -192,7 +192,7 @@ async function bumpErrors(env, chain) {
 }
 
 /** Insert a new whale + queue it to analyst. Returns true if newly inserted, false if dup. */
-async function insertWhaleAndQueue(env, wh) {
+async function insertWhaleAndQueue(env, wh, walletMap) {
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO whales
        (chain, tx_hash, from_address, to_address, amount, symbol, usd_value,
@@ -205,16 +205,52 @@ async function insertWhaleAndQueue(env, wh) {
     Date.now()
   ).run();
   if (ins.meta.changes === 0) return false; // dup
+
+  // get the inserted row id. INSERT ... RETURNING would be cleaner but D1
+  // supports it; sticking to a follow-up SELECT keeps compat with any older
+  // sqlite build that might be on the runtime for a while.
   const row = await env.DB.prepare(
     "SELECT id FROM whales WHERE tx_hash = ?"
   ).bind(wh.tx_hash).first();
-  if (row?.id) {
+  if (!row?.id) return false;
+
+  // Queue FIRST — if the queue send throws (queue full, binding missing,
+  // quota exceeded), preserve correctness: we never bump wallet stats for a
+  // whale the analyst will never see. The INSERT above already committed, so
+  // worst case we have a 'pending' whale with no queue message — which means
+  // no analysis runs, but that's fine (we'll retry via the next scan's
+  // tx_hash UNIQUE constraint — it's already in the table so it won't re-send).
+  await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
+
+  // Bump wallet stats ONLY for non-exchange addresses. An exchange hot wallet
+  // getting its tx_count incremented every time someone sends to it would
+  // make Binance look like the world's biggest whale, which defeats the point
+  // of the wallets table.
+  const fromType = walletMap?.get(String(wh.from_address).toLowerCase())?.type || null;
+  const toType = walletMap?.get(String(wh.to_address).toLowerCase())?.type || null;
+  const targets = statTargets(wh.from_address, wh.to_address, fromType, toType);
+  if (targets.length > 0) {
     await env.DB.prepare(
-      "UPDATE wallets SET last_seen = ?, last_tx_hash = ?, tx_count = tx_count + 1, total_volume = total_volume + ? WHERE address IN (?, ?) AND chain = ?"
-    ).bind(Date.now(), wh.tx_hash, wh.usd_value, wh.from_address, wh.to_address, wh.chain).run();
-    await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
+      "UPDATE wallets SET last_seen = ?, last_tx_hash = ?, " +
+      "tx_count = tx_count + 1, total_volume = total_volume + ? " +
+      "WHERE address IN (" + targets.map(() => "?").join(",") + ") AND chain = ?"
+    ).bind(Date.now(), wh.tx_hash, wh.usd_value, ...targets, wh.chain).run();
   }
   return true;
+}
+
+/**
+ * Decide which of (from, to) should have their wallets stats bumped for this
+ * whale tx. Phase 1: skip exchange addresses (we don't want Binance's hot
+ * wallet to look like the world's biggest whale). Same-address (self-send)
+ * is deduped. Pure — exported for tests.
+ * @returns {string[]} targets to include in the UPDATE ... IN (...) clause
+ */
+export function statTargets(fromAddr, toAddr, fromType, toType) {
+  const t = [];
+  if (fromAddr && fromType !== "exchange") t.push(fromAddr);
+  if (toAddr && toAddr !== fromAddr && toType !== "exchange") t.push(toAddr);
+  return t;
 }
 
 /** Load the wallets table into a label-map. Should be small enough to keep in-memory per scan. */
@@ -357,7 +393,7 @@ export async function scanChain(env, chain, market) {
 
     for (const w of whales) {
       try {
-        const inserted = await insertWhaleAndQueue(env, w);
+        const inserted = await insertWhaleAndQueue(env, w, walletMap);
         if (inserted) newlyCounted++;
       } catch (e) {
         console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);

@@ -19,7 +19,7 @@
 // default; we ack the message by resolving the handler). If we start seeing
 // failures we'll add gpt-3.5-turbo as a fallback in Phase 3.
 
-import { fetchJSON, mdEscape, fmtUSD, shortAddr, labelFor, nowMs } from "./worker-utils.js";
+import { fetchJSON, fmtUSD, shortAddr } from "./worker-utils.js";
 
 // ─── prompt building (pure, testable) ─────────────────────────────────
 
