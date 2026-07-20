@@ -573,23 +573,37 @@ Pre-req: ship PLAN_whale_reasoning.md Ladder A (fills news_cache).
          Takes ~50 lines, 1 day. Doesn't block this plan but makes the
          whalesignal alerts that feed this loop meaningfully better.
 
-Rung 1: alert bridge (R2 NDJSON)            ~1 day, 40 lines JS + 1 test
-        commit: "whalesignal: write alerts to R2 for paper-trading consumer"
-        verify: the NDJSON file appears in R2 and updates with new whales
+[RUNG 1] DONE — committed 85521a0
+  Alert bridge (R2 NDJSON) — 40 lines JS + 3 tests
+  bot.js: buildAlertJSON() pure contract builder + postAlertToR2() append
+  wrangler.bot.toml: ALERTS_R2 binding added
+  tools/alert_export_schema.md: NDJSON contract doc
+  tests: 8/8 green (formatAlert 5 + buildAlertJSON 3)
+  full suite: 33/33 green
+  NEXT: deploy with wrangler to actually create the R2 bucket and binding
 
-Rung 2: trading_loop.py v1                   ~3 days, 250 Python lines + 50 test
-        commit: "trading_loop: bull/bear debate + paper trade on HL testnet"
-        verify: run --dry-run, then run live for 1 hour with $100 fake USDC
+[RUNG 2] DONE — committed 99b7c16, 23252d8, 5786574
+  trading_loop/ — 6 Python files, ~500 lines
+  2a: schema.sql (5 tables), memory.py (FinMem L2/L3 reads), risk_manager.py (6 guards)
+      self-test: memory + risk_manager pass against in-memory sqlite
+  2b: hl_client.py (hyperliquid-python-sdk wrapper, SDK handles EIP-712),
+      llm.py (9Router httpx wrapper, extract_json strips fences)
+      verified: testnet Info API live, BTC=63k ETH=1821
+  2c: main.py (loop + decision + dry-run), fixture_alerts.ndjson, fixture_llm_responses.json
+      dry-run verified: COPY long for bullish, COPY short for bearish, SKIP for ambiguous
+      3/3 signals processed, 2 trades opened, risk_manager clamped sizes correctly
+  NEXT: run live for 1 hour with $100 fake USDC (needs testnet wallet from faucet)
         check: at least one COPY decision fires, one SKIP, one close-on-TP
 
-Rung 3: weekly_review.py v1                  ~1 day, 200 Python lines + 60 test
-        commit: "weekly_review: FinCon self-critique loop + Telegram report"
-        verify: cron Monday 9am fires, you get Telegram DM with summary,
-                whale_scores updated, beliefs table has new rows
+[RUNG 3] NEXT — ~200 lines Python + test
+  weekly_review.py — FinCon self-critique loop + Telegram report
+  commit: "weekly_review: FinCon self-critique loop + Telegram report"
+  verify: cron Monday 9am fires, you get Telegram DM with summary,
+          whale_scores updated, beliefs table has new rows
 
-Rung 4: report-back polish                   ~30 minutes, 20 lines
-        commit: "bot: /paperstatus command for live position check"
-        skip if you don't find yourself checking — YAGNI
+[RUNG 4] OPTIONAL — ~20 lines, YAGNI
+  bot.js: /paperstatus command for live position check
+  skip if you don't find yourself checking — YAGNI
 
 WATCH 4 WEEKS. Then decide Rung 5a based on stop signals above.
 
