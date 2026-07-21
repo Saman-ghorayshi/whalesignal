@@ -595,11 +595,21 @@ Pre-req: ship PLAN_whale_reasoning.md Ladder A (fills news_cache).
   NEXT: run live for 1 hour with $100 fake USDC (needs testnet wallet from faucet)
         check: at least one COPY decision fires, one SKIP, one close-on-TP
 
-[RUNG 3] NEXT — ~200 lines Python + test
+[RUNG 3] DONE — committed 60c0dd5
   weekly_review.py — FinCon self-critique loop + Telegram report
-  commit: "weekly_review: FinCon self-critique loop + Telegram report"
-  verify: cron Monday 9am fires, you get Telegram DM with summary,
-          whale_scores updated, beliefs table has new rows
+  Reads last 7 days of trades + existing beliefs + current scores,
+  one LLM call produces: new NL beliefs (appended, not overwritten),
+  updated whale_scores (only whales with 3+ trades), 5-sentence summary.
+  writes to DB + DMs via Telegram webhook.
+  seed_week.py: test fixture (3 whales, 12 trades, 2 beliefs).
+  VERIFIED LIVE against 9Router gemini-3.1-flash-lite (no stub, no API key):
+    promoted 0xAAA111: 0.55 -> 0.85 (3/5 wins, +$12.50)
+    demoted 0xBBB222: 0.60 -> 0.45 (1/4 wins, -$8.20)
+    demoted 0xCCC333: 0.50 -> 0.05 (1/3 wins, -$2.10)
+    wrote 2 new NL beliefs, all 4 beliefs visible in table (append-only)
+    summary addressed Samsha directly with what worked/changed
+  NEXT: set WS_BOT_TOKEN + WS_CHAT_ID to enable Telegram DMs
+        set cron: 0 9 * * 1 python -m trading_loop.weekly_review
 
 [RUNG 4] OPTIONAL — ~20 lines, YAGNI
   bot.js: /paperstatus command for live position check
