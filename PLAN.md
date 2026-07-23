@@ -377,7 +377,7 @@ do I get real-time alerts?"
 
 ## BUILD ORDER — what to do next, in sequence
 
-### Sprint 1: Intelligence (1 week) — IN PROGRESS (code written, tests pending)
+### Sprint 1: Intelligence (1 week) — DONE (committed f0d99d4)
 The goal: make alerts 2x smarter with zero new infrastructure.
 
 1. **[done] Interestingness Score** — `interesting_score` column added to
@@ -408,10 +408,11 @@ The goal: make alerts 2x smarter with zero new infrastructure.
    and the evidence prompt format. Existing analyst tests updated for
    the new prompt format.
 
-**Still need to do (next session):**
-- Run `npm test` and fix any failures
-- `git add -A && git commit` with a clean message
-- Mark Sprint 1 as fully done in this plan
+**Status: ALL DONE — 77 tests pass, committed f0d99d4**
+
+- Fixed `marketRegime` threshold: F&G <50 = fear (was <=25, standard scale is 0-49=fear, 50-74=neutral, 75+=greed)
+- E2E fixture: seeded wallet labels + bumped whale amounts above interestingness threshold
+- All 77 tests green, 0 failures
 
 ### Sprint 2: Surfaces (1 week)
 The goal: make the product usable beyond Telegram.
