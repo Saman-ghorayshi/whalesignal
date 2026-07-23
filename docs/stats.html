@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>WhaleSignal — Stats</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🐋</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,510;14..32,590&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#08090a;--panel:#0f1011;--card:rgba(255,255,255,0.025);--card-hover:rgba(255,255,255,0.04);--t1:#f7f8f8;--t2:#d0d6e0;--t3:#8a8f98;--t4:#62666d;--a:#7170ff;--a-bg:#5e6ad2;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;--border:rgba(255,255,255,0.08);--border-sub:rgba(255,255,255,0.04);--r:8px;--r-sm:6px}
+html{font-size:16px}body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--t2);line-height:1.55;-webkit-font-smoothing:antialiased;font-feature-settings:'cv01','ss03';min-height:100vh}
+.con{max-width:960px;margin:0 auto;padding:0 24px}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+header{position:sticky;top:0;z-index:50;background:rgba(8,9,13,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border-sub)}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:960px;margin:0 auto}
+.logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:590;color:var(--t1);letter-spacing:-.3px}
+.logo i{font-size:22px;font-style:normal}
+.hdr-r{display:flex;align-items:center;gap:8px}
+.dot{width:5px;height:5px;border-radius:50%;display:inline-block}
+.dot.live{background:var(--green)} .dot.stale{background:var(--amber)}
+.hdr-r .t{font-size:12px;color:var(--t3);font-weight:400}
+.nav-links{display:flex;gap:16px;align-items:center}
+.nav-links a{font-size:13px;color:var(--t3);text-decoration:none;transition:color .2s}
+.nav-links a:hover{color:var(--t2)}
+.hero{padding:48px 0 24px;text-align:center}
+.hero h1{font-size:clamp(24px,5vw,40px);font-weight:510;color:var(--t1);letter-spacing:-1px;margin-bottom:8px}
+.hero p{font-size:14px;color:var(--t3);max-width:480px;margin:0 auto}
+.cbar{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:32px}
+.ctr{background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:16px 20px;min-width:120px;text-align:left;animation:fi .35s ease}
+.ctr-l{font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px}
+.ctr-v{font-size:26px;font-weight:590;color:var(--t1);line-height:1.1;margin-top:2px;font-family:JetBrains Mono,monospace}
+.ctr-sub{font-size:12px;color:var(--t3);margin-top:1px}
+.sec-hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+.sec-title{font-size:15px;font-weight:510;color:var(--t1);letter-spacing:-.2px}
+.sec-badge{font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace}
+.sig-bar{display:flex;gap:10px;margin-bottom:32px}
+.sig-pill{flex:1;background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:14px 18px;display:flex;align-items:center;gap:10px}
+.sig-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.sig-dot.b{background:var(--green)} .sig-dot.r{background:var(--red)} .sig-dot.n{background:var(--amber)}
+.sig-lbl{font-size:13px;color:var(--t3)}
+.sig-num{font-size:20px;font-weight:590;color:var(--t1);margin-left:auto;font-family:JetBrains Mono,monospace}
+.tbl{width:100%;border-collapse:collapse;margin-bottom:32px;font-size:13px}
+.tbl th{text-align:left;font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px;padding:8px 12px;border-bottom:1px solid var(--border-sub)}
+.tbl td{padding:8px 12px;color:var(--t2);border-bottom:1px solid var(--border-sub)}
+.tbl td.mono{font-family:JetBrains Mono,monospace}
+.chart-wrap{background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:20px;margin-bottom:32px;height:260px;position:relative}
+.none{text-align:center;padding:60px 0;color:var(--t3)}
+.none .e{font-size:52px;display:block;margin-bottom:12px}
+.none p{font-size:14px;max-width:340px;margin:0 auto}
+.err{text-align:center;padding:48px 0;color:var(--red);font-size:14px}
+footer{border-top:1px solid var(--border-sub);padding:32px 0 48px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--t4)}
+footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .2s}footer a:hover{color:var(--t2)}
+.ft-mono{font-family:JetBrains Mono,monospace;font-size:12px}
+@media(max-width:640px){.con{padding:0 16px}.hdr{padding:12px 16px}.cbar{gap:6px}.ctr{min-width:calc(50% - 6px)}.sig-bar{flex-direction:column}}
+</style>
+</head>
+<body>
+<header><div class="hdr"><span class="logo"><i>🐋</i> WhaleSignal</span><div class="nav-links"><a href="index.html">Home</a><a href="history.html">History</a></div><div class="hdr-r"><span class="dot live" id="dot"></span><span class="t" id="dotTxt">loading</span></div></div></header>
+<div class="con">
+<section class="hero"><h1>Stats Dashboard</h1><p>Aggregate whale activity, signal breakdown, and hourly volume across BTC and ETH chains.</p></section>
+<div class="cbar" id="stats-cards"></div>
+<div class="sec-hd"><h2 class="sec-title">Signal Breakdown</h2></div>
+<div class="sig-bar" id="sig-bar"></div>
+<div class="sec-hd"><h2 class="sec-title">Hourly Activity (24h)</h2><span class="sec-badge" id="chart-badge">—</span></div>
+<div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
+<div class="sec-hd"><h2 class="sec-title">Top Symbols</h2></div>
+<table class="tbl"><thead><tr><th>Symbol</th><th>Whales</th><th>Volume</th></tr></thead><tbody id="sym-tbody"></tbody></table>
+<footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal Stats</div></footer>
+</div>
+<script>
+const API='https://whalesignal-bot.samsha.workers.dev/stats';const POLL_S=60;let chart;
+function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+function render(data){
+  if(!data||!data.ok){document.getElementById('stats-cards').innerHTML='<div class="none"><span class="e">🐋</span><p>No stats available yet. The scanner hasn\'t accumulated enough data.</p></div>';document.getElementById('dotTxt').textContent='no data';return;}
+  document.getElementById('dotTxt').textContent='live';
+  const m=data.market||{};
+  const cards=[
+    {l:'Total Whales',v:data.total_whales||0},
+    {l:'Total Volume',v:fmt(data.total_volume),sub:'all time'},
+    {l:'24h Count',v:data.count_24h||0},
+    {l:'7d Count',v:data.count_7d||0},
+    {l:'Largest Transfer',v:fmt(data.largest_transfer)},
+    {l:'BTC Price',v:m.btc_price?'$'+Number(m.btc_price).toLocaleString():'—',sub:'F&G '+(m.fear_greed||'—')},
+  ];
+  document.getElementById('stats-cards').innerHTML=cards.map(c=>'<div class="ctr"><div class="ctr-l">'+c.l+'</div><div class="ctr-v">'+c.v+'</div>'+(c.sub?'<div class="ctr-sub">'+c.sub+'</div>':'')+'</div>').join('');
+  const sig=data.signals||{};
+  const total=(sig.bullish||0)+(sig.bearish||0)+(sig.neutral||0)||1;
+  const sigs=[{cls:'b',lbl:'Bullish',n:sig.bullish||0},{cls:'r',lbl:'Bearish',n:sig.bearish||0},{cls:'n',lbl:'Neutral',n:sig.neutral||0}];
+  document.getElementById('sig-bar').innerHTML=sigs.map(s=>'<div class="sig-pill"><span class="sig-dot '+s.cls+'"></span><span class="sig-lbl">'+s.lbl+'</span><span class="sig-num">'+s.n+'</span></div>').join('');
+  const syms=data.top_symbols||[];
+  document.getElementById('sym-tbody').innerHTML=syms.length?syms.map(s=>'<tr><td>'+esc(s.symbol)+'</td><td class="mono">'+s.count+'</td><td class="mono">'+fmt(s.volume)+'</td></tr>').join(''):'<tr><td colspan="3" style="text-align:center;color:var(--t3)">No data yet</td></tr>';
+  const hourly=data.hourly||[];
+  document.getElementById('chart-badge').textContent=hourly.length+' buckets';
+  const labels=hourly.map(h=>new Date(h.hour).toLocaleTimeString('en-US',{hour:'numeric'}));
+  const counts=hourly.map(h=>h.count);
+  const ctx=document.getElementById('hourlyChart').getContext('2d');
+  if(chart)chart.destroy();
+  chart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Whale Events',data:counts,backgroundColor:'#7170ff',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#62666d',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#62666d',font:{size:10}},beginAtZero:true}}}});
+}
+async function poll(){try{const r=await fetch(API);if(!r.ok)throw Error('http '+r.status);render(await r.json());document.getElementById('dot').className='dot live';}catch(e){document.getElementById('dot').className='dot stale';document.getElementById('dotTxt').textContent='offline';document.getElementById('stats-cards').innerHTML='<div class="err">Could not reach the stats endpoint.</div>';}}
+function start(){poll();setInterval(poll,POLL_S*1000)}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+</script>
+</body></html>
