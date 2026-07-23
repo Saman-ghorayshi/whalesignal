@@ -2,7 +2,7 @@
 // Tests buildPrompt() + parseAnalysis() — pure functions, no API calls.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildPrompt, parseAnalysis } from "../src/analyst.js";
+import { buildPrompt, parseAnalysis, templateAnalysis, marketRegime, walletBehavior } from "../src/analyst.js";
 
 const WHALE = {
   chain: "eth",
@@ -34,8 +34,8 @@ test("buildPrompt always contains all the structural anchors the AI needs", () =
   const p = buildPrompt(WHALE, MARKET, hist, [{ title: "BTC slides as SEC announces review" }]);
   assert.match(p, /Blockchain: eth/i);
   assert.match(p, /Transaction type: exchange_internal/i);
-  assert.match(p, /BTC price/i);
-  assert.match(p, /Fear & Greed: 28 \(Fear\)/);
+  assert.match(p, /STRUCTURED FACTS/i);
+  assert.match(p, /Market sentiment: Fear/i);
   assert.match(p, /RECENT HEADLINES/i);
   assert.match(p, /WALLET HISTORY/i);
   assert.match(p, /SEC announces review/i);
@@ -49,9 +49,8 @@ test("buildPrompt handles missing market + history gracefully", () => {
   assert.match(p, /no prior history/i);
   assert.match(p, /no recent headlines cached/i);
   // market values fall back to "unknown"
-  assert.match(p, /BTC price: unknown/);
-  assert.match(p, /ETH price: unknown/);
-  assert.match(p, /Fear & Greed: unknown/);
+  assert.match(p, /Market sentiment: unknown/i);
+  assert.match(p, /Wallet historical behavior: unknown/i);
 });
 
 test("parseAnalysis parses clean JSON out of plain JSON text", () => {

@@ -1,851 +1,758 @@
-# WhaleSignal — AI-Powered Whale Intelligence Bot
+# WhaleSignal AI — Expansion Plan
 
-**Goal:** 20K total users, 5K active, 50 paid at $4-8/month, 10-40 VIP at $15-40/month.
-Target revenue: $50-200/month initially, growing.
+**Goal:** On-chain intelligence platform, not a signal channel. Explain *why*
+whale movements matter using structured evidence, minimize noise, and provide
+searchable historical context — all on free-tier infrastructure.
 
-**Last updated:** 2026-07-17
-
----
-
-## BUILD PROGRESS (Phase 1 = MVP)
-
-A `[done]` beside a task means it's actually implemented, tested, and committed.
-
-### Repo & infra
-- [done] git repo initialized, .gitignore, README.md
-- [done] wrangler.toml — 3 worker bindings (D1, KV, Queue) — three files: wrangler.scanner.toml, wrangler.analyst.toml, wrangler.bot.toml
-- [done] schema/whalesignal.sql — Phase 1 tables + indexes + scanner_state
-- [done] wallet_labels/exchanges.json — seed exchange addresses (BTC + ETH)
-- [done] wallet_labels/seed.py — load exchange seed into D1
-- [done] config.example.json — copy → config.json, fill in keys
-
-### Source — workers
-- [done] src/worker-utils.js — shared helpers (timeouts, D1/KV/Queue, env checks)
-- [done] src/scanner.js — BTC + ETH block scan, batched catch-up, market cache to KV (TTL-based)
-- [done] src/analyst.js — queue consumer, reads KV market+news, Gemini call, queues delivery
-- [done] src/bot.js — Telegram webhook, public-channel posting, /ping /help /latest
-
-### Tooling
-- [done] wizard.py — interactive setup
-- [done] deploy_all.py — one-shot: D1/KV/Queue + schema + seed + deploy
-- [done] run tests green locally with node — `npm test`, 25/25 passing
-- [done] wrangler --dry-run validates all 3 worker configs bundle cleanly
-
-### Honest scope cuts in Phase 1 (deferred, not silently dropped)
-- SOL/TRX/BSC scanning → Phase 4
-- pattern detection + price-history correlation → Phase 3 (needs price_history table)
-- Pro DMs / subscriptions / Stripe → Phase 2
-- news integration (CryptoPanic/GDELT) → Phase 4 (analyst still reads news_cache if present, just empty)
-- historical price correlation ("price dropped after last 3 deposits") → Phase 3
-
-### Corrections vs. the original plan below (kept here so nothing is hidden)
-1. Block-catchup loop now has a per-scan cap (MAX_BLOCKS_PER_SCAN) so an outage
-   doesn't blow the CPU budget trying to process hundreds of blocks at once.
-   last_block is only persisted after the batch succeeds.
-2. Scanner no longer calls `getPrice(tx.symbol)` per tx — it reads the cached
-   market price from KV (the plan said to cache it, the pseudocode then ignored
-   the cache). 0 extra fetches per whale.
-3. Bot is the ONLY worker that touches Telegram now. Analyst → bot via queue
-   for delivery, exactly as the plan describes but more strictly enforced.
-4. `price_history` table is NOT in the Phase 1 schema — historical price
-   correlation is a Phase 3 deliverable so I'm not pretending the table exists.
-5. "Free Workers = 10ms CPU cap" — that was the old Free plan. Current free
-   Workers are wall-time bounded but Queues consumers get a larger envelope.
-   Code is still defensive (single fetch, timeouts, nothing that can loop).
-6. No `wizard.py/generate.py` reuse from a "cryptopay" template — I don't have
-   that repo. Clean-room: wrangler.toml + a small Python wizard/deploy.
+**Last updated:** 2026-08-01
 
 ---
 
+## WHAT'S BUILT (Phase 1 — done, tested)
 
+Scanner → analyst → bot, three Cloudflare Workers on free tier:
 
----
+- `src/scanner.js` — cron-triggered (1/min), scans BTC + ETH blocks,
+  batched catch-up, market cache to KV with TTL, ERC20 log filtering
+- `src/analyst.js` — queue consumer, builds Gemini prompt with wallet
+  history + market + news, stores structured analysis in D1
+- `src/bot.js` — Telegram webhook + queue consumer, posts alerts to
+  public channel, has `/ping /help /latest` and public `GET /latest` JSON
+- `src/worker-utils.js` — shared pure helpers (classifyTx, usdValue, etc.)
+- `schema/whalesignal.sql` — whales, analysis, wallets, scanner_state,
+  delivered tables with proper indexes
+- `wallet_labels/exchanges.json` + `seed.py` — exchange address seed
+- `trading_loop/` — Python paper-trading loop with whale scoring, beliefs,
+  risk manager, Hyperliquid testnet execution, weekly review
+- `.github/workflows/trade.yml` — GH Actions triggered by CF Worker dispatch
+- `docs/index.html` — static dashboard, fetches `/latest` from the bot
+- `wizard.py` + `deploy_all.py` — one-shot setup and deploy
+- 26/26 tests green, wrangler --dry-run clean on all 3 workers
 
-## THE PROBLEM
+**Also built but not yet shipped:**
+- R2 alert export (`postAlertToR2` in bot.js — NDJSON for trading loop)
+- GitHub dispatch trigger (`fireGitHubDispatch` in bot.js)
+- `GET /latest` JSON endpoint with CORS (for the github.io dashboard)
 
-Every crypto whale tracker does the same thing: it sees a big transaction and posts "whale moved 500 BTC to Binance." That's raw data. It's useless without context. Traders don't need to know a whale moved — they need to know what it MEANS.
-
-WhaleSignal doesn't just report whale moves. It gives you the intelligence layer:
-- What the move likely means (sell pressure, accumulation, exchange inflow, stablecoin mint)
-- What market conditions surround it (price action, fear/greed, volume)
-- What historical patterns suggest (what happened last 3 times this whale deposited to an exchange)
-- An AI-generated correlation packet connecting it to broader events
-
-This is not a multi-million dollar product. It's a $4-40/month tool that's 10x better than the free alternatives because it adds interpretation, not just data.
-
----
-
-## REVENUE MODEL
-
-| Tier | Price | Users | Monthly | Features |
-|------|-------|-------|---------|----------|
-| Free | $0 | 20K | $0 | Public channel alerts, raw data, 30-min delay |
-| Pro | $4-8/mo | 50 | $200-400 | Real-time DMs, AI analysis, per-chain filters, threshold alerts, historical whale stats |
-| VIP | $15-40/mo | 10-40 | $150-1600 | Everything in Pro + whale wallet labels, pattern detection, weekly digest, webhook integration, custom watchlist addresses, priority API access |
-
-**Free tier is the growth engine.** The public Telegram channel is where 20K users come from. Not because the raw data is unique — it's because we make it readable and contextual. The upsell to paid is: "want this in real-time via DM with AI analysis? $5."
-
-Telegram Stars can't do recurring subscriptions yet (as of mid-2026). Use the cryptopay payment template we already built — accept crypto for Pro/VIP subscriptions, auto-verified on-chain. Or use Stripe Checkout links for card payers (simpler, nobody wants to figure out crypto for a $5/mo subscription).
-
-**Realistic path to 20K:**
-- Week 1-4: Build. Start public channel. Post organically in r/CryptoCurrency, crypto Twitter, Telegram discovery groups.
-- Month 2-3: ~500 users. Refine alerts based on feedback. Maybe post a few alerts that get retweeted ("WhaleSignal flagged this 10 min before the price moved").
-- Month 4-6: ~2000 users. If the alerts are genuinely useful, word of mouth in crypto Telegram groups is powerful.
-- Month 6-12: Reach for 20K. This requires being consistently right and being shared. Crypto Twitter is the main vector.
+**Still needed to actually ship:**
+1. `python wizard.py` → fill keys
+2. `python deploy_all.py` → create D1/KV/Queue, deploy
+3. Set Telegram webhook
+4. Add bot as admin to public channel
+5. Watch logs
 
 ---
 
-## TECHNICAL ARCHITECTURE
+## IDEAS TRIAGE — dumb vs perfect
 
-### Infrastructure (all Cloudflare, all free tier)
+Each idea from the vision brief, rated against what's already built and what
+the free-tier budget can actually absorb.
 
+### PERFECT — build these, they fit the stack and the budget
+
+#### 1. Interestingness Score (rule-based, no AI)
+**Why it's perfect:** Kills noise without spending a Gemini call. A pure
+function in scanner.js that computes a 0-100 score from factors already
+available: transfer size, wallet age (first_seen), tx_count, exchange
+involvement, frequency. Below threshold = INSERT but skip queue (no AI
+cost). Above = queue to analyst as today.
+
+**Budget impact:** Cuts Gemini calls by 50-90%. Free. Costs 0 extra
+D1 writes (score stored in existing whales row). The single highest-ROI
+change you can make — it pays for itself every day.
+
+**Implementation:**
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Cloudflare Workers (free)                     │
-│                                                                     │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────────┐ │
-│  │  scanner.js   │   │  analyst.js  │   │     bot.js               │ │
-│  │               │   │              │   │                          │ │
-│  │ cron every    │   │ triggered    │   │ Telegram webhook         │ │
-│  │ 30 seconds    │   │ by scanner   │   │ /start /subscribe        │ │
-│  │               │   │ via queue     │   │ /latest /top /stats      │ │
-│  │ scans chains  │   │              │   │ /watch /alerts /help     │ │
-│  │ for large tx  │   │ fetches      │   │ inline queries           │ │
-│  │               │   │ market data  │   │                          │ │
-│  │ → D1 inserts  │   │ + news + F&G │   │ Q: free users → 30min    │ │
-│  │ → queue msg   │   │              │   │    delay badge           │ │
-│  │               │   │ calls Gemini │   │ Q: paid users → instant  │ │
-│  │               │   │ for analysis │   │                          │ │
-│  │               │   │              │   │ writes to D1             │ │
-│  │               │   │ → D1 update  │   │ (stats, subs, watchlist) │ │
-│  └──────────────┘   └──────────────┘   └──────────────────────────┘ │
-│         │                  │                        │                │
-│         ▼                  ▼                        ▼                │
-│  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │              D1 Database (whalesignal_db)                        │ │
-│  │                                                                 │ │
-│  │  whales        — detected whale transactions                    │ │
-│  │  analysis      — AI analysis for each whale tx                  │ │
-│  │  wallets       — labeled wallet addresses (exchange,   )       │ │
-│  │  subscribers   — user subscription preferences                   │ │
-│  │  watchlist     — user-tracked specific addresses                 │ │
-│  │  digest        — weekly digest state                             │ │
-│  │  stats_cache   — cached aggregate stats (24h, 7d)               │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │              KV Namespace (whalesignal_kv)                      │ │
-│  │  market_cache  — { btc_price, eth_price, fear_greed, sp500 }   │ │
-│  │  news_cache    — latest crypto headlines (TTL 1h)               │ │
-│  │  rate_limit    — per-user rate limiting                         │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │           Queue (whalesignal_q) — free tier: 10K ops/day       │ │
-│  │  scanner → analyst: "analyze this whale tx"                     │ │
-│  │  analyst → bot: "send this alert to N subscribers"              │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+score = base(size) + bonus(wallet_age) + bonus(tx_count)
+      + penalty(frequency_spam) + bonus(exchange_involvement)
+      + bonus(dormant_wallet_reactivation)
+```
+- `base(size)`: $500K-1M=20, $1M-5M=40, $5M-10M=60, $10M+=80
+- `bonus(wallet_age)`: >3yr=+15, >1yr=+10, <30d=+5
+- `bonus(tx_count)`: known whale with >5 txs=+10
+- `penalty`: >5 txs in 24h same wallet = -20 (spam filter)
+- `bonus(exchange)`: exchange_inflow/outflow = +10
+- `bonus(dormant)`: wallet inactive >1yr suddenly active = +20
+
+**Threshold:** score >= 50 → queue to analyst. Below → insert with
+`analysis_status='skipped'`, no queue message.
+
+**D1 impact:** +1 column on whales table (`interesting_score INTEGER`).
+One ALTER TABLE. Zero extra writes — computed at insert time.
+
+#### 2. Template-based analysis (skip Gemini for obvious cases)
+**Why it's perfect:** Your own design brief nailed this. Most alerts are
+obvious: "exchange deposit during fear = bearish." A rule-based template
+in analyst.js handles 80% of cases. Gemini only gets the genuinely
+ambiguous events.
+
+**Budget impact:** Cuts Gemini from ~200/day to ~20-40/day. Stays well
+under the 1500/day free limit even at 10x growth.
+
+**Implementation:** In `analyzeOne()`, before calling Gemini:
+- `tx_type === 'exchange_inflow'` + F&G < 30 → template: bearish, conf 0.75
+- `tx_type === 'exchange_outflow'` + F&G > 70 → template: bullish, conf 0.70
+- `tx_type === 'exchange_internal'` → template: neutral, conf 0.90, "Exchange internal routing"
+- `tx_type === 'wallet_to_wallet'` + amount < $5M → template: neutral, conf 0.50
+- Everything else or score > 80 → Gemini
+
+#### 3. Whale Profiles (using D1 wallets table)
+**Why it's perfect:** The `wallets` table already tracks tx_count,
+total_volume, first_seen, last_seen. You're 80% there. Add a GET endpoint
+in bot.js to serve wallet profiles as JSON.
+
+**Budget impact:** Zero extra writes — stats already bumped in
+`insertWhaleAndQueue()`. One new read per profile view. D1 reads are
+100K/day, currently using ~1K. Room for 99K profile views. Free.
+
+**What's missing:**
+- Auto-label wallets as "whale" after tx_count > 3 (UPDATE in scanner)
+- Add `reputation` column to wallets (computed from behavior)
+- `GET /wallet/:address` endpoint in bot.js (read-only D1 query)
+- Display on the static website
+
+**Implementation:** Scanner already bumps tx_count + total_volume.
+Add: after bump, if tx_count crosses 3, set type='whale'. If wallet
+was dormant >1yr and suddenly active, set pattern='reactivated'.
+
+#### 4. Daily Intelligence Report (GH Actions + static JSON)
+**Why it's perfect:** Runs as a GH Action cron (free 2000 min/month).
+Reads D1 via a small Worker endpoint or exports from R2. Generates a
+daily JSON summary. Pushes to GitHub Pages. Zero CF Worker cost.
+
+**Budget impact:** Zero CF Worker requests. Uses GH Actions minutes
+(2000/month free). One 5-min run/day = 150 min/month. Fine.
+
+**Content:**
+- Largest BTC/ETH transfer of the day
+- Exchange inflow/outflow totals
+- Most active whale wallet
+- Top 5 events by interesting score
+- Market summary (from KV cache snapshot)
+
+**Delivery:** JSON file in `docs/data/` served by GitHub Pages.
+Telegram post to channel via a one-shot Worker or GH Action Python script.
+
+#### 5. Evidence-based AI formatting (fix hallucination)
+**Why it's perfect:** This is the #1 weakness you identified. The fix
+is purely a prompt change in `buildPrompt()` — zero infrastructure.
+
+**Implementation:** Change the Gemini prompt from "interpret this" to:
+```
+You are given STRUCTURED FACTS about a whale transaction.
+Summarize ONLY what the facts support. Do not speculate.
+
+FACTS:
+- Destination: private wallet / exchange / unknown
+- Wallet age: X years
+- Historical behavior: accumulation / distribution / mixed / unknown
+- Market sentiment: Fear (28) / Greed (75) / Neutral
+- Exchange involvement: yes/no
+- Prior similar events: N times, wallet has [sold|held] after
+
+Write 2-3 sentences that STATE what these facts indicate.
+Do NOT say "likely causing" or "may lead to" unless you have 3+ data points.
+If evidence is insufficient, say "insufficient data for conclusion."
 ```
 
-### Why three workers instead of one
+**Budget impact:** Zero. Same Gemini call, better output.
 
-A single worker can't do scanning + AI analysis + bot interaction within the 10ms CPU cap (free tier) or even the 30s CPU cap (paid). Splitting them:
-- **scanner.js** — pure data fetching, cron-triggered, writes to D1, sends queue messages. No AI, no Telegram.
-- **analyst.js** — queue-triggered, does the slow work: fetch market context + call Gemini API. Can take 3-5 seconds.
-- **bot.js** — webhook-triggered by Telegram, handles user commands. Reads from D1 (fast), writes subscription data.
+#### 6. Static website expansion (GitHub Pages, zero backend)
+**Why it's perfect:** You already have `docs/index.html` fetching
+`/latest`. Expand it to more pages, all reading JSON from the Worker's
+GET endpoints. No server, no backend, no cost.
 
-Queue is the decoupling layer. Scanner finds a whale → drops a message in the queue. Analyst picks it up → does analysis → writes to D1 → drops another queue message. Bot picks it up → sends DMs to relevant subscribers.
+**Pages to add:**
+- `docs/wallet.html` — wallet profile, fetches `/wallet/:addr`
+- `docs/stats.html` — daily stats, fetches `/stats` endpoint
+- `docs/history.html` — paginated history, fetches `/history?page=N`
 
-### D1 limits analysis (10K writes/day, 100K reads/day)
+**Implementation:** Add GET routes to bot.js (it already has `/latest`):
+- `GET /stats` — aggregate D1 query, cached in KV for 5 min
+- `GET /history?limit=50&offset=0` — paginated whales query
+- `GET /wallet/:address` — joined whales + analysis for one address
 
-**Writes per day:**
-- Whale txs detected: ~50-200/day across all chains (we set min $500K threshold)
-- Each whale → 1 write (whales table) + 1 write (analysis table) = 2 writes
-- 200 whales × 2 = 400 writes
-- Subscriber DM tracking: 200 whales × ~50 paid subscribers = 10K messages, but we batch
-  - Actually we update a "delivered" flag, not one write per message
-  - Per whale: 1 write to mark analysis done + 1 write per subscriber batch (grouped) = ~3 writes
-- 200 whales × 3 writes = 600 writes
-- Bot interactions: ~5000 active users × 0.2 commands/day = 1000 commands × 2 writes each = 2000 writes
-- Watchlist: ~500 watchlist entries × 0.1 changes/day = 50 writes
-- **Total: ~3050 writes/day — well within 10K**
+**D1 read cost:** Each page load = 1-3 reads. At 1000 page views/day =
+3000 reads. Currently using ~1K. Total 4K. 96K headroom. Free.
 
-**Reads per day:**
-- Bot commands: 1000 commands × 5 reads each = 5000 reads
-- Analyst: 200 whales × 3 reads (wallet label, recent history, market cache) = 600 reads
-- Stats/cache: ~200 reads/day for /stats and /top commands
-- **Total: ~5800 reads/day — well within 100K**
+#### 7. Event clustering (multi-transfer events)
+**Why it's perfect:** "5 whales deposited to Binance in 12 minutes"
+is more interesting than 5 separate alerts. This is a post-processing
+step in the analyst or bot — group transfers within a time window
+that share a destination exchange type.
 
-### KV limits analysis (1K writes/day, 100K reads/day)
+**Budget impact:** Zero extra D1 writes. The bot's queue handler can
+check for recent similar events before posting:
 
-- Market cache refresh: every 5 min = 288 writes/day for price/fear-greed data (but we batch into 1 key updated every 5 min)
-  - market_cache: 288 writes
-  - news_cache: 24 writes (1 per hour, TTL)
-  - **Total: 312 writes — within 1K**
+**Implementation:** In `postPublicAlert()`:
+- Query `SELECT COUNT(*) FROM whales WHERE to_address = ? AND detected_at > ?`
+- If count > 3 in last 15 min → prepend "⚠️ Nth transfer to this exchange in 15min"
+- No extra writes. One read per alert.
 
-- Reads: every whale alert reads market_cache + news_cache = 200 whales × 2 reads = 400 reads
-- Bot /latest /top /stats reads cached data = ~1000 reads
-- **Total: 1400 reads — way within 100K**
+### GOOD — build after the perfect ones
 
-### Workers requests (100K/day)
+#### 8. Wallet reputation labels
+**Why good:** The wallets table already has a `type` column. Extend it
+with computed reputation. But it's secondary to the interestingness
+engine — reputation adds flavor, interestingness reduces noise. Noise
+reduction matters more to users.
 
-- Scanner cron: every 30s = 2880 triggers/day, but each trigger makes 3-5 subrequests (blockchain APIs)
-  - 2880 triggers × 1 request each = 2880 requests
-- Analyst queue: 200 messages/day × 1 request + 2 subrequests each = 600 requests
-- Bot webhook: 1000 commands/day = 1000 requests
-- **Total: ~4480 requests/day — way within 100K**
+**Implementation:**
+- Add `reputation TEXT` column to wallets
+- Labels: institution, exchange, whale, cold_storage, miner, unknown,
+  high_frequency, dormant
+- Computed in scanner after each whale detection (1 UPDATE per non-
+  exchange wallet per whale = same writes you already do)
+
+**Budget:** Zero extra writes — piggybacks on existing stat bump.
+
+#### 9. AI accuracy tracking
+**Why good:** Evaluating predictions after 24h. This is genuinely useful
+but needs a price_history mechanism, which isn't built yet.
+
+**Implementation:**
+- Add `prediction_outcome TEXT` and `evaluated_at INTEGER` to analysis
+- A daily GH Action job: for each alert 24h old, fetch current price,
+  compare to signal (bearish → did price drop?), store result
+- Display "AI accuracy: 73%" on the website
+
+**Budget:** 1 GH Action run/day. D1: +2 columns to analysis table.
+Price fetch: 1 CoinGecko call/day for BTC + ETH (well within 30/min).
+
+**Problem:** Needs market price at alert time + 24h later. You store
+BTC/ETH price in KV market_cache at alert time, but don't snapshot it
+per-alert. Fix: add `btc_price_at_detect REAL` and `eth_price_at_detect
+REAL` to the whales table — 2 extra columns written at scan time.
+
+#### 10. Weekly Intelligence Report
+**Why good:** Same mechanism as daily, just weekly aggregation. Lower
+priority because the daily report gives 90% of the value with more
+frequency.
+
+**Budget:** One more GH Action run/week. Negligible.
+
+#### 11. Charts (Chart.js on static site)
+**Why good:** Visual data makes the platform feel professional. But
+it's pure frontend — the data is already available via `/latest` and
+`/history` JSON endpoints. Just add `<canvas>` + Chart.js to the
+existing `docs/index.html`.
+
+**Budget:** Zero. All client-side. CDN-hosted Chart.js.
+
+**Charts to build:**
+- Transfer volume per hour (last 24h)
+- Exchange inflow vs outflow (last 7d)
+- Top 10 largest transfers (last 7d)
+- Fear & Greed vs whale activity (last 30d)
+
+#### 12. Custom domain
+**Why good:** A domain ($10/year) makes the project look credible. Not
+urgent but cheap. GitHub Pages supports custom domains for free.
+
+### DUMB — don't build these (or defer heavily)
+
+#### 13. Replacing D1 with "GitHub as database"
+**Why it's dumb:** You already HAVE D1. It's free, fast, relational,
+indexed, and you've written schema + queries for it. Swapping to
+JSON files in a git repo means losing SQL queries, joins, indexes,
+and atomic writes. You'd reinvent a database badly.
+
+The "GitHub is my database" idea sounds clever but:
+- D1 free tier: 10K writes/day, 100K reads/day. You use ~600 writes
+  and ~1K reads. You have 15x headroom on writes, 100x on reads.
+- GitHub API rate limit: 5000 req/hour for authenticated. If your
+  scanner writes 200 whales/day that's 200 commits/day. GitHub
+  Pages has a 1GB limit and 10 builds/hour soft limit.
+- D1 is ALREADY the better "GitHub as database" — it's relational
+  and free.
+
+**Keep D1. Use GitHub Pages only for serving the static website + JSON
+exports generated by GH Actions.**
+
+#### 14. Removing Cloudflare Queues
+**Why it's dumb (for now):** The brief suggested killing Queues.
+Queues give you 10K ops/day free. You use ~600/day. The queue is what
+decouples the slow Gemini call (3-5s) from the fast cron scan. Without
+it, the scanner cron would block on AI analysis and miss block windows.
+
+The brief's suggestion to replace Queues with "direct function calls"
+would work IF Gemini was fast, but it's not. Keep the queue until you
+move to the template-based analysis (#2), at which point 80% of alerts
+skip Gemini and the queue matters less for those — but you still want
+it for the 20% that do call Gemini.
+
+#### 15. Storing metadata only + jumping to Telegram for full alerts
+**Why it's dumb:** Telegram is not searchable. Their search is bad,
+limited to recent history, and you can't filter by chain, amount, or
+wallet. The whole point of the platform is searchable history. If you
+tell users "go to Telegram," you've killed your product's core value.
+
+D1 stores alerts fine. Reading from D1 costs nothing. Don't trade a
+working searchable DB for a Telegram redirect.
+
+#### 16. Browser-side search of downloaded history.json
+**Why it's dumb-ish:** Downloading a growing JSON file and searching
+client-side works at 100 alerts. At 10K alerts (a year of running),
+`history.json` is 5MB+. Mobile users won't download that. And you have
+D1 — a real database — sitting there doing nothing.
+
+**Better:** `GET /history?q=btc&min_usd=5000000&limit=50` — server-side
+query against D1. Cost: 1 read per search. You have 99K reads/day
+unused.
+
+#### 17. In-memory Worker cache (Map)
+**Why it's dumb (for your use case):** Workers don't stay warm reliably
+on the free tier. You can't depend on an in-memory Map for anything
+that matters. KV already gives you global edge caching with TTL. The
+brief itself says "don't rely on it." Correct — don't even bother
+adding it. KV is your cache. D1 is your store. Done.
+
+#### 18. Removing GitHub Actions almost completely
+**Why it's partially dumb:** The brief says "remove Actions, use CF
+Cron only." But you're ALREADY using CF Cron for scanning. GH Actions
+isn't in the scan loop — it's only used for the trading loop trigger
+and would be used for the daily report. These are batch jobs that run
+once/day or once/week. GH Actions is perfect for that (2000 free
+minutes/month). There's no benefit to moving batch jobs to CF Cron —
+you'd just spend Worker requests on something that doesn't need
+sub-minute timing.
+
+**Keep:** Scanner on CF Cron (already there). Trading loop + daily
+report on GH Actions. They complement each other, they don't compete.
+
+#### 19. Full public API (/latest, /history, /wallet, /stats, /top-whales, /events)
+**Why defer:** Not dumb, but premature. You need users before you need
+an API. The GET endpoints in bot.js (#6, #7) serve the website —
+that's the MVP. A documented public API is a Phase 3+ concern when you
+have traffic. Adding routes that nobody calls yet burns your time
+without testing demand.
+
+**Build when:** someone asks for it. Not before.
+
+### FUTURE — good ideas but not now
+
+#### 20. Mempool WebSocket for sub-second detection
+**Why defer:** Needs paid Workers ($5/mo). Free tier only supports HTTP
+fetch, not WebSocket. The 46s latency for ETH (block time + scan) is
+fine for an intelligence platform. You're not a HFT bot.
+
+**Build when:** 50+ paid users cover the $5/mo.
+
+#### 21. SOL/TRX/BSC chain expansion
+**Why defer:** Each chain adds API calls to the scanner. Etherscan-style
+APIs give 100K/day each. You use ~5K for ETH. Adding BSC doubles that.
+SOL needs a different RPC model (Helius free tier). It's feasible on
+free tier but adds complexity before the core product is validated.
+
+**Build when:** BTC + ETH alerts are consistently useful and you have
+100+ channel subscribers asking for more chains.
+
+#### 22. News integration (CryptoPanic + GDELT)
+**Why defer:** The analyst already reads `news_cache` from KV if
+present. The plumbing exists. What doesn't exist is the scanner
+populating `news_cache`. Adding it costs +1 KV write/hour (24/day).
+That's fine budget-wise. But:
+- CryptoPanic free tier is rate-limited and sentiment scores are noisy
+- News correlation without historical price data is speculative
+- You'd be feeding the AI more context that could increase hallucination
+
+**Build when:** you've fixed the evidence-based prompting (#5) and want
+to add news as a STRUCTURED FACT, not free-text speculation.
+
+#### 23. Pro/VIP subscriptions + payment
+**Why defer:** The vision brief is right that distribution > monetization.
+But the tier system (free/pro/vip) requires:
+- D1 subscribers table (not built — schema omits it)
+- Stripe or crypto payment verification
+- Per-user delivery logic in bot.js
+- Rate limiting + access control
+
+All feasible on free tier, but it's 2-3 weeks of work that doesn't make
+the product better for the users you don't have yet.
+
+**Build when:** 100+ organic channel subscribers, people DM-ing "how
+do I get real-time alerts?"
 
 ---
 
-## DATA SOURCES (all free, all real-time or near-real-time)
+## BUILD ORDER — what to do next, in sequence
 
-### 1. On-chain whale detection (the core)
+### Sprint 1: Intelligence (1 week) — IN PROGRESS (code written, tests pending)
+The goal: make alerts 2x smarter with zero new infrastructure.
 
-We do NOT use Whale Alert API ($29.95/month). We scan blockchains directly.
+1. **[done] Interestingness Score** — `interesting_score` column added to
+   whales table, `computeInterestingness()` pure function in scanner.js,
+   score gates the queue (score >= 50 → Gemini, below → skipped).
+   - Files: `schema/whalesignal.sql`, `src/scanner.js`
+   - D1: +0 writes (computed at insert), +1 column, +1 index
+   - Gemini: -50 to -90% calls
 
-**How we detect whales without Whale Alert:**
+2. **[done] Template-based analysis** — `templateAnalysis()` in analyst.js
+   handles obvious cases (exchange inflow + fear, outflow + greed, internal
+   routing, small stable w2w). Gemini only for ambiguous/score>80.
+   - Files: `src/analyst.js`
+   - Gemini: -80% calls (stacks with #1)
 
-| Chain | Free API | Method | Rate Limit |
-|-------|----------|--------|------------|
-| BTC | blockchain.com/api | Monitor latest block → filter txs > $500K | No key, unlimited |
-| ETH | etherscan.io/api (free key) | Get latest block → filter transfers > $500K | 3/sec, 100K/day |
-| BSC | bscscan.com/api (free key) | Same as ETH | 3/sec, 100K/day |
-| SOL | rpc.mainnet-beta.solana.com | getSignaturesForAddress on known whale wallets | Free RPC |
-| TRX | tronscan.org/api | Monitor large TRC20 USDT transfers | Free, no key |
+3. **[done] Evidence-based prompting** — `buildPrompt()` rewritten to feed
+   STRUCTURED FACTS + anti-speculation rules. Market regime + wallet
+   behavior derived as facts. Confidence guard (3+ facts for >0.7).
+   - Files: `src/analyst.js`
 
-**The scanning strategy:**
+4. **[done] Auto-label wallets** — scanner sets type='whale' after
+   tx_count crosses 3, reputation='reactivated' for dormant wallets,
+   'high_frequency' for >10 txs. Piggybacks on existing stat bump.
+   - Files: `src/scanner.js`
 
-Instead of scanning EVERY transaction (impossible at free tiers), we use a **watchlist + block scan hybrid**:
+5. **[done] Tests written** — `tests/sprint1.test.js` with 20+ tests
+   covering interestingness, marketRegime, walletBehavior, templateAnalysis,
+   and the evidence prompt format. Existing analyst tests updated for
+   the new prompt format.
 
-1. **Known whale wallets** (seed list of ~200 known whale addresses from public sources)
-   - Poll each wallet every 30 seconds for new transactions
-   - If a new tx > $500K: flag it as a whale move
-   - This is ~200 API calls per scan cycle = 200 × 2 scans/min = 400/min
-   - TOO MANY for free tiers
+**Still need to do (next session):**
+- Run `npm test` and fix any failures
+- `git add -A && git commit` with a clean message
+- Mark Sprint 1 as fully done in this plan
 
-2. **Optimized approach: block-level scan**
-   - BTC: Fetch latest block → iterate transactions → filter by value > $500K
-     - 1 API call per block, ~10 min between blocks
-     - Returns up to 200 txs per block
-     - We filter in JS, not in the API
-   - ETH: Use `eth_getBlockByNumber` → filter transactions where `value` > threshold
-     - 1 RPC call, returns all txs in block
-     - For ERC20 transfers (USDT, USDC): use `eth_getLogs` with Transfer event topic
-   - SOL: `getSignaturesForAddress` for known exchange hot wallets
-   - This is 3-5 API calls per scan cycle (one per chain), not 200
+### Sprint 2: Surfaces (1 week)
+The goal: make the product usable beyond Telegram.
 
-3. **The address labeling layer**
-   - Maintain a D1 table of known addresses with labels:
-     - Exchange deposit addresses ("Binance Hot Wallet", "Coinbase Cold Storage")
-     - Known whale wallets (tracked over time, auto-labeled "Whale #1234")
-     - Stablecoin contract addresses (USDT, USDC, DAI on each chain)
-   - When a whale tx is detected, we check if the from/to address is labeled
-   - This is where "exchange inflow = likely sell" comes from
-   - Seed the table with ~500 known exchange addresses (publicly available)
-   - Auto-discover: if we see a wallet send > $1M to an exchange 3+ times, label it "Frequent Exchange Depositor"
+5. **GET endpoints in bot.js** — `/stats`, `/history`, `/wallet/:addr`
+   - Files: `src/bot.js` (3 new route handlers), `src/worker-utils.js`
+   - D1: +3 reads per page view, far under 100K/day
 
-### 2. Market context (fetched once, cached in KV)
+6. **Static website expansion** — wallet.html, stats.html, history.html
+   - Files: `docs/wallet.html`, `docs/stats.html`, `docs/history.html`
+   - Zero cost (GitHub Pages)
 
-| Source | Data | Cache TTL | Rate Limit |
-|--------|------|-----------|------------|
-| CoinGecko free API | BTC/ETH/SOL prices, 24h change, volume | 5 min | 30 req/min |
-| alternative.me/api/fng | Fear & Greed Index (0-100) | 1 hour | No key |
-| Binance public API | Real-time last trade price for any crypto pair | 30 sec | 1200 req/min |
-| Yahoo Finance (unofficial) | S&P 500 daily change, VIX, Gold, Oil | 15 min | No key |
-| CoinGecko global | Total market cap, BTC dominance | 15 min | 30 req/min |
+7. **Charts** — Chart.js on stats page, reading from /stats JSON
+   - Files: `docs/stats.html`
+   - Zero cost (client-side CDN)
 
-**KV caching strategy:**
-```
-market_cache (1 KV key, updated every 5 min by scanner):
-{
-  "btc": { "price": 67000, "change_24h": -2.3, "volume_24h": 28e9 },
-  "eth": { "price": 3200, "change_24h": -1.8, "volume_24h": 15e9 },
-  "sol": { "price": 145, "change_24h": 3.2, "volume_24h": 3e9 },
-  "fear_greed": { "value": 28, "label": "Fear", "timestamp": "2026-07-14T10:00:00Z" },
-  "sp500": { "change": -0.8, "timestamp": "2026-07-14T10:00:00Z" },
-  "btc_dominance": 52.3,
-  "total_market_cap": 2.3e12
-}
-```
+### Sprint 3: Reports + Accuracy (1 week)
+The goal: daily intelligence + AI accountability.
 
-This means every whale alert can reference current market context without making additional API calls. The scanner refreshes it every 5 minutes and stores it in KV. The analyst reads it from KV (1 read).
+8. **Daily report** — GH Action cron, reads D1 via Worker endpoint,
+   writes `docs/data/daily/2026-08-01.json`, posts summary to Telegram
+   - Files: `.github/workflows/daily.yml`, `tools/daily_report.py`
+   - GH Actions: ~5 min/day (150 min/month, fine)
+   - D1: ~5 reads per report generation
 
-### 3. News context (the hard part)
+9. **AI accuracy tracking** — snapshot BTC/ETH price at detect time,
+   evaluate 24h later via GH Action
+   - Files: `schema/whalesignal.sql` (2 columns), `src/bot.js`
+     (price snapshot in postPublicAlert), `.github/workflows/evaluate.yml`
+   - D1: +2 columns on whales (written at scan time, 0 extra writes)
+   - D1: +1 write per evaluation (UPDATE analysis SET prediction_outcome)
 
-| Source | Data | Price | Rate Limit |
-|--------|------|-------|------------|
-| NewsAPI.org (free) | Crypto headlines, 24h delay | $0 | 100 req/day |
-| CryptoPanic API (free) | Crypto news headlines, near-real-time | $0 | Free with token |
-| GDELT (free) | Global news events (war, oil, economy) | $0 | Unlimited |
+10. **Event clustering** — bot groups transfers to same exchange within
+    15 min, prepends count to alert text
+    - Files: `src/bot.js` (query in postPublicAlert)
+    - D1: +1 read per alert (already well under budget)
 
-**NewsAPI free tier has 24h delay** — not useful for real-time correlation.
-
-**CryptoPanic** has a free API with auth token, ~30 req/min, returns real-time crypto news with sentiment scores. This is the one we use.
-
-**GDELT** (Google's global news database) has a free API that returns global events in near-real-time. We can filter for economy/conflict categories and correlate with crypto market events. Example: "GDELT shows a spike in 'economic sanctions' mentions — and simultaneously BTC is pumping + whale accumulation detected."
-
-**How news is used:**
-- The analyst worker fetches CryptoPanic headlines (top 5, cached for 1 hour in KV)
-- When generating AI analysis, the headlines are included as context
-- The AI is prompted: "Given these recent crypto news headlines [headlines], this whale move [tx details], and current market data [prices/F&G], write a 2-3 sentence analysis"
-
-### 4. AI analysis layer (Gemini free tier)
-
-**Gemini 2.0 Flash free tier:**
-- 15 requests/minute
-- 1500 requests/day
-- 1M tokens/minute
-- No cost
-
-**Behavior:**
-- Scanner detects whale → analyst worker queued
-- Analyst reads market_cache from KV (1 read)
-- Analyst reads news_cache from KV (1 read)
-- Analyst reads whale tx from D1 (1 read)
-- Analyst constructs prompt and calls Gemini API
-- Gemini returns structured JSON: { summary, interpretation, confidence, related_events }
-- Analyst writes analysis to D1 (1 write)
-- Analyst queues bot to send alerts
-
-**The prompt (this is the product):**
-
-```
-You are a crypto whale movement analyst. A whale has made a transaction.
-
-TRANSACTION:
-- Blockchain: {chain}
-- Amount: {amount} {symbol} (${usd_value})
-- From: {from_address} ({from_label or "unknown"})
-- To: {to_address} ({to_label or "unknown"})
-- Transaction type: {exchange_inflow | exchange_outflow | wallet_to_wallet | stablecoin_mint | stablecoin_burn}
-
-MARKET CONTEXT:
-- BTC price: ${btc_price} ({btc_24h}%) | Fear & Greed: {fear_greed} ({fear_greed_label})
-- ETH price: ${eth_price} ({eth_24h}%)
-- BTC dominance: {dominance}%
-- Total market cap: ${market_cap}
-
-RECENT HEADLINES:
-- {headline_1}
-- {headline_2}
-- {headline_3}
-
-WALLET HISTORY (last 3 transactions from this address):
-- {tx summaries}
-
-Return JSON:
-{
-  "headline": "one-line summary of what this whale did",
-  "interpretation": "2-3 sentences: what this likely means for the market, 
-                      considering the context above",
-  "signal": "bullish | bearish | neutral",
-  "confidence": 0.0-1.0,
-  "related_factor": "the single most relevant context factor 
-                      (e.g. 'exchange inflow during market fear' or 
-                      'accumulation at support level')"
-}
-```
-
-**Why this is better than raw alerts:**
-A raw bot says: "🐳 500 BTC ($33.5M) moved to Binance"
-
-WhaleSignal says:
-```
-🐳 500 BTC ($33.5M) → Binance Hot Wallet
-Confidence: HIGH (0.82)
-Signal: 🐻 BEARISH
-
-A whale just deposited $33.5M in Bitcoin to Binance — likely 
-preparing to sell. This comes as BTC is already down 2.3% today 
-with Fear & Greed at 28 (Fear). Large exchange inflows during 
-fear periods have historically preceded further sell-offs.
-
-Market: BTC $67,000 (-2.3%) | F&G: 28 (Fear) | Dominance: 52.3%
-Headline: "SEC announces new crypto regulation review"
-Related factor: Exchange inflow during market fear
-```
+### Sprint 4: Ship + polish (2-3 days)
+11. Run `wizard.py`, `deploy_all.py`, set webhook, add bot to channel
+12. Verify scanner picks up blocks, analyst runs, bot posts
+13. Verify `docs/index.html` fetches `/latest` and renders
+14. Post first real alerts, verify quality
+15. Submit to DoraHacks BUIDL + onboarding findings
 
 ---
 
-## WALLET INTELLIGENCE LAYER
+## FREE-TIER BUDGET — the real numbers
 
-This is what separates WhaleSignal from every free whale bot. We don't just see a transaction — we understand the wallet's behavior over time.
+### Cloudflare Workers Free Tier
+| Resource          | Free Limit     | Phase 1 (now)  | Sprint 1-3    | Break Point      |
+|-------------------|----------------|----------------|---------------|------------------|
+| Worker requests   | 100K/day       | ~3,500/day     | ~4,000/day    | ~25K users       |
+| D1 writes         | 10K/day        | ~600/day       | ~800/day      | ~5K whales/day   |
+| D1 reads          | 100K/day       | ~1K/day        | ~6K/day       | ~16K page views  |
+| KV writes         | 1K/day         | ~312/day       | ~336/day      | HARD LIMIT       |
+| KV reads          | 100K/day       | ~400/day       | ~1,500/day    | ~66K users       |
+| Queue ops         | 10K/day        | ~600/day       | ~300/day      | (fewer AI calls) |
+| CPU time          | 10ms/request   | ok (queue has more) | ok       | Long Gemini calls|
 
-### Wallet labeling system (D1 `wallets` table)
+**KV is the tightest. Current: 312 writes/day. Headroom: 688.**
+- market_cache: 288 writes (every 5 min)
+- news_cache: 24 writes (every hour) — NOT yet populated
+- Future: daily stats cache = 1 write/day. Negligible.
+- If KV ever gets tight: move stats_cache to D1 (stats_cache table from
+  the original schema), keep KV only for market_cache.
 
-```
-wallets table:
-  address TEXT PRIMARY KEY
-  chain TEXT
-  label TEXT          -- "Binance Hot Wallet", "Whale #0042", "Unknown"
-  type TEXT            -- "exchange", "whale", "institution", "unknown", "miner"
-  first_seen INTEGER
-  tx_count INTEGER    -- how many whale txs we've seen from this address
-  total_volume REAL    -- total USD value of all whale txs
-  last_tx_hash TEXT
-  last_seen INTEGER
-  pattern TEXT         -- "frequent_exchange_depositor", "accumulator", "dumper"
-```
+### Gemini Free Tier
+| Resource          | Free Limit     | Phase 1 (now)  | After Sprint 1 | Break Point     |
+|-------------------|----------------|----------------|-----------------|-----------------|
+| Requests           | 1,500/day     | ~200/day       | ~20-40/day      | ~1,500 whales   |
+| Tokens/min         | 1M/min         | ~500/call      | ~500/call       | Never on free   |
+| Requests/min       | 15/min         | ~1/min         | ~1/min          | Never           |
 
-### Pattern detection (runs in analyst.js after each whale tx)
+**After interestingness + templates, you cut Gemini by 80-90%.**
+At 200 whales/day detected, only 20-40 call Gemini. The rest use
+templates. You could 10x your whale detection volume and still stay
+under 400 Gemini calls/day.
 
-The analyst worker, after writing the AI analysis, runs pattern detection on the wallet:
+### External APIs (free keys)
+| API               | Free Limit     | Current Usage  | After Expansion | Break Point     |
+|-------------------|----------------|----------------|-----------------|-----------------|
+| Etherscan         | 100K/day       | ~5K/day        | ~5K/day         | Adding BSC      |
+| Blockchain.com    | unlimited      | ~1.4K/day      | ~1.4K/day       | Never           |
+| CoinGecko         | 30/min         | 1/5min         | 1/5min          | Never           |
+| alternative.me    | unlimited      | 1/hr           | 1/hr            | Never           |
+| Telegram          | 30 msg/s       | <1/s           | ~1/s            | 3K concurrent   |
 
-```javascript
-// Dumb rules engine — no AI needed, pure logic
-function detectPattern(walletHistory, currentTx) {
-  const last30d = walletHistory.filter(tx => tx.timestamp > Date.now() - 30*86400*1000);
-  const exchangeOutflows = last30d.filter(tx => tx.to_is_exchange).length;
-  const exchangeInflows = last30d.filter(tx => tx.from_is_exchange).length;
+### GitHub Actions
+| Resource          | Free Limit     | Usage          | After Expansion |
+|-------------------|----------------|----------------|-----------------|
+| Minutes/month     | 2,000          | ~25 (trade)    | ~180 (daily + eval) |
+| Storage (Pages)   | 1GB            | ~1MB           | ~50MB           |
+| Builds/hour       | 10 (soft)      | 1/day          | 2/day           |
 
-  if (exchangeOutflows >= 3 && currentTx.to_is_exchange)
-    return { pattern: "frequent_exchange_depositor", signal: "bearish" };
-  if (exchangeInflows >= 3)
-    return { pattern: "accumulator", signal: "bullish" };
-  if (currentTx.to_is_exchange && !currentTx.from_is_exchange)
-    return { pattern: "potential_dumper", signal: "bearish" };
-  return { pattern: "neutral", signal: "neutral" };
-}
-```
+**GH Actions is fine. 2000 min/month, you'll use ~200.**
 
-### "Stealth whale" detection
+### What costs money (and when)
+| Upgrade           | Cost           | Trigger                              |
+|-------------------|----------------|--------------------------------------|
+| Custom domain     | $10/year       | When you have 100+ users (optional)  |
+| Cloudflare Workers Paid | $5/mo    | 50+ paid users or mempool WebSocket  |
+| Gemini paid       | $0 (has free $)| >1,500 ambiguous whales/day         |
+| Etherscan Pro     | $150/mo        | >100K calls/day (add chains)         |
 
-The user specifically wanted: "detect ones that don't want us to know they are buying."
-
-This is actually possible at a basic level:
-1. **Direct DEX routing** — a whale swaps through Uniswap/1inch directly, no exchange intermediary. We detect this by checking if the `to_address` is a known DEX router contract.
-2. **Wallet splitting** — a whale distributes funds across multiple fresh wallets before transacting. We detect this by noticing a parent wallet splitting into N child wallets, each receiving similar amounts within a short window. Flag as "stealth accumulation pattern."
-3. **Mixing/Tornado** — we can't see through Tornado Cash, but we CAN flag "funds emerged from Tornado and immediately bought into an asset" as suspicious accumulation.
-4. **OTC desks** — large wallet-to-wallet transfers that don't touch exchanges. We flag these as "OTC settlement — off-market, no immediate price impact expected."
-
-We don't claim to break privacy. We just flag behavioral patterns. The AI adds: "This whale split 1000 ETH across 5 new wallets this week, each wallet has no prior history — this pattern suggests stealth accumulation to avoid on-chain detection."
-
-### Historical pattern matching
-
-When a whale tx is detected:
-1. Fetch the last 5 transactions from this wallet (1 D1 read)
-2. Check what happened to the price 1h, 6h, 24h after each of those transactions
-3. Build a mini-pattern: "Last 3 times this wallet deposited >$10M to Binance, BTC dropped 1-2% within 4 hours"
-4. Include this in the AI prompt as context
-
-This is the genuinely "smart" part — not trick AI, but historical correlation. It's factual: "last 3 times, price dropped." That's useful information, not a prediction.
+**You can run this product to 1,000+ users for $0-10/year (domain only).**
 
 ---
 
-## BOT COMMANDS & USER EXPERIENCE
+## SCHEMA CHANGES — all the ALTERs you need
 
-### Free users
-
-```
-/start     → Welcome + inline subscribe button
-/latest    → Last 5 whale alerts (30-min delayed)
-/top       → Biggest 5 whale moves today
-/stats     → 24h whale move stats (total volume, chains, direction)
-/help      → Command list + upgrade to Pro button
-```
-
-Free users see alerts in the public channel with a 30-minute delay and a "🆓 30min delayed — get real-time with Pro" footer.
-
-### Pro users ($4-8/month)
-
-```
-All free commands, plus:
-/subscribe     → Choose chains, thresholds (inline keyboard)
-/threshold     → Set minimum USD value for alerts
-/chains        → Toggle chains on/off
-/watch <addr>  → Add address to personal watchlist
-/unwatch <addr>→ Remove from watchlist
-/watchlist     → List watched addresses
-/alerts        → Recent alerts for your settings
-/history <addr>→ Transaction history for any address
-```
-
-Pro users get real-time DMs for every alert matching their filters (chains, min value, watchlist addresses). Every alert includes the full AI analysis + pattern context.
-
-### VIP users ($15-40/month)
-
-```
-All Pro commands, plus:
-/webhook <url>  → Set webhook to receive alerts as JSON
-/digest         → Weekly digest report (auto-generated)
-/pattern <addr> → Full behavioral pattern analysis for a wallet
-/stealth        → Show recent stealth-accumulation detections
-/export         → Export alert history as CSV
-/priority       → Faster AI analysis (Gemini paid tier, higher rate limits)
-/apikey         → Get a personal API key for programmatic access
-VIP badge in all interactions
-```
-
-VIP is for traders who want to pipe whale data into their own systems or get the deepest analysis. The webhook sends the same structured JSON the bot uses internally.
-
----
-
-## SCANNER DESIGN — How we scan chains for free
-
-### Block-level polling (every 30 seconds)
-
-```javascript
-// scanner.js — runs every 30s via cron trigger
-async function scanChain(chain) {
-  const CHAIN_CONFIG = {
-    btc: { api: "https://blockchain.info/latestblock", method: "btc" },
-    eth: { api: "https://api.etherscan.io/api", method: "evm", key: ETH_KEY },
-    bsc: { api: "https://api.bscscan.com/api", method: "evm", key: BSC_KEY },
-  };
-
-  // 1. Get last processed block from D1
-  const lastBlock = await DB.prepare("SELECT value FROM scanner_state WHERE chain = ?")
-    .bind(chain).first();
-
-  // 2. Get latest block from blockchain
-  const latest = await fetchLatestBlock(chain);
-
-  // 3. For each new block, fetch and filter transactions
-  for (let blockNum = lastBlock + 1; blockNum <= latest; blockNum++) {
-    const txs = await fetchBlockTransactions(chain, blockNum);
-
-    for (const tx of txs) {
-      const usdValue = tx.amount * await getPrice(tx.symbol);
-
-      if (usdValue >= MIN_WHALE_THRESHOLD) {
-        // 4. Insert into D1
-        await DB.prepare("INSERT INTO whales ...").bind(...);
-
-        // 5. Queue for analysis
-        await QUEUE.send(JSON.stringify({ whale_id: id, chain, tx }));
-      }
-    }
-  }
-
-  // 6. Update scanner state
-  await DB.prepare("UPDATE scanner_state SET value = ? WHERE chain = ?")
-    .bind(latest, chain);
-}
-```
-
-**Per-scan API calls:**
-- 1 call to get latest block height per chain (3 chains = 3 calls)
-- 1 call per new block to get transactions (usually 1-2 new blocks per 30s per chain = ~6 calls)
-- 1 call to refresh market cache (CoinGecko) — only every 5th scan (every 2.5 min)
-- **Total per 30s cycle: ~10 API calls**
-- **Per hour: 1200 API calls**
-- **Per day: 28,800 API calls** — within Etherscan's 100K/day, within Binance's 1200/min
-
-### Enhanced ERC20 detection (USDT, USDC transfers)
-
-The biggest whale moves are often stablecoins, not native tokens. Etherscan's `tx` field only shows ETH transfers — ERC20 token transfers are in the `logs`.
-
-For each new ETH block, we use `eth_getLogs` with the Transfer event topic:
-```
-topic0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-// Transfer(address,address,uint256)
-```
-
-This returns all ERC20 transfers in the block. We filter by:
-- Known token contracts (USDT, USDC, DAI, WBTC, LINK)
-- Transfer value > $500K
-
-This is 1 extra RPC call per block, returns only Transfer events (efficient).
-
-### The 30-second claim
-
-"Information matters in milliseconds" — you're right, but we can't achieve milliseconds on free tier. Here's what we CAN achieve:
-
-- **BTC blocks**: ~10 min average. Scanning every 30s means we catch new blocks within 30s of them being mined.
-- **ETH blocks**: ~12s average. Scanning every 30s means we catch new blocks within 30s.
-- **SOL blocks**: ~400ms. We can't scan SOL every 400ms on free tier. But we poll known SOL whale wallets every 30s and check for recent transactions.
-
-Realistic latency from whale action → alert in user DM:
-- BTC: 10 min (block time) + 30s (scan) + 3s (AI analysis) + 1s (Telegram) = ~14 min
-- ETH: 12s (block time) + 30s (scan) + 3s (AI analysis) + 1s (Telegram) = ~46s
-- SOL: 30s (poll) + 3s (AI) + 1s (Telegram) = ~34s
-
-To get to true real-time (single-digit seconds), you'd need:
-- WebSocket subscriptions to mempool (mempool.space API for BTC, Helius free tier for SOL)
-- Paid Workers (removes 10ms CPU cap, allows long-lived connections)
-- That's maybe $5/month in infrastructure — fine when you have 50 paying users
-
-**Phase 1 ships with 30-second polling. Phase 2 adds mempool WebSocket for sub-second detection.**
-
----
-
-## D1 SCHEMA
+Minimal, additive, safe to run on every deploy:
 
 ```sql
--- Whale transaction records
-CREATE TABLE IF NOT EXISTS whales (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chain TEXT NOT NULL,
-  tx_hash TEXT NOT NULL UNIQUE,
-  from_address TEXT NOT NULL,
-  to_address TEXT NOT NULL,
-  amount REAL NOT NULL,
-  symbol TEXT NOT NULL,
-  usd_value REAL NOT NULL,
-  tx_type TEXT,             -- exchange_inflow, exchange_outflow, wallet_to_wallet, etc.
-  block_number INTEGER,
-  block_time INTEGER,
-  detected_at INTEGER NOT NULL,
-  analysis_status TEXT DEFAULT 'pending'  -- pending, done, failed
-);
+-- Sprint 1
+ALTER TABLE whales ADD COLUMN interesting_score INTEGER DEFAULT 0;
+ALTER TABLE wallets ADD COLUMN reputation TEXT;
 
--- AI analysis results
-CREATE TABLE IF NOT EXISTS analysis (
-  whale_id INTEGER PRIMARY KEY,
-  headline TEXT,
-  interpretation TEXT,
-  signal TEXT,              -- bullish, bearish, neutral
-  confidence REAL,
-  related_factor TEXT,
-  pattern TEXT,
-  pattern_signal TEXT,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (whale_id) REFERENCES whales(id)
-);
+-- Sprint 3
+ALTER TABLE whales ADD COLUMN btc_price_at_detect REAL;
+ALTER TABLE whales ADD COLUMN eth_price_at_detect REAL;
+ALTER TABLE analysis ADD COLUMN prediction_outcome TEXT;
+ALTER TABLE analysis ADD COLUMN evaluated_at INTEGER;
+```
 
--- Known/labeled wallet addresses
-CREATE TABLE IF NOT EXISTS wallets (
-  address TEXT NOT NULL,
-  chain TEXT NOT NULL,
-  label TEXT,
-  type TEXT,
-  pattern TEXT,
-  tx_count INTEGER DEFAULT 0,
-  total_volume REAL DEFAULT 0,
-  first_seen INTEGER,
-  last_seen INTEGER,
-  last_tx_hash TEXT,
-  PRIMARY KEY (address, chain)
-);
+All additive. No data migration. No downtime. Run via `deploy_all.py`
+which already executes the schema file.
 
--- User subscriptions
-CREATE TABLE IF NOT EXISTS subscribers (
-  user_id INTEGER PRIMARY KEY,
-  tier TEXT DEFAULT 'free',  -- free, pro, vip
-  tier_expires INTEGER,
-  chains TEXT,               -- JSON array of chain IDs
-  min_usd REAL DEFAULT 500000,
-  stealth_alerts INTEGER DEFAULT 0,
-  preferred_lang TEXT,
-  joined_at INTEGER NOT NULL
-);
+---
 
--- User watchlist
-CREATE TABLE IF NOT EXISTS watchlist (
-  user_id INTEGER NOT NULL,
-  address TEXT NOT NULL,
-  chain TEXT NOT NULL,
-  label TEXT,
-  added_at INTEGER NOT NULL,
-  PRIMARY KEY (user_id, address, chain)
-);
+## D1 SCHEMA — current + planned
 
--- Scanner state (last processed block per chain)
-CREATE TABLE IF NOT EXISTS scanner_state (
-  chain TEXT PRIMARY KEY,
-  last_block INTEGER,
-  last_scan INTEGER,
-  total_whales INTEGER DEFAULT 0
-);
+### Current (built)
+- `whales` — detected transactions, with tx_type, analysis_status
+- `analysis` — AI interpretation, 1:1 to whales
+- `wallets` — labeled addresses, with tx_count, total_volume
+- `scanner_state` — last block per chain, error counter
+- `delivered` — per-channel delivery dedup
 
--- Alert delivery tracking
-CREATE TABLE IF NOT EXISTS alerts_delivered (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  whale_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  delivered_at INTEGER NOT NULL,
-  UNIQUE(whale_id, user_id)
-);
+### Sprint 1 additions
+- `whales.interesting_score` — computed at insert, gates AI queue
+- `wallets.reputation` — computed label (whale, dormant, reactivated)
 
--- Stats cache
-CREATE TABLE IF NOT EXISTS stats_cache (
-  key TEXT PRIMARY KEY,
-  value TEXT,
-  updated_at INTEGER NOT NULL
-);
+### Sprint 2 additions
+- No new tables. New GET endpoints read existing data.
 
--- Indexes (for fast reads)
-CREATE INDEX IF NOT EXISTS idx_whales_chain_time ON whales(chain, detected_at);
-CREATE INDEX IF NOT EXISTS idx_whales_usd ON whales(usd_value DESC);
-CREATE INDEX IF NOT EXISTS idx_wallets_address ON wallets(address);
-CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
-CREATE INDEX IF NOT EXISTS idx_alerts_user_whale ON alerts_delivered(user_id, whale_id);
+### Sprint 3 additions
+- `whales.btc_price_at_detect` — price snapshot for accuracy tracking
+- `whales.eth_price_at_detect` — same
+- `analysis.prediction_outcome` — 'correct' | 'incorrect' | 'partial'
+- `analysis.evaluated_at` — when the 24h evaluation ran
+
+### Intentionally NOT built (deferred)
+- `subscribers` — no payment system yet
+- `watchlist` — no per-user features yet
+- `stats_cache` — KV handles this fine
+- `price_history` — accuracy tracking uses snapshots, not history table
+- `alerts_delivered` (per-user) — only public channel exists now
+
+---
+
+## ARCHITECTURE — expanded
+
+```
+Blockchain APIs (blockchain.com, etherscan)
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│ Cloudflare Cron (every 1 min)               │
+│                                             │
+│  src/scanner.js                             │
+│  • Fetch latest blocks                      │
+│  • Extract candidates (BTC + ETH + ERC20)   │
+│  • Compute USD value (KV market cache)     │
+│  • Filter by min USD ($500K)                │
+│  • Compute Interestingness Score             │  ← Sprint 1
+│  • Classify tx_type (exchange/wallet/...)   │
+│  • INSERT whale + bump wallet stats          │
+│  • Score >= 50? → Queue to analyst          │
+│  • Score < 50? → skip (no AI cost)          │  ← Sprint 1
+│  • Refresh KV market_cache (every 5 min)    │
+└─────────────────────────────────────────────┘
+        │ (Cloudflare Queue)
+        ▼
+┌─────────────────────────────────────────────┐
+│ src/analyst.js (queue consumer)             │
+│                                             │
+│  • Read whale from D1                       │
+│  • Read market + news from KV               │
+│  • Read wallet history from D1 (last 5)     │
+│  • Template analysis (obvious cases)        │  ← Sprint 1
+│    - exchange_inflow + fear → bearish       │
+│    - exchange_outflow + greed → bullish     │
+│    - exchange_internal → neutral            │
+│  • Ambiguous or score > 80? → Gemini call   │
+│    - Evidence-based prompt (facts, not      │  ← Sprint 1
+│      speculation, no "likely causing")      │
+│  • Parse + normalize analysis               │
+│  • Save to D1 analysis table                │
+│  • Queue "post alert" to bot                │
+└─────────────────────────────────────────────┘
+        │ (Cloudflare Queue)
+        ▼
+┌─────────────────────────────────────────────┐
+│ src/bot.js (queue consumer + webhook)       │
+│                                             │
+│  Queue: post public alert                   │
+│  • Load whale + analysis from D1            │
+│  • Check for event clustering               │  ← Sprint 3
+│    (N transfers to same exchange in 15 min) │
+│  • Format alert text (with evidence block)  │
+│  • Send to Telegram public channel          │
+│  • Export NDJSON to R2 (for trading loop)   │
+│  • Fire GitHub dispatch (triggers trade)    │
+│  • Mark delivered in D1                     │
+│                                             │
+│  Webhook: Telegram + public GET routes      │
+│  • POST /tg/<token> → /ping /help /latest   │
+│  • GET /latest?limit=N → JSON alerts        │  ← built
+│  • GET /stats → aggregate stats JSON       │  ← Sprint 2
+│  • GET /history?limit=&offset= → paginated │  ← Sprint 2
+│  • GET /wallet/:addr → wallet profile JSON  │  ← Sprint 2
+└─────────────────────────────────────────────┘
+        │
+        ├──→ Telegram (public channel)
+        ├──→ R2 (alerts.ndjson for trading loop)
+        ├──→ GitHub Actions dispatch (trade loop)
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│ GitHub Pages (docs/)                        │
+│                                             │
+│  index.html    → live dashboard (fetches     │  ← built
+│                  /latest, polls 30s)        │
+│  wallet.html   → wallet profile page        │  ← Sprint 2
+│  stats.html    → charts + statistics        │  ← Sprint 2
+│  history.html  → searchable alert history   │  ← Sprint 2
+│  data/daily/   → daily report JSON files     │  ← Sprint 3
+│                                             │
+│  All static. Reads Worker GET endpoints.     │
+│  Zero backend. Free hosting.                 │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│ GitHub Actions (free 2000 min/mo)           │
+│                                             │
+│  trade.yml               → trading loop      │  ← built
+│    (triggered by CF Worker dispatch)        │
+│  daily.yml               → daily intelligence│  ← Sprint 3
+│    (cron: 0 8 * * *)                        │
+│  evaluate.yml            → AI accuracy check  │  ← Sprint 3
+│    (cron: 0 9 * * *, evaluates 24h-old)     │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│ D1 (free: 10K writes, 100K reads/day)       │
+│                                             │
+│  whales        + interesting_score           │  ← Sprint 1
+│                + btc/eth_price_at_detect     │  ← Sprint 3
+│  analysis      + prediction_outcome          │  ← Sprint 3
+│  wallets       + reputation                  │  ← Sprint 1
+│  scanner_state (unchanged)                  │
+│  delivered    (unchanged)                   │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│ KV (free: 1K writes, 100K reads/day)        │
+│                                             │
+│  market_cache  (refreshed every 5 min)      │  ← built, 288 writes/day
+│  news_cache    (hourly, not yet populated)  │  ← future
+│  stats_cache   (daily, 1 write/day)          │  ← Sprint 2/3
+│                                             │
+│  Total KV writes: ~312/day. Limit 1K. Safe. │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│ R2 (free: 10GB storage, 1M class-A ops/mo)  │
+│                                             │
+│  alerts.ndjson  → trading loop input        │  ← built in bot.js
+└─────────────────────────────────────────────┘
 ```
 
 ---
 
-## DEVELOPMENT PHASES
+## THE MOAT (what competitors can't copy in a weekend)
 
-### Phase 1: MVP (2-3 weeks) — "Better than raw alerts"
+1. **Wallet reputation database** — grows automatically with every scan.
+   Every whale detected enriches a wallet's profile. After 3 months of
+   running, you have behavioral data on thousands of wallets that no
+   newcomer has.
 
-**Goal:** Public channel with AI-enhanced whale alerts. No subscriptions yet. Prove the concept.
+2. **Interestingness engine** — the scoring function that filters noise.
+   Anyone can call an LLM on a big transfer. Filtering out 80% of noise
+   so users only see genuinely interesting events is hard and tuned
+   over time.
 
-Deliverables:
-1. scanner.js — polls BTC + ETH blocks every 30s, detects whale txs > $500K
-2. analyst.js — fetches market context from KV, calls Gemini for analysis, writes to D1
-3. bot.js — posts formatted alerts to public Telegram channel
-4. Config wizard (reuse cryptopay wizard pattern)
+3. **Historical whale behavior** — "last 3 times this whale deposited,
+   price dropped 2%." This requires having run long enough to accumulate
+   the history. A newcomer's AI is dumber because it has no memory.
 
-What an alert looks like in the channel:
-```
-🐳 WHALE ALERT — Ethereum
-$12.5M USDT transferred to Binance
+4. **Evidence-based explanations** — the prompt engineering that prevents
+   hallucination. Not the LLM call itself (anyone can do that), but the
+   structured-facts approach that produces trustworthy output.
 
-💰 12,500,000 USDT ($12.5M)
-📍 eth → 0x28C6...d3c4 (Binance: Hot Wallet 14)
-🕐 Confirmed in block 20,123,456
+5. **AI accuracy tracking** — the feedback loop that proves your alerts
+   are worth paying attention to. "73% accuracy" is a marketing claim
+   that a raw signal bot can't make.
 
-🧠 AI Analysis:
-Likely sell preparation — $12.5M in USDT moved to Binance.
-When stablecoins flow into exchanges, it often signals intent 
-to sell into other assets or withdraw to fiat. BTC currently 
-down 1.8%, market in "Fear" territory (F&G: 28).
-
-📊 Market: BTC $67,000 | F&G: 28 | ETH $3,200
-🔮 Signal: Bearish (confidence: 0.71)
-📎 Pattern: Exchange inflow during market fear
-
-🔍 View on Etherscan: https://etherscan.io/tx/0x...
-```
-
-This alone is 10x better than any free whale bot.
-
-### Phase 2: User growth (2-3 weeks) — "Get people in"
-
-Deliverables:
-1. Bot commands: /start, /latest, /top, /stats, /help
-2. User onboarding flow
-3. Subscription system: free users get 30-min delayed alerts in channel, signup for Pro gets real-time DMs
-4. Payment integration (Stripe Checkout links — simplest path for $5/mo subscriptions. People don't want to figure out crypto for a $5 sub.)
-5. /subscribe with inline keyboard (choose chains, threshold)
-6. Pro DMs: real-time alerts matching user filters
-
-### Phase 3: Intelligence (2-3 weeks) — "Make it actually smart"
-
-Deliverables:
-1. Wallet labeling system (seed with ~500 exchange addresses)
-2. Pattern detection (accumulator, dumper, frequent depositor)
-3. Historical price correlation ("last 3 times this whale deposited, price dropped 2%")
-4. Stealth whale detection (wallet splitting, DEX routing, Tornado emergence)
-5. Watchlist feature (/watch <address>)
-6. /pattern <address> command for VIP
-
-### Phase 4: Expansion (2-3 weeks) — "More chains + more value"
-
-Deliverables:
-1. Add SOL, TRX, BSC scanning
-2. News integration (CryptoPanic API + GDELT)
-3. Weekly digest auto-generation
-4. Webhook delivery for VIP
-5. Inline queries (type @whalesignalbot in any chat)
-6. Stats dashboard improvements (heatmaps, trends)
-
-### Phase 5: Scale (ongoing) — "Grow to 20K"
-
-Deliverables:
-1. Mempool WebSocket for sub-second BTC/ETH detection (paid Cloudflare, ~$5/mo)
-2. Solana Helius free tier for real-time SOL whale tracking
-3. Paid Gemini tier for higher rate limits (when >200 whales/day)
-4. SEO: whalesignal.com landing page
-5. Twitter account auto-posting notable whale moves with chart screenshots
-6. Referral program: invite 3 friends → 1 month Pro free
-
----
-
-## LIMITS SUMMARY (what can break)
-
-| Resource | Free Limit | Phase 1-2 Usage | Phase 3-4 Usage | Break Point |
-|----------|------------|------------------|-----------------|-------------|
-| D1 writes | 10K/day | ~600/day | ~3000/day | ~5000 users |
-| D1 reads | 100K/day | ~1000/day | ~5800/day | ~25000 users |
-| KV writes | 1K/day | ~312/day | ~312/day | Hard limit — KV only for market cache |
-| KV reads | 100K/day | ~400/day | ~1400/day | OK forever |
-| Worker requests | 100K/day | ~3500/day | ~4480/day | ~50K users |
-| Gemini API | 1500/day | ~200/day | ~200/day | OK until we add per-user AI queries |
-| Etherscan API | 100K/day | ~5000/day | ~5000/day | OK for ETH + BSC |
-| CoinGecko API | 30/min | 1/5min | 1/5min | OK forever |
-| Telegram rate | 30 msg/s | Low | ~50 users × 10 alerts | Need batching at scale |
-
-**When to upgrade to paid Cloudflare ($5/mo):**
-- 50+ paid users generating $200+/month → re-invest $5/mo in Workers paid
-- This removes the 10ms CPU cap (allows longer AI calls)
-- Increases D1 to 25M rows, 50M writes/day
-- If you have 50 users paying $5, the $5 Cloudflare fee is 2% of revenue
-
-**The KV 1K writes/day limit is the main constraint.**
-We use KV ONLY for market_cache (refreshed every 5 min = 288 writes) + news_cache (refreshed hourly = 24 writes). Total: 312 writes. Leaves 688 for rate limiting and misc. If we need more, we could use the D1 stats_cache table instead and let KV only hold categories that truly need global read lateness.
+These are NOT infrastructure moats. They're DATA and TUNING moats. They
+compound with time and usage. This is why the build order prioritizes
+Sprint 1 (intelligence) over Sprint 2 (surfaces) — smarter alerts
+compound the moat faster than a prettier website.
 
 ---
 
 ## WHAT THIS IS NOT
 
-- It's not a trading bot. It doesn't execute trades. It gives you intelligence.
-- It's not DeFi analytics. It doesn't track DEX pools, impermanent loss, or yield.
-- It's not Nansen. It doesn't have 100M labeled addresses or institutional data feeds.
-- It's not a quant model. The AI doesn't predict prices. It interprets behavior.
-- It's not multi-million dollar. It's a $50-200/month side hustle that costs $0 to run.
-
-It's a Telegram bot that tells you what whales are doing and what it probably means — in seconds, with context, in plain language. That's worth $5/month to the right people.
-
----
-
-## COSTS
-
-| Resource | Free Tier | When to Upgrade |
-|----------|-----------|------------------|
-| Cloudflare Workers | $0 (free) | $5/mo when 50+ paid users |
-| Cloudflare D1 | $0 (free) | included in $5/mo |
-| Cloudflare KV | $0 (free) | included in $5/mo |
-| Cloudflare Queues | $0 (free, 10K ops/day) | included in $5/mo |
-| Etherscan API (5 chains) | $0 (free keys) | $150/mo Pro if >100K calls |
-| Binance API | $0 | Never — free |
-| CoinGecko API | $0 (30/min) | $129/mo if >30/min needed |
-| CryptoPanic API | $0 (free token) | €29/mo for more features |
-| GDELT | $0 | Never — Google free |
-| Alternative.me F&G | $0 | Never |
-| Gemini API (AI) | $0 (1500/day) | Paid tier when >1500 analyses/day |
-| Telegram Bot API | $0 | Never |
-| Domain (optional) | $10/year | Optional |
-
-**Total operating cost: $0/month at launch, $5/month after 50 paid users.**
-Revenue at 50 paid users × $5 = $250/month. Profit: $245/month. That's way more than the $30 target.
+- Not a trading bot (the trading_loop is a separate experiment, not the
+  product — the product is intelligence)
+- Not Nansen (no 100M labeled addresses, no institutional feeds)
+- Not a quant model (AI interprets behavior, doesn't predict prices)
+- Not a signal channel (don't tell users what to buy — tell them what
+  happened and why it's interesting)
 
 ---
 
-## FILE STRUCTURE (planned)
+## DECISION LOG
 
-```
-whalesignal/
-  PLAN.md               — this file
-  README.md
-  .gitignore
-  config.example.json   — chain configs, API keys, bot token
-  wizard.py             — interactive setup
-  generate.py           — stamp workers from config + templates
-  deploy_all.py         — wrangler deploy + D1 + queue setup
-  schema/
-    whalesignal.sql     — D1 schema (all tables above)
-  templates/
-    scanner.js          — cron-triggered chain scanner, writes to D1+KV, queues to analyst
-    analyst.js          — queue-triggered AI analysis worker
-    bot.js              — Telegram webhook handler, user commands, alert delivery
-  wallet_labels/
-    exchanges.json      — seed data: known exchange addresses per chain
-    seed.py             — populates D1 wallets table from exchanges.json
-```
-
----
-
-## NEXT STEPS
-
-1. Create whalesignal/ directory and git init
-2. Write schema/whalesignal.sql
-3. Build scanner.js (BTC + ETH scanning, market cache)
-4. Build analyst.js (Gemini AI integration)
-5. Build bot.js (public channel posting)
-6. Test end-to-end with real data
-7. Create public Telegram channel, start posting
-8. Build wizard.py + generate.py + deploy_all.py (reuse cryptopay patterns)
-
-**That's Phase 1. Get alerts flowing to a public channel. Everything else builds on that.**
+- **Keep D1, don't switch to GitHub-as-DB.** D1 is free, relational,
+  indexed, and already integrated. Switching is reinventing a database
+  badly. (2026-08-01)
+- **Keep Queues.** The 3-5s Gemini call must be decoupled from the
+  1-min cron scan. Queues are free (10K ops/day, using 600). (2026-08-01)
+- **Templates before Gemini.** 80% of alerts are obvious. Reserve Gemini
+  for genuinely ambiguous events. Cuts AI cost by 80%. (2026-08-01)
+- **Interestingness score before more chains.** Adding chains increases
+  volume and noise. The score reduces noise first, so added chains bring
+  more signal, not more spam. (2026-08-01)
+- **D1 reads for search, not client-side JSON download.** D1 has 99K
+  reads/day unused. Use it. Don't make mobile users download 5MB JSON.
+  (2026-08-01)
+- **GH Actions for batch jobs, CF Cron for real-time.** Daily reports
+  and accuracy evaluation are batch jobs — GH Actions is better
+  (2000 free min/month). Scanner is real-time — CF Cron (already there).
+  They complement, not compete. (2026-08-01)

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>WhaleSignal — AI Whale Intelligence</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🐋</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,510;14..32,590&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#08090a;--panel:#0f1011;--card:rgba(255,255,255,0.025);--card-hover:rgba(255,255,255,0.04);
+  --t1:#f7f8f8;--t2:#d0d6e0;--t3:#8a8f98;--t4:#62666d;
+  --a:#7170ff;--a-bg:#5e6ad2;
+  --green:#22c55e;--red:#ef4444;--amber:#f59e0b;
+  --border:rgba(255,255,255,0.08);--border-sub:rgba(255,255,255,0.04);
+  --r:8px;--r-sm:6px;
+}
+html{font-size:16px}
+body{
+  font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  background:var(--bg);color:var(--t2);line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+  font-feature-settings:'cv01','ss03';
+  min-height:100vh;
+}
+.con{max-width:960px;margin:0 auto;padding:0 24px}
+
+/* glow */
+@keyframes pg{0%,100%{box-shadow:0 0 0 0 rgba(113,112,255,0)}50%{box-shadow:0 0 0 5px rgba(113,112,255,0.14)}}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+/* header */
+header{position:sticky;top:0;z-index:50;background:rgba(8,9,13,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border-sub)}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:960px;margin:0 auto}
+.logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:590;color:var(--t1);letter-spacing:-.3px}
+.logo i{font-size:22px;font-style:normal}
+.hdr-r{display:flex;align-items:center;gap:8px}
+.dot{width:5px;height:5px;border-radius:50%;display:inline-block}
+.dot.live{background:var(--green);animation:pg 2s infinite}
+.dot.stale{background:var(--amber)}
+.hdr-r .t{font-size:12px;color:var(--t3);font-weight:400}
+.pill{font-size:12px;font-weight:510;color:var(--t2);border:1px solid var(--border);border-radius:9999px;padding:3px 10px;white-space:nowrap}
+.pill-btc{color:#f7931a;border-color:rgba(247,147,26,0.3)}
+.pill-eth{color:#627eea;border-color:rgba(98,126,234,0.3)}
+
+/* hero */
+.hero{padding:72px 0 48px;text-align:center}
+.hero h1{font-size:clamp(28px,6vw,54px);font-weight:510;color:var(--t1);line-height:1.08;letter-spacing:-1.4px;margin-bottom:12px}
+.hero h1 .gr{background:linear-gradient(135deg,#7170ff,#a78bfa,#22c55e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero h2{font-size:clamp(14px,2.3vw,16px);font-weight:400;color:var(--t3);line-height:1.6;max-width:580px;margin:0 auto 24px}
+.pill-row{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:44px}
+
+/* counters */
+.cbar{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:48px}
+.ctr{background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:14px 18px;min-width:100px;text-align:left}
+.ctr-l{font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px}
+.ctr-v{font-size:26px;font-weight:590;color:var(--t1);line-height:1.1;margin-top:2px}
+.ctr-sub{font-size:12px;color:var(--t3);margin-top:1px}
+
+/* section */
+.sec-hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+.sec-title{font-size:15px;font-weight:510;color:var(--t1);letter-spacing:-.2px}
+.sec-badge{font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace;font-weight:400}
+
+/* alerts */
+#alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:72px}
+.ace{
+  background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);
+  padding:16px 18px;animation:fi .35s ease;
+  transition:border-color .18s,background .18s;
+}
+.ace:hover{border-color:var(--border);background:var(--card-hover)}
+.bull{border-left:2px solid var(--green)}
+.bear{border-left:2px solid var(--red)}
+.neut{border-left:2px solid var(--amber)}
+.ace-grid{display:flex;align-items:flex-start;gap:14px}
+.ace-icon{font-size:28px;font-style:normal;width:38px;height:38px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm);background:rgba(255,255,255,0.04);border:1px solid var(--border-sub);flex-shrink:0}
+.ace-body{flex:1;min-width:0}
+.ace-hl{font-size:14px;font-weight:510;color:var(--t1);letter-spacing:-.16px;line-height:1.35;margin-bottom:3px}
+.ace-why{font-size:13px;font-weight:400;color:var(--t3);line-height:1.45}
+.ace-right{text-align:right;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.ace-amt{font-size:16px;font-weight:590;color:var(--t1);letter-spacing:-.2px}
+.tag-chain{font-size:11px;font-weight:510;padding:2px 8px;border-radius:4px}
+.tag-btc{background:rgba(247,147,26,0.12);color:#f7931a}
+.tag-eth{background:rgba(98,126,234,0.12);color:#627eea}
+.tag-ex{font-size:11px;font-weight:510;background:rgba(113,112,255,0.1);color:var(--a);padding:2px 8px;border-radius:4px}
+.ace-ft{font-size:11px;color:var(--t4);margin-top:6px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.conf-dot{width:3px;height:3px;border-radius:50%;display:inline-block;margin-right:4px}
+.conf-dot.hi{background:var(--green)}.conf-dot.mi{background:var(--amber)}.conf-dot.lo{background:var(--t4)}
+
+/* empty / error */
+.none{text-align:center;padding:80px 0;color:var(--t3)}
+.none .e{font-size:52px;display:block;margin-bottom:12px}
+.none p{font-size:14px;max-width:340px;margin:0 auto;line-height:1.5}
+.err{text-align:center;padding:48px 0;color:var(--red);font-size:14px}
+
+/* footer */
+footer{border-top:1px solid var(--border-sub);padding:32px 0 48px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--t4)}
+footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .2s}
+footer a:hover{color:var(--t2)}
+.ft-mono{font-family:JetBrains Mono,monospace;font-size:12px}
+@media(max-width:640px){.con{padding:0 16px}.hdr{padding:12px 16px}.hero{padding:48px 0 32px}.ace-grid{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<header><div class="hdr"><span class="logo"><i>🐋</i> WhaleSignal</span><div class="hdr-r"><span class="dot live" id="dot"></span><span class="t" id="dotTxt">live</span></div></div></header>
+
+<div class="con">
+<section class="hero">
+  <h1>The <span class="gr">whales</span> can't hide.<br>Your bot <span class="gr">knows why</span> they moved.</h1>
+  <h2>Blocks scanned every 30s. Transactions over $500k intercepted. AI interprets the why — bull, bear, or noise — then posts here automatically.</h2>
+  <div class="pill-row"><span class="pill pill-btc">BTC chain ✓</span><span class="pill pill-eth">ETH chain ✓</span><span class="pill">⚡ Gemini-interpreted</span><span class="pill">⛅ Workers</span></div>
+</section>
+
+<div class="cbar" id="market"><div class="ctr"><div class="ctr-l">BTC</div><div class="ctr-v">—</div></div><div class="ctr"><div class="ctr-l">ETH</div><div class="ctr-v">—</div></div><div class="ctr"><div class="ctr-l">Fear & Greed</div><div class="ctr-v">—</div><div class="ctr-sub">/100</div></div></div>
+
+<div class="sec-hd"><h2 class="sec-title">Live alerts from the chain</h2><span class="sec-badge" id="badge">—</span></div>
+<div id="alerts"><div class="none"><span class="e">🐋</span><p>Waiting for the next whale move. Scanner is scanning BTC + ETH blocks every 30s.</p></div></div>
+
+<footer>
+<div><a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal/blob/master/PLAN.md" target="_blank">Plan</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal/blob/master/PLAN_trading_loop.md" target="_blank">Trading loop</a></div>
+<div class="ft-mono">builder: Samsha &nbsp;|&nbsp; no price prediction &nbsp;|&nbsp; scanner + analyst + bot</div>
+</footer>
+</div>
+
+<script>
+const API = 'https://whalesignal-bot.samsha.workers.dev/latest?limit=6';
+const POLL_S = 30;
+let tid;
+
+function fmt(n){if(n==null)return '—';if(Math.abs(n)>=1e6)return '$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return '$'+(n/1e3).toFixed(1)+'K';return '$'+n}
+function ago(ts){if(!ts)return'';const s=Math.floor((Date.now()-ts)/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';return Math.floor(s/3600)+'h ago'}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+
+function render(data){
+  const m=document.getElementById('market');
+  const a=document.getElementById('alerts');
+  const b=document.getElementById('badge');
+  if(!data.ok||!data.alerts.length){
+    a.innerHTML='<div class="none"><span class="e">🐋</span><p>No alerts yet. Scanner is scanning BTC + ETH blocks every 30s — check back in a minute.</p></div>';
+    b.textContent='0';return;
+  }
+  b.textContent=data.count;
+
+  // market
+  if(data.market){
+    const mk=data.market;
+    m.innerHTML=[
+      '<div class="ctr"><div class="ctr-l">BTC</div><div class="ctr-v">'+(mk.btc_price?'$'+Number(mk.btc_price).toLocaleString():'—')+'</div></div>',
+      '<div class="ctr"><div class="ctr-l">ETH</div><div class="ctr-v">'+(mk.eth_price?'$'+Number(mk.eth_price).toLocaleString():'—')+'</div></div>',
+      '<div class="ctr"><div class="ctr-l">Fear & Greed</div><div class="ctr-v">'+(mk.fear_greed??'—')+'</div><div class="ctr-sub">/100</div></div>',
+    ].join('');
+  }
+
+  // alerts
+  a.innerHTML=data.alerts.map(al=>{
+    const sig=al.signal||'neutral';
+    const cls=sig==='bullish'?'bull':sig==='bearish'?'bear':'neut';
+    const emoji=sig==='bullish'?'📈':sig==='bearish'?'📉':'⚪';
+    const chain=al.chain||'btc';
+    const icon=chain.toLowerCase()==='btc'?'₿':'⟠';
+    const tagCls='tag-'+chain.toLowerCase();
+    const confPct=al.confidence!=null?Math.round(al.confidence*100)+'%':'—';
+    const txTag=al.tx_type==='exchange_inflow'?' → exchange':al.tx_type==='exchange_outflow'?' ← exchange':'';
+    return '<div class="ace '+cls+'"><div class="ace-grid">'+
+      '<i class="ace-icon">'+icon+'</i>'+
+      '<div class="ace-body"><div class="ace-hl">'+esc(al.headline||'Whale move detected')+'</div><div class="ace-why">'+esc(al.interpretation||'')+'</div></div>'+
+      '<div class="ace-right"><span class="ace-amt">'+fmt(al.usd_value)+' '+al.symbol+'</span><span><span class="tag-chain '+tagCls+'">'+chain.toUpperCase()+'</span>'+esc(txTag)+'</span></div></div>'+
+      '<div class="ace-ft"><span>'+emoji+' '+sig.charAt(0).toUpperCase()+sig.slice(1)+'</span><span>'+confPct+'</span><span>'+ago(al.detected_at)+'</span></div></div>';
+  }).join('');
+}
+
+async function poll(){
+  try{
+    const r=await fetch(API);
+    if(!r.ok)throw Error('http '+r.status);
+    render(await r.json());
+    document.getElementById('dot').className='dot live';
+    document.getElementById('dotTxt').textContent='live';
+  }catch(e){
+    document.getElementById('dot').className='dot stale';
+    document.getElementById('dotTxt').textContent='offline';
+    document.getElementById('alerts').innerHTML='<div class="err">Could not reach scanner. The worker may be sleeping.</div>';
+  }
+}
+
+function start(){poll();tid=setInterval(poll,POLL_S*1000)}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+</script>
+</body>
+</html>

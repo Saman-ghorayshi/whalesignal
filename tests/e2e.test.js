@@ -16,7 +16,7 @@ import * as bot from "../src/bot.js";
 test("fullPipeline: scanner→analyst→bot posts one alert", async () => {
   const r = await fullPipeline();
 
-  // 1. Two whales detected (one BTC at 6 BTC=$600k, one ETH at 200 ETH=$700k)
+  // 1. Two whales detected (one BTC at 60 BTC=$6M, one ETH at 2000 ETH=$7M)
   assert.equal(r.whales.length, 2, "expected exactly 2 whales");
   const symbols = r.whales.map((w) => w.symbol).sort();
   assert.deepEqual(symbols, ["BTC", "ETH"], "expected one BTC + one ETH whale");

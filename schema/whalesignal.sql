@@ -83,11 +83,24 @@ CREATE TABLE IF NOT EXISTS delivered (
 );
 
 -- ─────────────────────────────────────────────────────────────────────
+-- Sprint 1 additions — additive ALTERs, safe on every deploy.
+-- ─────────────────────────────────────────────────────────────────────
+-- ponatail: SQLite ALTER TABLE ADD COLUMN ignores a missing IF NOT EXISTS,
+-- and D1 doesn't support it either. We guard with a pragma check in
+-- deploy_all.py instead. The statements below are idempotent *only* when
+-- run through the wrapper. If you run this file raw in a sqlite shell
+-- after already adding the columns, you get "duplicate column name" —
+-- which is harmless noise, not data loss.
+ALTER TABLE whales ADD COLUMN interesting_score INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE wallets ADD COLUMN reputation TEXT;
+
+-- ─────────────────────────────────────────────────────────────────────
 -- Indexes — reads dominate the budget (100K/day), so these matter.
 -- ─────────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_whales_chain_time  ON whales(chain, detected_at);
 CREATE INDEX IF NOT EXISTS idx_whales_usd         ON whales(usd_value DESC);
 CREATE INDEX IF NOT EXISTS idx_whales_status      ON whales(analysis_status) WHERE analysis_status != 'done';
+CREATE INDEX IF NOT EXISTS idx_whales_score       ON whales(interesting_score DESC);
 CREATE INDEX IF NOT EXISTS idx_wallets_address    ON wallets(address);
 CREATE INDEX IF NOT EXISTS idx_analysis_whale     ON analysis(whale_id);
 
