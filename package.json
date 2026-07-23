@@ -6,7 +6,7 @@
   "description": "AI-powered whale-intelligence Telegram bot. Runs on Cloudflare free tier.",
   "license": "MIT",
   "scripts": {
-    "test": "node --test tests/*.test.js"
+    "test": "node tests/run_tests.js"
   },
   "devDependencies": {
     "socks-proxy-agent": "^10.1.0"
