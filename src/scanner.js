@@ -159,6 +159,102 @@ export function filterWhales(candidates, minUsd) {
   return candidates.filter((c) => Number.isFinite(c.usd_value) && c.usd_value >= minUsd);
 }
 
+// ─── interestingness score ──────────────────────────────────────────
+//
+// Pure 0-100 heuristic. Gates the AI queue: >= SCORE_THRESHOLD → Gemini,
+// below → INSERT with analysis_status='skipped' (no queue message).
+// Saves 50-90% of Gemini calls by killing noise.
+//
+// Factors (all already available at scan time, no extra fetches):
+//   - transfer size (the raw magnitude)
+//   - tx_type (exchange involvement is more interesting)
+//   - wallet age (old wallets acting are rare)
+//   - wallet tx_count (known whales are more interesting)
+//   - dormancy (wallet silent for >1yr suddenly moves = high signal)
+//   - spam penalty (>5 txs from same wallet in 24h = automation noise)
+//
+// ponytail: hand-tuned weights, not ML. The knobs stay so the physical
+// world (real alert quality feedback) can tune them. Upgrade path: if
+// you ever have labeled "good vs bad alert" data, fit logistic regression
+// weights on these same features and replace the constants.
+
+export const SCORE_THRESHOLD = 50;
+
+/**
+ * Compute the interestingness score for a whale candidate.
+ * Pure, no I/O. Exported for tests.
+ *
+ * @param {object} w — whale candidate (post-filterWhales, post-classifyWhales)
+ *   { usd_value, tx_type, block_time, detected_at, from_address }
+ * @param {object} walletInfo — row from loadWalletMap for from_address
+ *   { label, type, chain, tx_count, first_seen, last_seen } or null
+ *   (tx_count, first_seen, last_seen come from the wallets table — added
+ *   to the SELECT when available; null/0 when unknown wallet)
+ * @param {Array<object>} recentFromSameWallet — recently-detected whales
+ *   from this from_address (for spam penalty). Pass [] when not available
+ *   (first-sight scan). Each: { detected_at }
+ * @returns {number} 0-100 integer
+ */
+export function computeInterestingness(w, walletInfo = null, recentFromSameWallet = []) {
+  let score = 0;
+  const usd = w.usd_value ?? 0;
+
+  // ── size (0-80) ──
+  if (usd >= 100_000_000) score += 80;       // $100M+
+  else if (usd >= 50_000_000) score += 70;   // $50M+
+  else if (usd >= 10_000_000) score += 60;   // $10M+
+  else if (usd >= 5_000_000) score += 45;   // $5M+
+  else if (usd >= 1_000_000) score += 30;    // $1M+
+  else score += 15;                           // $500K-1M (min threshold)
+
+  // ── exchange involvement (0-12) ──
+  if (w.tx_type === "exchange_inflow" || w.tx_type === "exchange_outflow") score += 12;
+  else if (w.tx_type === "exchange_internal") score += 6;
+  else score += 3; // wallet_to_wallet
+
+  // ── wallet age — known wallets with history are more interesting (0-15) ──
+  if (walletInfo) {
+    const txCount = walletInfo.tx_count ?? 0;
+    if (txCount >= 10) score += 15;
+    else if (txCount >= 3) score += 10;
+    else if (txCount >= 1) score += 5;
+  }
+
+  // ── dormancy bonus — old wallet suddenly active (0-20) ──
+  if (walletInfo && walletInfo.last_seen && walletInfo.first_seen) {
+    const now = w.detected_at ?? Date.now();
+    const silenceMs = now - walletInfo.last_seen;
+    const walletAgeMs = now - walletInfo.first_seen;
+    // dormant for more than 1 year = +20, more than 6mo = +12, more than 3mo = +6
+    const ONE_DAY = 86_400_000;
+    if (silenceMs > 365 * ONE_DAY) score += 20;
+    else if (silenceMs > 180 * ONE_DAY) score += 12;
+    else if (silenceMs > 90 * ONE_DAY) score += 6;
+    // wallet existed for >3yr but was silent = extra credibility
+    if (walletAgeMs > 3 * 365 * ONE_DAY) score += 5;
+  }
+
+  // ── spam penalty — many txs from same wallet in 24h = automation (0 to -25) ──
+  if (recentFromSameWallet.length > 0) {
+    const now = w.detected_at ?? Date.now();
+    const oneDayAgo = now - 86_400_000;
+    const count24h = recentFromSameWallet.filter((r) => (r.detected_at ?? 0) > oneDayAgo).length;
+    if (count24h >= 10) score -= 25;
+    else if (count24h >= 5) score -= 15;
+    else if (count24h >= 3) score -= 8;
+  }
+
+  // ── stablecoin neutral penalty — $10M USDT is less interesting than $10M BTC ──
+  // ponytail: stablecoin transfers are usually exchange plumbing, not whale moves.
+  // Reduce score for USDT/USDC/DAI unless the amount is very large.
+  const sym = (w.symbol ?? "").toUpperCase();
+  if ((sym === "USDT" || sym === "USDC" || sym === "DAI") && usd < 50_000_000) {
+    score -= 10;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
 /** Attach a tx_type (exchange_inflow etc.) using the wallet label map. Pure. */
 export function classifyWhales(whales, walletMap) {
   return whales.map((w) => {
@@ -191,41 +287,45 @@ async function bumpErrors(env, chain) {
     .bind(chain).run();
 }
 
-/** Insert a new whale + queue it to analyst. Returns true if newly inserted, false if dup. */
-async function insertWhaleAndQueue(env, wh, walletMap) {
+/**
+ * Insert a new whale + conditionally queue it to analyst.
+ * Returns true if newly inserted (regardless of whether queued).
+ *
+ * Sprint 1: the interestingness score gates whether we spend a Gemini call.
+ * Score >= SCORE_THRESHOLD → queue to analyst (AI analysis).
+ * Below → INSERT with analysis_status='skipped' (no AI cost, no queue msg).
+ */
+async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWallet) {
+  const score = computeInterestingness(wh, walletInfo, recentSameWallet);
+  const shouldAnalyze = score >= SCORE_THRESHOLD;
+
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO whales
        (chain, tx_hash, from_address, to_address, amount, symbol, usd_value,
-        tx_type, block_number, block_time, detected_at, analysis_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+        tx_type, block_number, block_time, detected_at, analysis_status,
+        interesting_score)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     wh.chain, wh.tx_hash, wh.from_address, wh.to_address,
     wh.amount, wh.symbol, wh.usd_value, wh.tx_type,
     wh.block_number ?? null, wh.block_time ?? null,
-    Date.now()
+    Date.now(),
+    shouldAnalyze ? "pending" : "skipped",
+    score
   ).run();
   if (ins.meta.changes === 0) return false; // dup
 
-  // get the inserted row id. INSERT ... RETURNING would be cleaner but D1
-  // supports it; sticking to a follow-up SELECT keeps compat with any older
-  // sqlite build that might be on the runtime for a while.
   const row = await env.DB.prepare(
     "SELECT id FROM whales WHERE tx_hash = ?"
   ).bind(wh.tx_hash).first();
   if (!row?.id) return false;
 
-  // Queue FIRST — if the queue send throws (queue full, binding missing,
-  // quota exceeded), preserve correctness: we never bump wallet stats for a
-  // whale the analyst will never see. The INSERT above already committed, so
-  // worst case we have a 'pending' whale with no queue message — which means
-  // no analysis runs, but that's fine (we'll retry via the next scan's
-  // tx_hash UNIQUE constraint — it's already in the table so it won't re-send).
-  await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
+  // Queue only for interesting whales — saves 50-90% of Gemini calls.
+  if (shouldAnalyze) {
+    await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
+  }
 
-  // Bump wallet stats ONLY for non-exchange addresses. An exchange hot wallet
-  // getting its tx_count incremented every time someone sends to it would
-  // make Binance look like the world's biggest whale, which defeats the point
-  // of the wallets table.
+  // Bump wallet stats for non-exchange addresses.
   const fromType = walletMap?.get(String(wh.from_address).toLowerCase())?.type || null;
   const toType = walletMap?.get(String(wh.to_address).toLowerCase())?.type || null;
   const targets = statTargets(wh.from_address, wh.to_address, fromType, toType);
@@ -235,8 +335,60 @@ async function insertWhaleAndQueue(env, wh, walletMap) {
       "tx_count = tx_count + 1, total_volume = total_volume + ? " +
       "WHERE address IN (" + targets.map(() => "?").join(",") + ") AND chain = ?"
     ).bind(Date.now(), wh.tx_hash, wh.usd_value, ...targets, wh.chain).run();
+
+    // Auto-label: if a wallet crosses 3 txs, label it as 'whale'.
+    // dormancy reactivate: previously dormant wallet waking up.
+    await autoLabelWallets(env, targets, wh.chain, walletMap, walletInfo);
   }
   return true;
+}
+
+/**
+ * Auto-assign wallet reputation labels after stat bump.
+ * - tx_count >= 3 → type='whale'
+ * - dormant for >1yr and now active → pattern='reactivated'
+ * - high frequency (>10 txs in 24h visible in our data) → pattern='high_frequency'
+ *
+ * ponytail: 2 cheap UPDATEs piggybacking on the stats bump. No extra reads
+ * — we use the walletMap we already loaded + the walletInfo from it.
+ * Upgrade path: move to a scheduled cron job that recomputes all labels
+ * from scratch if the rules get complex.
+ */
+async function autoLabelWallets(env, targets, chain, walletMap, walletInfo) {
+  for (const addr of targets) {
+    const key = String(addr).toLowerCase();
+    const info = walletMap?.get(key) ?? walletInfo;
+    if (!info) continue;
+
+    const txCount = (info.tx_count ?? 0) + 1; // +1 for the one we just inserted
+    const updates = [];
+    const bindArgs = [];
+
+    // crossing threshold 3 → become a whale
+    if (txCount >= 3 && info.type !== "exchange" && info.type !== "whale") {
+      updates.push("type = 'whale'");
+    }
+
+    // dormant reactivation
+    if (info.last_seen && info.first_seen) {
+      const silenceMs = Date.now() - info.last_seen;
+      if (silenceMs > 365 * 86_400_000) {
+        updates.push("reputation = 'reactivated'");
+      }
+    }
+
+    // high frequency
+    if (txCount >= 10) {
+      updates.push("reputation = COALESCE(reputation, 'high_frequency')");
+    }
+
+    if (updates.length > 0) {
+      bindArgs.push(chain);
+      await env.DB.prepare(
+        "UPDATE wallets SET " + updates.join(", ") + " WHERE address = ? AND chain = ?"
+      ).bind(addr, chain).run();
+    }
+  }
 }
 
 /**
@@ -253,10 +405,40 @@ export function statTargets(fromAddr, toAddr, fromType, toType) {
   return t;
 }
 
-/** Load the wallets table into a label-map. Should be small enough to keep in-memory per scan. */
+/**
+ * Load the wallets table into a label-map. Should be small enough to keep
+ * in-memory per scan. Includes tx_count/first_seen/last_seen for
+ * interestingness scoring and auto-labeling.
+ */
 async function loadWalletMap(env) {
-  const { results } = await env.DB.prepare("SELECT address, chain, label, type FROM wallets").all();
-  return buildWalletMap(results);
+  const { results } = await env.DB.prepare(
+    "SELECT address, chain, label, type, tx_count, first_seen, last_seen FROM wallets"
+  ).all();
+  const m = new Map();
+  if (!results) return m;
+  for (const r of results) {
+    if (!r || !r.address) continue;
+    const entry = {
+      label: r.label, type: r.type, chain: r.chain,
+      tx_count: r.tx_count, first_seen: r.first_seen, last_seen: r.last_seen,
+    };
+    m.set(String(r.address).toLowerCase(), entry);
+    m.set(String(r.address), entry);
+  }
+  return m;
+}
+
+/**
+ * Fetch recently-detected whales from a specific wallet (for the spam
+ * penalty in interestingness scoring). Returns last 10 by detected_at.
+ * ponytail: 1 D1 read per inserted whale. At 200 whales/day = 200 reads.
+ * Well within the 100K/day free tier.
+ */
+async function recentWhalesFromWallet(env, address, chain) {
+  const { results } = await env.DB.prepare(
+    "SELECT detected_at FROM whales WHERE from_address = ? AND chain = ? ORDER BY detected_at DESC LIMIT 10"
+  ).bind(address, chain).all();
+  return results || [];
 }
 
 /** Fetch the latest block height for a chain. Returns an int (eth: decimal number, btc: height). */
@@ -451,7 +633,10 @@ export async function scanChain(env, chain, market) {
 
     for (const w of whales) {
       try {
-        const inserted = await insertWhaleAndQueue(env, w, walletMap);
+        const fromKey = String(w.from_address).toLowerCase();
+        const walletInfo = walletMap.get(fromKey) ?? null;
+        const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
+        const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet);
         if (inserted) newlyCounted++;
       } catch (e) {
         console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);

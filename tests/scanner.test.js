@@ -3,7 +3,7 @@
 // Does NOT test fetchBlock() or fetchLatestBlockHeight() — those hit the network.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCandidatesBTC, extractCandidatesETH, extractERC20Candidates, filterWhales, classifyWhales, statTargets } from "../src/scanner.js";
+import { extractCandidatesBTC, extractCandidatesETH, extractERC20Candidates, filterWhales, classifyWhales, statTargets, computeInterestingness, SCORE_THRESHOLD } from "../src/scanner.js";
 import { buildWalletMap } from "../src/worker-utils.js";
 
 const MARKET = {
