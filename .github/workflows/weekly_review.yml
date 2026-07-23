@@ -1,0 +1,42 @@
+name: Weekly Review
+
+# Runs every Monday 9am UTC. Reviews the last 7 days of paper trades,
+# updates whale scores + beliefs in the DB, DMs the summary to Telegram.
+# Also manually triggerable for testing.
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install httpx
+
+      - name: Run weekly review
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          WS_BOT_TOKEN: ${{ secrets.WS_BOT_TOKEN }}
+          WS_CHAT_ID: ${{ secrets.WS_CHAT_ID }}
+        run: |
+          python -m trading_loop.weekly_review \
+            --db ./trades.db \
+            --gemini-key "$GEMINI_KEY" \
+            --tg-token "$WS_BOT_TOKEN" \
+            --tg-chat-id "$WS_CHAT_ID"
+
+      - name: Commit updated DB (beliefs + scores)
+        run: |
+          git config user.name "whalesignal-bot"
+          git config user.email "bot@whalesignal"
+          git add trades.db
+          git commit -m "trades.db: weekly review applied [skip ci]" || true
+          git push
