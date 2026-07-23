@@ -99,9 +99,9 @@ class TestModelDefaults:
         """The plan says flash-lite is dumb — we upgraded to deepseek-v4-flash."""
         assert MODEL_TRADE_9ROUTER == "nvidia/deepseek-ai/deepseek-v4-flash"
 
-    def test_review_model_is_deepseek_v4_pro(self):
-        """Weekly review uses the smarter pro model (1 call/week, quality matters)."""
-        assert MODEL_REVIEW_9ROUTER == "nvidia/deepseek-ai/deepseek-v4-pro"
+    def test_review_model_is_glm_5_2(self):
+        """Weekly review uses glm-5.2 (deepseek-v4-pro times out on 9Router)."""
+        assert MODEL_REVIEW_9ROUTER == "nvidia/z-ai/glm-5.2"
 
     def test_gemini_trade_model_is_flash_not_lite(self):
         """Skip flash-lite for direct Gemini — it's too dumb."""
