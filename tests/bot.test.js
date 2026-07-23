@@ -3,7 +3,7 @@
 // No Telegram, no D1, no real GitHub API — fetch is mocked for dispatch tests.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatAlert, buildAlertJSON, fireGitHubDispatch } from "../src/bot.js";
+import { formatAlert, buildAlertJSON, fireGitHubDispatch, latestRows, renderLatestReply, renderLatestJSON } from "../src/bot.js";
 
 const WHALE = {
   chain: "eth",

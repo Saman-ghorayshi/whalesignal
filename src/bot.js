@@ -196,6 +196,32 @@ export async function fetchHandler(request, env, ctx) {
   // only known to Telegram.
   const url = new URL(request.url);
   const path = url.pathname;
+
+  // ─── public GET /latest?limit=N  (Phase 3 of ship runbook) ───────────
+  // ponytail: NO auth. The alert row carries no secret — it's the same
+  // content the bot posts to a public Telegram channel. Read-only, CORS
+  // open so the github.io demo page can fetch() it cross-origin.
+  if (request.method === "GET" && path === "/latest") {
+    const limit = url.searchParams.get("limit") || 1;
+    try {
+      const rows = await latestRows(env, limit);
+      let market = null;
+      try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+      const payload = renderLatestJSON(rows, market);
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",  // github.io lives on a different origin
+          "Cache-Control": "no-cache",         // always fresh; the demo polls 30s
+        },
+      });
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, reason: "db_error", error: e.message }),
+        { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }
+
   const expected = `/tg/${env.BOT_TOKEN || ""}`;
   if (path !== expected) {
     return errJson("not found", 404);
@@ -238,7 +264,11 @@ export async function fetchHandler(request, env, ctx) {
         return okJson({ ok: true, handled: "help" });
       }
       if (lc === "/latest") {
-        const reply = await latestReply(env);
+        // ponytail: DM reply keeps 5-row behavior. Shared helper, limit=5.
+        const rows = await latestRows(env, 5);
+        let market = null;
+        try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+        const reply = renderLatestReply(rows, market);
         await tgSendMessage(env.BOT_TOKEN, chatId, reply);
         return okJson({ ok: true, handled: "latest" });
       }
@@ -266,22 +296,75 @@ Phase 1 (MVP). Commands:
 We post AI-enhanced whale alerts to our channel. Real-time DMs come in Phase 2.
 Got a suggestion? Reply to this message.`;
 
-/** Build the /latest reply from D1 + KV. Pure-ish (DB read only). */
-export async function latestReply(env) {
+// ─── /latest helper (shared by DM /latest and GET /latest route) ───────
+
+/**
+ * Pull the N most-recent analyzed whales rows joined with their analysis.
+ * Pure-ish (DB read only). Returns an array of row objects.
+ *
+ * ponytail: ONE query shape, used by both the Telegram DM /latest reply
+ * and the public GET /latest JSON route. Two surface, one source of truth.
+ * Default limit=1 (smallest JSON payload for the 30s-polling github.io demo).
+ * Callers pass limit=5 for the DM reply to match the original 5-row behavior.
+ */
+export async function latestRows(env, limit = 1) {
+  const n = Math.max(1, Math.min(50, Math.trunc(Number(limit) || 1)));
   const { results } = await env.DB.prepare(
-    "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, w.usd_value, w.tx_type, w.block_number, w.detected_at, a.headline, a.interpretation, a.signal, a.confidence, a.related_factor FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id WHERE w.analysis_status = 'done' ORDER BY w.detected_at DESC LIMIT 5"
-  ).all();
-  if (!results || results.length === 0) {
+    "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
+    "w.usd_value, w.tx_type, w.block_number, w.detected_at, " +
+    "a.headline, a.interpretation, a.signal, a.confidence, a.related_factor " +
+    "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
+    "WHERE w.analysis_status = 'done' ORDER BY w.detected_at DESC LIMIT ?"
+  ).bind(n).all();
+  return results || [];
+}
+
+/** Build the /latest reply FROM the shared query. Public for test reuse. */
+export function renderLatestReply(rows, market = null) {
+  if (!rows || rows.length === 0) {
     return "No whale moves posted yet. The scanner cron just kicked off — check back in a minute.";
   }
-  let market = null;
-  try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
-  const blocks = results.map((w) => {
+  const blocks = rows.map((w) => {
     const sig = (w.signal || "—").toLowerCase();
     const emoji = sig === "bullish" ? "🟢" : sig === "bearish" ? "🔴" : "⚪";
     return `${emoji} ${fmtUSD(w.usd_value)} ${w.symbol} ${w.chain} — ${w.headline || "(no headline)"}\n  ${shortAddr(w.from_address)} → ${shortAddr(w.to_address)}`;
   });
   return ["🐋 Latest whale moves:", "", ...blocks].join("\n");
+}
+
+/** Build the public GET /latest JSON payload from the shared query. */
+export function renderLatestJSON(rows, market = null) {
+  if (!rows || rows.length === 0) {
+    return { ok: false, reason: "no alerts yet", alerts: [] };
+  }
+  const m = market || {};
+  const alerts = rows.map((w) => ({
+    id: w.id,
+    chain: (w.chain || "?").toUpperCase(),
+    whale: w.from_address,
+    to: w.to_address,
+    symbol: w.symbol,
+    usd_value: w.usd_value,
+    amount: w.amount,
+    tx_type: w.tx_type,
+    block_number: w.block_number,
+    detected_at: w.detected_at,
+    signal: w.signal || "neutral",
+    headline: w.headline || "",
+    interpretation: w.interpretation || "",
+    confidence: w.confidence ?? null,
+    related_factor: w.related_factor || null,
+  }));
+  return {
+    ok: true,
+    count: alerts.length,
+    market: {
+      btc_price: m.btc?.price ?? null,
+      eth_price: m.eth?.price ?? null,
+      fear_greed: m.fear_greed ?? null,
+    },
+    alerts,
+  };
 }
 
 // ─── queue: deliver alerts to the public channel ──────────────────────
