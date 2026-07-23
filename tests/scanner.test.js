@@ -162,3 +162,36 @@ test("statTargets skips exchange-address stat bumps (fix: don't make Binance loo
   // empty from address -> skipped
   assert.deepEqual(statTargets("", "0xBOB", null, null), ["0xBOB"]);
 });
+
+// ─── filterNewsKeywords (Phase 3a / whale-reasoning Plan Ladder A) ─────────
+// Pure keyword filter over CryptoPanic items. Mirrors NEWS_KEYWORDS in
+// scanner.js — if that regex changes those tests must too (intentional).
+import { filterNewsKeywords } from "../src/scanner.js";
+
+test("filterNewsKeywords keeps only titles matching the asset word list", () => {
+  const items = [
+    { title: "Binance pauses ETH withdrawals amid market panic" },        // binance ✓
+    { title: "Beautiful sunset over the beach today" },                    // ✗ no kw
+    { title: "SEC charges Coinbase with operating unregistered exchange" },// sec+coinbase ✓
+    { title: "Recipe of the week: avocado toast" },                         // ✗
+    { title: "USDT depeg rumor surfaces on Crypto Twitter" },              // usdt+depeg ✓
+    { title: "Bitcoin halving approaches, miners prep" },                  // halving ✓
+    { title: "ETF inflows hit record high" },                              // etf ✓
+  ];
+  const out = filterNewsKeywords(items);
+  assert.equal(out.length, 5, "caps at 5");
+  assert.equal(out[0].title, "Binance pauses ETH withdrawals amid market panic");
+  assert.equal(out[1].title, "SEC charges Coinbase with operating unregistered exchange");
+  assert.equal(out[2].title, "USDT depeg rumor surfaces on Crypto Twitter");
+  // every kept item must carry only the title field (not the rest of the item)
+  assert.ok(out.every((o) => Object.keys(o).length === 1 && "title" in o),
+    "output objects are {title} only — no leaching extra fields into KV");
+});
+
+test("filterNewsKeywords handles bad input without throwing", () => {
+  assert.deepEqual(filterNewsKeywords(null), []);
+  assert.deepEqual(filterNewsKeywords(undefined), []);
+  assert.deepEqual(filterNewsKeywords([]), []);
+  assert.deepEqual(filterNewsKeywords([{ title: "no kw here" }]), []);
+  assert.deepEqual(filterNewsKeywords([{ title: "Binance x" }, { noTitle: 1 }, null]), [{ title: "Binance x" }]);
+});

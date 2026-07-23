@@ -220,7 +220,10 @@ export async function analyzeOne(env, msg) {
     market = JSON.parse(await env.KV.get("market_cache") || "null");
   } catch { /* null */ }
   try {
-    news = JSON.parse(await env.KV.get("news_cache") || "null");
+    const raw = JSON.parse(await env.KV.get("news_cache") || "null");
+    // scanner writes {headlines:Array<{title}>, updated_at} (Phase 3a / whale-
+    // reasoning Plan Ladder A). buildPrompt wants Array<{title}> or null.
+    news = raw && Array.isArray(raw.headlines) ? raw.headlines : null;
   } catch { /* null */ }
 
   const history = await getWalletHistory(env, whale.from_address, whale.chain, whale.id);
