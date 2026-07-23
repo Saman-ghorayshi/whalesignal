@@ -1,0 +1,35 @@
+name: Evaluate Predictions
+
+# Evaluates AI prediction accuracy 24h after whale events.
+# Runs at 01:00 UTC every day (evaluates yesterday's predictions).
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Evaluate predictions
+        env:
+          WS_API: https://whalesignal-bot.samsha.workers.dev
+        run: |
+          python tools/evaluate_predictions.py \
+            --api "$WS_API" \
+            --output docs/data/evaluations
+
+      - name: Commit evaluations
+        run: |
+          git config user.name "whalesignal-bot"
+          git config user.email "bot@whalesignal"
+          git add docs/data/evaluations/
+          git commit -m "predictions: evaluated $(date -u +%Y-%m-%d) [skip ci]" || true
+          git push

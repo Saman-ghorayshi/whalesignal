@@ -95,6 +95,14 @@ ALTER TABLE whales ADD COLUMN interesting_score INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE wallets ADD COLUMN reputation TEXT;
 
 -- ─────────────────────────────────────────────────────────────────────
+-- Sprint 3 additions — price snapshot at detect time for AI accuracy.
+-- ─────────────────────────────────────────────────────────────────────
+ALTER TABLE whales ADD COLUMN price_at_detect REAL;
+ALTER TABLE analysis ADD COLUMN prediction_outcome TEXT;
+ALTER TABLE analysis ADD COLUMN price_at_eval REAL;
+ALTER TABLE analysis ADD COLUMN evaluated_at INTEGER;
+
+-- ─────────────────────────────────────────────────────────────────────
 -- Indexes — reads dominate the budget (100K/day), so these matter.
 -- ─────────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_whales_chain_time  ON whales(chain, detected_at);
