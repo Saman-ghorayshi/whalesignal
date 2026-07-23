@@ -130,7 +130,7 @@ def insert_signals_from_alerts(db: sqlite3.Connection, alerts: list):
 
 # ─── the decision (one LLM call) ──────────────────────────────────────
 
-def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=False, llm_stub=None):
+def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=False, llm_stub=None, gemini_key=None):
     """Process one signal: LLM debate → risk check → execute → record."""
 
     whale = signal["whale"]
@@ -160,7 +160,7 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
         if isinstance(decision, str):
             decision = extract_json(decision)
     else:
-        decision = call_llm(prompt, base_url=llm_base_url)
+        decision = call_llm(prompt, base_url=llm_base_url, gemini_key=gemini_key)
 
     # Parse decision
     verdict = decision.get("decision", "SKIP").upper().strip()
@@ -321,8 +321,9 @@ def run_loop(args):
 
     alerts_url = args.alerts_url
     alerts_file = args.alerts_file
+    gemini_key = args.gemini_key or os.environ.get("GEMINI_KEY")
 
-    print(f"[loop] starting — db={args.db} dry_run={args.dry_run}")
+    print(f"[loop] starting — db={args.db} dry_run={args.dry_run} gemini={'yes' if gemini_key else 'no'}")
 
     if args.dry_run:
         # single pass — fetch alerts, process each, close trades, exit
@@ -335,7 +336,8 @@ def run_loop(args):
         for s in sigs:
             try:
                 decide_and_trade(db, s, hl, args.llm, args.starting_balance,
-                                 dry_run=True, llm_stub=args.llm_stub)
+                                 dry_run=True, llm_stub=args.llm_stub,
+                                 gemini_key=gemini_key)
             except Exception as e:
                 print(f"  [error] signal {s['id']}: {e}", file=sys.stderr)
         check_and_close_trades(db, hl, dry_run=True)
@@ -352,7 +354,8 @@ def run_loop(args):
             sigs = new_signals(db)
             for s in sigs:
                 try:
-                    decide_and_trade(db, s, hl, args.llm, args.starting_balance)
+                    decide_and_trade(db, s, hl, args.llm, args.starting_balance,
+                                     gemini_key=gemini_key)
                 except Exception as e:
                     print(f"  [error] signal {s['id']}: {e}", file=sys.stderr)
 
@@ -372,6 +375,7 @@ def main():
     p.add_argument("--testnet-key", default=None)
     p.add_argument("--starting-balance", type=float, default=100.0)
     p.add_argument("--llm", default="http://localhost:20128/v1/chat/completions")
+    p.add_argument("--gemini-key", default=None, help="Google AI Studio API key (bypasses 9Router, calls Gemini direct)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--llm-stub", default=None, help="stub JSON file for LLM responses (dry-run)")
     args = p.parse_args()
