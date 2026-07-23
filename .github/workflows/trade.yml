@@ -1,0 +1,43 @@
+name: Trade Loop
+
+# Triggered by Cloudflare Worker (bot.js) via repository_dispatch
+# when a new whale alert is detected. Also manually triggerable.
+on:
+  repository_dispatch:
+    types: [new_alert]
+  workflow_dispatch: {}
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install httpx hyperliquid-python-sdk eth-account
+
+      - name: Run trade loop
+        env:
+          R2_ALERTS_URL: ${{ secrets.R2_ALERTS_URL }}
+          HL_TESTNET_KEY: ${{ secrets.HL_TESTNET_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          STARTING_BALANCE: "100"
+        run: |
+          python -m trading_loop.main \
+            --db ./trades.db \
+            --alerts-url "$R2_ALERTS_URL" \
+            --testnet-key "$HL_TESTNET_KEY" \
+            --starting-balance "$STARTING_BALANCE" \
+            --gemini-key "$GEMINI_KEY"
+
+      - name: Commit trades.db back to repo
+        run: |
+          git config user.name "whalesignal-bot"
+          git config user.email "bot@whalesignal"
+          git add trades.db
+          git commit -m "trades.db: updated by GH Actions trade loop [skip ci]" || true
+          git push
