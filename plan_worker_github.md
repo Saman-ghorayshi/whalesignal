@@ -5,6 +5,46 @@
 
 ---
 
+## BUILD STATUS (updated 2026-07-17)
+
+All 7 steps built and tested. Commits below:
+
+| Step | What | Commit | Status |
+|---|---|---|---|
+| 1 | llm.py: deepseek-v4-flash default + Gemini direct + retry | e9f5d52 | Built, tested live on 9Router |
+| 2 | .github/workflows/trade.yml | c623343 | Built |
+| 3 | .github/workflows/weekly_review.yml | f411e19 | Built |
+| 4 | bot.js: fireGitHubDispatch() repository_dispatch | 2d3bd4c | Built, 5 JS tests green |
+| 5 | main.py: --gemini-key flag + plumbing | 629b590 | Built, live tested |
+| 6 | weekly_review.py: --gemini-key flag + deepseek-v4-pro | 43c5827 | Built, live testing |
+| 7 | Python tests (test_llm.py + test_main.py) | bec4880 | 29 tests green |
+| 8 | JS dispatch tests (bot.test.js) | 1b08a66 | 5 new tests, 38 total green |
+
+### LIVE TEST RESULTS
+
+**Trade loop (main.py + 9Router deepseek-v4-flash):**
+- 3 fixture alerts → 2 COPY trades + 1 SKIP
+- Signal 1 (ETH bullish): deepseek-v4-flash said COPY long, conf 0.6, leverage 2
+  - Bear: "no prior track record, cold wallet move could indicate preparation"
+  - Bull: "Withdrawing 1500 ETH from Binance during extreme fear suggests accumulation"
+- Signal 2 (BTC bearish): COPY short, conf 0.7, leverage 2
+  - Bear: "classic sell preparation before a potential dump"
+  - Bull: "could be moving for liquidity or arbitrage, not necessarily dumping"
+- Signal 3 (neutral): SKIP
+- Risk manager clamped both to $10 (10% cap)
+- All 3 signals marked processed, 2 trades in DB
+
+**Weekly review (weekly_review.py + 9Router deepseek-v4-pro):**
+- 12 trades, 6 wins, 6 losses, PnL $23.33
+- (running — deepseek-v4-pro is slower, quality model)
+
+### TEST COUNTS
+- Python: 29 tests (test_llm.py + test_main.py), 0.43s, all green
+- JS: 38 tests (33 existing + 5 GitHub dispatch), 0.49s, all green
+- Total: 67 tests, all green
+
+---
+
 ## THE QUESTION
 
 "I don't have money, I don't want my PC on 24/7, and the code is on a public repo — can people steal my strategy? Also flash-lite is dumb, and does Gemini free tier hit a limit?"
