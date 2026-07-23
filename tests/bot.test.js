@@ -1,9 +1,9 @@
 // tests/bot.test.js
-// Tests the pure alert formatter (formatAlert). No Telegram, no D1.
+// Tests the pure alert formatter (formatAlert) + GitHub dispatch logic.
+// No Telegram, no D1, no real GitHub API — fetch is mocked for dispatch tests.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatAlert } from "../src/bot.js";
-import { buildAlertJSON } from "../src/bot.js";
+import { formatAlert, buildAlertJSON, fireGitHubDispatch } from "../src/bot.js";
 
 const WHALE = {
   chain: "eth",
@@ -115,4 +115,101 @@ test("buildAlertJSON handles missing market (nulls, not crash)", () => {
   assert.equal(out.market.btc_price, null);
   assert.equal(out.market.eth_price, null);
   assert.equal(out.market.fear_greed, null);
+});
+
+// ─── fireGitHubDispatch (repository_dispatch to trigger GH Actions) ───
+
+// Helper: create a mock env with GH_PAT and GH_REPO
+const mockEnv = (pat = "ghp_test123", repo = "samsha/whalesignal") => ({
+  GH_PAT: pat,
+  GH_REPO: repo,
+});
+
+const mockAlert = { id: 42, whale: "0xAAA111", chain: "ETH", signal: "bullish" };
+
+test("fireGitHubDispatch sends POST to GitHub API with correct body", async () => {
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url, method: opts?.method, headers: opts?.headers, body: JSON.parse(opts?.body) });
+    return { ok: true, status: 204, statusText: "No Content" };
+  };
+  try {
+    await fireGitHubDispatch(mockEnv(), mockAlert);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://api.github.com/repos/samsha/whalesignal/dispatches");
+    assert.equal(calls[0].method, "POST");
+    assert.match(calls[0].headers.Authorization, /Bearer ghp_test123/);
+    assert.equal(calls[0].body.event_type, "new_alert");
+    assert.equal(calls[0].body.client_payload.alert_id, 42);
+    assert.equal(calls[0].body.client_payload.whale, "0xAAA111");
+    assert.equal(calls[0].body.client_payload.chain, "ETH");
+    assert.equal(calls[0].body.client_payload.signal, "bullish");
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test("fireGitHubDispatch is a no-op when GH_PAT or GH_REPO not set", async () => {
+  const origFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; return { ok: true }; };
+  try {
+    // Missing GH_PAT
+    await fireGitHubDispatch({ GH_REPO: "samsha/whalesignal" }, mockAlert);
+    assert.equal(called, false, "should not call fetch when GH_PAT is missing");
+
+    // Missing GH_REPO
+    called = false;
+    await fireGitHubDispatch({ GH_PAT: "ghp_test" }, mockAlert);
+    assert.equal(called, false, "should not call fetch when GH_REPO is missing");
+
+    // Both missing
+    called = false;
+    await fireGitHubDispatch({}, mockAlert);
+    assert.equal(called, false, "should not call fetch when both are missing");
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test("fireGitHubDispatch handles non-ok response without throwing", async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 401, statusText: "Unauthorized" });
+  try {
+    // Should not throw — it's fire-and-forget
+    await fireGitHubDispatch(mockEnv(), mockAlert);
+    // If we get here without an exception, the test passes
+    assert.ok(true, "fireGitHubDispatch handled 401 without throwing");
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test("fireGitHubDispatch handles network error without throwing", async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("ECONNREFUSED"); };
+  try {
+    await fireGitHubDispatch(mockEnv(), mockAlert);
+    assert.ok(true, "fireGitHubDispatch handled network error without throwing");
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test("fireGitHubDispatch handles null alertJSON fields safely", async () => {
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ body: JSON.parse(opts?.body) });
+    return { ok: true, status: 204 };
+  };
+  try {
+    await fireGitHubDispatch(mockEnv(), null);
+    // when alertJSON is null, all payload fields should be null
+    assert.equal(calls[0].body.client_payload.alert_id, null);
+    assert.equal(calls[0].body.client_payload.whale, null);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
 });
