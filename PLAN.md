@@ -452,12 +452,16 @@ The goal: daily intelligence + AI accountability.
     - Files: `src/bot.js` (countCluster query + formatClusterNote pure fn)
     - D1: +1 read per alert (already well under budget)
 
-### Sprint 4: Ship + polish (2-3 days)
+### Sprint 4: Ship + polish (2-3 days) — NEXT (requires live infrastructure)
 11. Run `wizard.py`, `deploy_all.py`, set webhook, add bot to channel
 12. Verify scanner picks up blocks, analyst runs, bot posts
 13. Verify `docs/index.html` fetches `/latest` and renders
 14. Post first real alerts, verify quality
 15. Submit to DoraHacks BUIDL + onboarding findings
+
+**Sprints 1-3 are code-complete: 108 tests pass, 3 commits.**
+**Sprint 4 needs:** wrangler CLI, CF account, secrets (BOT_TOKEN, GEMINI_KEY, GH_PAT),
+D1 namespace, KV namespace, Queue, Workers deploy. All deploy scripts exist (wizard.py, deploy_all.py).
 
 ---
 
