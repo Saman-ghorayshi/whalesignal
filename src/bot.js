@@ -68,6 +68,52 @@ async function postAlertToR2(env, alertJSON) {
   await env.ALERTS_R2.put(key, existing + ndjsonLine);
 }
 
+// ─── GitHub Actions trigger (repository_dispatch) ────────────────────
+
+/**
+ * Fire a repository_dispatch event to GitHub Actions.
+ * This triggers the trade.yml workflow in the whalesignal repo.
+ *
+ * Requires env.GH_PAT (GitHub Personal Access Token, repo scope) and
+ * env.GH_REPO (e.g. "samsha/whalesignal"). Both set as CF Worker secrets.
+ *
+ * Fire-and-forget: if the POST fails, we log but don't throw — the alert
+ * is already posted to Telegram and R2. The trading loop will pick it up
+ * on the next manual or scheduled GH Actions run anyway.
+ */
+export async function fireGitHubDispatch(env, alertJSON) {
+  if (!env.GH_PAT || !env.GH_REPO) return; // not configured — skip
+  try {
+    const resp = await fetch(
+      `https://api.github.com/repos/${env.GH_REPO}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.GH_PAT}`,
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github+json",
+        },
+        body: JSON.stringify({
+          event_type: "new_alert",
+          client_payload: {
+            alert_id: alertJSON?.id ?? null,
+            whale: alertJSON?.whale ?? null,
+            chain: alertJSON?.chain ?? null,
+            signal: alertJSON?.signal ?? null,
+          },
+        }),
+      },
+    );
+    if (!resp.ok) {
+      console.warn(`[bot] GitHub dispatch failed: ${resp.status} ${resp.statusText}`);
+    } else {
+      console.log(`[bot] GitHub dispatch sent for alert ${alertJSON?.id}`);
+    }
+  } catch (e) {
+    console.warn(`[bot] GitHub dispatch error: ${e.message}`);
+  }
+}
+
 // ─── alert formatting (pure, testable) ────────────────────────────────
 
 /**
@@ -296,6 +342,9 @@ async function postPublicAlert(env, whaleId) {
   // R2 export for the Python trading loop (trading_loop.py polls this)
   const alertJSON = buildAlertJSON(whale, market);
   if (alertJSON) await postAlertToR2(env, alertJSON);
+
+  // Fire GitHub Actions (triggers trade.yml via repository_dispatch)
+  if (alertJSON) await fireGitHubDispatch(env, alertJSON);
 
   await env.DB.prepare(
     "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
