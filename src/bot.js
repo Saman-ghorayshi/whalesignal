@@ -14,6 +14,18 @@
 
 import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
 
+/** ponytail: shared JSON response helper for all public GET routes. */
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-cache",
+    },
+  });
+}
+
 // ─── R2 alert export (for paper-trading consumer) ─────────────────────
 
 /**
@@ -208,17 +220,56 @@ export async function fetchHandler(request, env, ctx) {
       let market = null;
       try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
       const payload = renderLatestJSON(rows, market);
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",  // github.io lives on a different origin
-          "Cache-Control": "no-cache",         // always fresh; the demo polls 30s
-        },
-      });
+      return jsonResponse(payload);
     } catch (e) {
-      return new Response(JSON.stringify({ ok: false, reason: "db_error", error: e.message }),
-        { status: 500, headers: { "Content-Type": "application/json" } });
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /stats — aggregate statistics for the stats page ────
+  if (request.method === "GET" && path === "/stats") {
+    try {
+      const stats = await statsRows(env);
+      const bySymbol = await statsBySymbol(env);
+      const hourly = await statsHourly(env);
+      let market = null;
+      try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+      const payload = renderStatsJSON(stats, bySymbol, hourly, market);
+      return jsonResponse(payload);
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /history — paginated, filterable whale history ──────
+  if (request.method === "GET" && path === "/history") {
+    try {
+      const opts = {
+        page: url.searchParams.get("page") || 1,
+        limit: url.searchParams.get("limit") || 20,
+        chain: url.searchParams.get("chain"),
+        symbol: url.searchParams.get("symbol"),
+        signal: url.searchParams.get("signal"),
+        min_usd: url.searchParams.get("min_usd"),
+      };
+      const rows = await historyRows(env, opts);
+      const payload = renderHistoryJSON(rows, opts.page, opts.limit, rows.length);
+      return jsonResponse(payload);
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /wallet/:addr — wallet profile + recent txs ─────────
+  if (request.method === "GET" && path.startsWith("/wallet/")) {
+    try {
+      const addr = decodeURIComponent(path.slice("/wallet/".length));
+      const chain = url.searchParams.get("chain");
+      const { profile, txs } = await walletProfile(env, addr, chain);
+      const payload = renderWalletJSON(profile, txs);
+      return jsonResponse(payload, profile ? 200 : 404);
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
   }
 
@@ -364,6 +415,212 @@ export function renderLatestJSON(rows, market = null) {
       fear_greed: m.fear_greed ?? null,
     },
     alerts,
+  };
+}
+
+// ─── /stats endpoint ───────────────────────────────────────────────────
+
+/**
+ * Query aggregate stats from D1. One round trip, ~5 reads of existing indexes.
+ * Returns: total whales, total volume, signal breakdown, top symbols,
+ * 24h count, 7d count, largest transfer, exchange flow ratios.
+ */
+export async function statsRows(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT
+       COUNT(*)                              AS total_whales,
+       COALESCE(SUM(usd_value), 0)           AS total_volume,
+       COALESCE(SUM(CASE WHEN a.signal='bullish' THEN 1 ELSE 0 END), 0) AS bullish,
+       COALESCE(SUM(CASE WHEN a.signal='bearish' THEN 1 ELSE 0 END), 0) AS bearish,
+       COALESCE(SUM(CASE WHEN a.signal='neutral' THEN 1 ELSE 0 END), 0) AS neutral,
+       COALESCE(SUM(CASE WHEN detected_at > ? THEN 1 ELSE 0 END), 0)   AS count_24h,
+       COALESCE(SUM(CASE WHEN detected_at > ? THEN 1 ELSE 0 END), 0)   AS count_7d,
+       COALESCE(MAX(usd_value), 0)           AS largest_transfer
+     FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id
+     WHERE w.analysis_status IN ('done', 'skipped')`
+  ).bind(Date.now() - 86_400_000, Date.now() - 7 * 86_400_000).all();
+  return (results && results[0]) || {};
+}
+
+/**
+ * Query per-symbol breakdown for the stats page. Top 5 symbols by count.
+ */
+export async function statsBySymbol(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT symbol, COUNT(*) AS count, COALESCE(SUM(usd_value), 0) AS volume
+     FROM whales WHERE analysis_status IN ('done', 'skipped')
+     GROUP BY symbol ORDER BY count DESC LIMIT 5`
+  ).all();
+  return results || [];
+}
+
+/**
+ * Query hourly whale activity for the last 24h (for charts). Returns
+ * { hour_bucket, count, volume } per hour.
+ */
+export async function statsHourly(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT
+       (detected_at / 3600000) * 3600000 AS hour_bucket,
+       COUNT(*)                           AS count,
+       COALESCE(SUM(usd_value), 0)        AS volume
+     FROM whales
+     WHERE detected_at > ? AND analysis_status IN ('done', 'skipped')
+     GROUP BY hour_bucket ORDER BY hour_bucket ASC`
+  ).bind(Date.now() - 24 * 86_400_000).all();
+  return results || [];
+}
+
+/** Pure. Build the /stats JSON payload from query results. */
+export function renderStatsJSON(stats, bySymbol, hourly, market = null) {
+  const s = stats || {};
+  const total = s.total_whales || 0;
+  return {
+    ok: total > 0,
+    total_whales: total,
+    total_volume: s.total_volume || 0,
+    count_24h: s.count_24h || 0,
+    count_7d: s.count_7d || 0,
+    largest_transfer: s.largest_transfer || 0,
+    signals: {
+      bullish: s.bullish || 0,
+      bearish: s.bearish || 0,
+      neutral: s.neutral || 0,
+    },
+    top_symbols: (bySymbol || []).map((sym) => ({
+      symbol: sym.symbol,
+      count: sym.count,
+      volume: sym.volume,
+    })),
+    hourly: (hourly || []).map((h) => ({
+      hour: h.hour_bucket,
+      count: h.count,
+      volume: h.volume,
+    })),
+    market: market ? {
+      btc_price: market.btc?.price ?? null,
+      eth_price: market.eth?.price ?? null,
+      fear_greed: market.fear_greed ?? null,
+    } : null,
+  };
+}
+
+// ─── /history endpoint ─────────────────────────────────────────────────
+
+/**
+ * Paginated history query. Filters: chain, symbol, signal, min_usd.
+ * Sort: detected_at DESC. Returns joined whale+analysis rows.
+ */
+export async function historyRows(env, opts = {}) {
+  const { page = 1, limit = 20, chain = null, symbol = null, signal = null, min_usd = null } = opts;
+  const n = Math.max(1, Math.min(100, Math.trunc(Number(limit) || 20)));
+  const offset = Math.max(0, (Math.trunc(Number(page) || 1) - 1) * n);
+
+  let sql = "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
+    "w.usd_value, w.tx_type, w.block_number, w.detected_at, w.interesting_score, " +
+    "a.headline, a.interpretation, a.signal, a.confidence, a.related_factor " +
+    "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
+    "WHERE w.analysis_status IN ('done', 'skipped')";
+  const binds = [];
+  if (chain) { sql += " AND w.chain = ?"; binds.push(chain.toLowerCase()); }
+  if (symbol) { sql += " AND w.symbol = ?"; binds.push(symbol.toUpperCase()); }
+  if (signal) { sql += " AND a.signal = ?"; binds.push(signal.toLowerCase()); }
+  if (min_usd) { sql += " AND w.usd_value >= ?"; binds.push(Number(min_usd)); }
+  sql += " ORDER BY w.detected_at DESC LIMIT ? OFFSET ?";
+  binds.push(n, offset);
+
+  const stmt = env.DB.prepare(sql);
+  for (let i = 0; i < binds.length; i++) stmt.bind(binds[i]);
+  const { results } = await stmt.all();
+  return results || [];
+}
+
+/** Pure. Build the /history JSON payload. */
+export function renderHistoryJSON(rows, page, limit, total) {
+  return {
+    ok: true,
+    page: Math.max(1, Math.trunc(Number(page) || 1)),
+    limit: Math.max(1, Math.min(100, Math.trunc(Number(limit) || 20))),
+    total: total || (rows ? rows.length : 0),
+    alerts: (rows || []).map((w) => ({
+      id: w.id,
+      chain: (w.chain || "?").toUpperCase(),
+      tx_hash: w.tx_hash,
+      from: w.from_address,
+      to: w.to_address,
+      symbol: w.symbol,
+      usd_value: w.usd_value,
+      amount: w.amount,
+      tx_type: w.tx_type,
+      interesting_score: w.interesting_score ?? 0,
+      detected_at: w.detected_at,
+      signal: w.signal || null,
+      headline: w.headline || null,
+      confidence: w.confidence ?? null,
+    })),
+  };
+}
+
+// ─── /wallet/:addr endpoint ────────────────────────────────────────────
+
+/**
+ * Wallet profile: metadata from wallets table + recent whale txs involving
+ * this address (as sender or receiver). Two queries, one round trip each.
+ */
+export async function walletProfile(env, address, chain = null) {
+  const addr = String(address || "").toLowerCase();
+  let sql = "SELECT address, chain, label, type, reputation, tx_count, total_volume, first_seen, last_seen FROM wallets WHERE address = ?";
+  const binds = [addr];
+  if (chain) { sql += " AND chain = ?"; binds.push(chain.toLowerCase()); }
+  sql += " LIMIT 1";
+  const profile = await env.DB.prepare(sql).bind(...binds).first();
+
+  // Recent txs involving this wallet (as from or to), joined with analysis.
+  const txs = await env.DB.prepare(
+    "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
+    "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
+    "a.signal, a.headline, a.confidence " +
+    "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
+    "WHERE (w.from_address = ? OR w.to_address = ?) " +
+    (chain ? "AND w.chain = ? " : "") +
+    "ORDER BY w.detected_at DESC LIMIT 20"
+  ).bind(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr]).all();
+
+  return { profile, txs: txs?.results || [] };
+}
+
+/** Pure. Build the /wallet/:addr JSON payload. */
+export function renderWalletJSON(profile, txs) {
+  if (!profile) {
+    return { ok: false, reason: "wallet not in database", address: null, txs: [] };
+  }
+  return {
+    ok: true,
+    address: profile.address,
+    chain: profile.chain,
+    label: profile.label || null,
+    type: profile.type || "unknown",
+    reputation: profile.reputation || null,
+    tx_count: profile.tx_count ?? 0,
+    total_volume: profile.total_volume ?? 0,
+    first_seen: profile.first_seen ?? null,
+    last_seen: profile.last_seen ?? null,
+    recent_txs: (txs || []).map((t) => ({
+      id: t.id,
+      chain: (t.chain || "?").toUpperCase(),
+      tx_hash: t.tx_hash,
+      direction: t.from_address === profile.address ? "out" : "in",
+      counterpart: t.from_address === profile.address ? t.to_address : t.from_address,
+      amount: t.amount,
+      symbol: t.symbol,
+      usd_value: t.usd_value,
+      tx_type: t.tx_type,
+      detected_at: t.detected_at,
+      interesting_score: t.interesting_score ?? 0,
+      signal: t.signal || null,
+      headline: t.headline || null,
+      confidence: t.confidence ?? null,
+    })),
   };
 }
 

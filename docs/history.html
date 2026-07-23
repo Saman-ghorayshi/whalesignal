@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>WhaleSignal — History</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🐋</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,510;14..32,590&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#08090a;--panel:#0f1011;--card:rgba(255,255,255,0.025);--card-hover:rgba(255,255,255,0.04);--t1:#f7f8f8;--t2:#d0d6e0;--t3:#8a8f98;--t4:#62666d;--a:#7170ff;--a-bg:#5e6ad2;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;--border:rgba(255,255,255,0.08);--border-sub:rgba(255,255,255,0.04);--r:8px;--r-sm:6px}
+html{font-size:16px}body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--t2);line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh}
+.con{max-width:960px;margin:0 auto;padding:0 24px}
+header{position:sticky;top:0;z-index:50;background:rgba(8,9,13,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border-sub)}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:960px;margin:0 auto}
+.logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:590;color:var(--t1);letter-spacing:-.3px}
+.logo i{font-size:22px;font-style:normal}
+.nav-links{display:flex;gap:16px;align-items:center}
+.nav-links a{font-size:13px;color:var(--t3);text-decoration:none;transition:color .2s}
+.nav-links a:hover{color:var(--t2)}
+.hero{padding:48px 0 24px;text-align:center}
+.hero h1{font-size:clamp(24px,5vw,40px);font-weight:510;color:var(--t1);letter-spacing:-1px;margin-bottom:8px}
+.hero p{font-size:14px;color:var(--t3);max-width:480px;margin:0 auto}
+.filters{background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:16px;margin-bottom:24px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px}
+.field input,.field select{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--t2);font-size:13px;font-family:inherit;outline:none}
+.field input:focus,.field select:focus{border-color:var(--a)}
+.btn{background:var(--a);color:#fff;border:none;border-radius:var(--r-sm);padding:8px 18px;font-size:13px;font-weight:510;cursor:pointer;font-family:inherit;transition:opacity .2s}
+.btn:hover{opacity:.85}
+.tbl{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
+.tbl th{text-align:left;font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px;padding:8px 12px;border-bottom:1px solid var(--border-sub)}
+.tbl td{padding:8px 12px;color:var(--t2);border-bottom:1px solid var(--border-sub)}
+.tbl td.mono{font-family:JetBrains Mono,monospace}
+.sgl{display:inline-block;width:8px;height:8px;border-radius:50%}
+.sgl.b{background:var(--green)}.sgl.r{background:var(--red)}.sgl.n{background:var(--amber)}
+.tag-chain{font-size:11px;font-weight:510;padding:2px 8px;border-radius:4px}
+.tag-btc{background:rgba(247,147,26,0.12);color:#f7931a}.tag-eth{background:rgba(98,126,234,0.12);color:#627eea}
+.score-bar{width:40px;height:4px;background:var(--border-sub);border-radius:2px;display:inline-block;vertical-align:middle}
+.score-fill{height:100%;border-radius:2px}
+.pad{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px;padding:0 4px}
+.pad button{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 16px;color:var(--t2);font-size:13px;cursor:pointer;font-family:inherit}
+.pad button:disabled{opacity:.3;cursor:default}
+.pad span{font-size:13px;color:var(--t3);font-family:JetBrains Mono,monospace}
+.none{text-align:center;padding:60px 0;color:var(--t3)}
+.none .e{font-size:52px;display:block;margin-bottom:12px}
+.none p{font-size:14px;max-width:340px;margin:0 auto}
+.err{text-align:center;padding:48px 0;color:var(--red);font-size:14px}
+footer{border-top:1px solid var(--border-sub);padding:32px 0 48px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--t4)}
+footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .2s}footer a:hover{color:var(--t2)}
+.ft-mono{font-family:JetBrains Mono,monospace;font-size:12px}
+@media(max-width:640px){.con{padding:0 16px}.hdr{padding:12px 16px}.filters{flex-direction:column}.tbl{font-size:11px}}
+</style>
+</head>
+<body>
+<header><div class="hdr"><span class="logo"><i>🐋</i> WhaleSignal</span><div class="nav-links"><a href="index.html">Home</a><a href="stats.html">Stats</a></div></div></header>
+<div class="con">
+<section class="hero"><h1>Whale History</h1><p>Searchable archive of all detected whale movements. Filter by chain, symbol, signal, or minimum USD value.</p></section>
+<div class="filters">
+  <div class="field"><label>Chain</label><select id="f-chain"><option value="">All</option><option value="btc">BTC</option><option value="eth">ETH</option></select></div>
+  <div class="field"><label>Symbol</label><input id="f-symbol" type="text" placeholder="BTC, ETH, USDT..." style="width:90px"></div>
+  <div class="field"><label>Signal</label><select id="f-signal"><option value="">All</option><option value="bullish">Bullish</option><option value="bearish">Bearish</option><option value="neutral">Neutral</option></select></div>
+  <div class="field"><label>Min USD</label><input id="f-minusd" type="number" placeholder="5000000" style="width:110px"></div>
+  <button class="btn" id="f-apply">Apply</button>
+</div>
+<table class="tbl"><thead><tr><th>Date</th><th>Chain</th><th>Symbol</th><th>Amount</th><th>USD Value</th><th>Type</th><th>Signal</th><th>Score</th><th>Headline</th></tr></thead><tbody id="hist-body"></tbody></table>
+<div class="pad"><button id="prev-btn" disabled>← Prev</button><span id="page-info">Page 1</span><button id="next-btn" disabled>Next →</button></div>
+<footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal History</div></footer>
+</div>
+<script>
+const API='https://whalesignal-bot.samsha.workers.dev';
+let page=1,limit=20,total=0;
+function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
+function ago(ts){if(!ts)return'';const d=new Date(ts);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})} 
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+function sigDot(s){const v=(s||'').toLowerCase();return v==='bullish'?'b':v==='bearish'?'r':'n'}
+function sigLabel(s){return s?(s.charAt(0).toUpperCase()+s.slice(1)):'—'}
+async function fetchHistory(){
+  const p=new URLSearchParams();p.set('page',page);p.set('limit',limit);
+  const c=document.getElementById('f-chain').value;if(c)p.set('chain',c);
+  const s=document.getElementById('f-symbol').value;if(s)p.set('symbol',s);
+  const sg=document.getElementById('f-signal').value;if(sg)p.set('signal',sg);
+  const mu=document.getElementById('f-minusd').value;if(mu)p.set('min_usd',mu);
+  try{
+    const r=await fetch(`${API}/history?${p}`);
+    if(!r.ok)throw Error('http '+r.status);
+    const data=await r.json();
+    total=data.total||0;
+    const body=document.getElementById('hist-body');
+    if(!data.alerts||!data.alerts.length){body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--t3);padding:40px 0">No whale events found. Try adjusting filters.</td></tr>';return;}
+    body.innerHTML=data.alerts.map(a=>{
+      const chain=(a.chain||'').toLowerCase();const tagCls='tag-'+chain;
+      const sCls=sigDot(a.signal);
+      const scorePct=Math.round((a.interesting_score||0)*100/100);
+      const scoreColor=scorePct>=70?'var(--green)':scorePct>=50?'var(--amber)':'var(--t4)';
+      const txType=a.tx_type?a.tx_type.replace(/_/g,' '):'—';
+      return '<tr><td>'+ago(a.detected_at)+'</td><td><span class="tag-chain '+tagCls+'">'+(a.chain||'?')+'</span></td><td>'+esc(a.symbol)+'</td><td class="mono">'+(a.amount?Number(a.amount).toLocaleString(undefined,{maximumFractionDigits:2}):'—')+'</td><td class="mono">'+fmt(a.usd_value)+'</td><td>'+esc(txType)+'</td><td><span class="sgl '+sCls+'"></span> '+sigLabel(a.signal)+'</td><td class="mono"><div class="score-bar"><div class="score-fill" style="width:'+scorePct+'%;background:'+scoreColor+'"></div></div> '+scorePct+'</td><td>'+esc(a.headline||'—')+'</td></tr>';
+    }).join('');
+    document.getElementById('page-info').textContent=`Page ${page} — ${data.alerts.length} results`;
+    document.getElementById('prev-btn').disabled=page<=1;
+    document.getElementById('next-btn').disabled=data.alerts.length<limit;
+  }catch(e){document.getElementById('hist-body').innerHTML='<tr><td colspan="9" class="err">Failed to load history: '+esc(e.message)+'</td></tr>';}
+}
+document.getElementById('f-apply').addEventListener('click',()=>{page=1;fetchHistory();});
+document.getElementById('prev-btn').addEventListener('click',()=>{if(page>1){page--;fetchHistory();}});
+document.getElementById('next-btn').addEventListener('click',()=>{page++;fetchHistory();});
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fetchHistory);else fetchHistory();
+</script>
+</body></html>
