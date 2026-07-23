@@ -27,7 +27,7 @@ import httpx
 # ─── model defaults ─────────────────────────────────────────────────
 
 MODEL_TRADE_9ROUTER = "nvidia/deepseek-ai/deepseek-v4-flash"
-MODEL_REVIEW_9ROUTER = "nvidia/deepseek-ai/deepseek-v4-pro"
+MODEL_REVIEW_9ROUTER = "nvidia/z-ai/glm-5.2"  # deepseek-v4-pro times out on 9Router; glm-5.2 is fast + quality enough for 1 call/week
 MODEL_TRADE_GEMINI = "gemini-2.5-flash"
 MODEL_REVIEW_GEMINI = "gemini-2.5-flash"
 

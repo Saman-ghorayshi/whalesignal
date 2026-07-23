@@ -235,7 +235,7 @@ def run(args):
             review = json.load(f)
     else:
         review = call_llm(prompt, base_url=args.llm, gemini_key=args.gemini_key,
-                         model="nvidia/deepseek-ai/deepseek-v4-pro")
+                         model="nvidia/z-ai/glm-5.2")
 
     print("[review] LLM response:")
     print(json.dumps(review, indent=2))
