@@ -16,7 +16,7 @@ All 7 steps built and tested. Commits below:
 | 3 | .github/workflows/weekly_review.yml | f411e19 | Built |
 | 4 | bot.js: fireGitHubDispatch() repository_dispatch | 2d3bd4c | Built, 5 JS tests green |
 | 5 | main.py: --gemini-key flag + plumbing | 629b590 | Built, live tested |
-| 6 | weekly_review.py: --gemini-key flag + deepseek-v4-pro | 43c5827 | Built, live testing |
+| 6 | weekly_review.py: --gemini-key flag + glm-5.2 | 43c5827 | Built, live tested |
 | 7 | Python tests (test_llm.py + test_main.py) | bec4880 | 29 tests green |
 | 8 | JS dispatch tests (bot.test.js) | 1b08a66 | 5 new tests, 38 total green |
 
@@ -34,9 +34,13 @@ All 7 steps built and tested. Commits below:
 - Risk manager clamped both to $10 (10% cap)
 - All 3 signals marked processed, 2 trades in DB
 
-**Weekly review (weekly_review.py + 9Router deepseek-v4-pro):**
+**Weekly review (weekly_review.py + 9Router glm-5.2):**
 - 12 trades, 6 wins, 6 losses, PnL $23.33
-- (running — deepseek-v4-pro is slower, quality model)
+- GLM-5.2 returned in ~15s (deepseek-v4-pro timed out at 90s)
+- 4 new beliefs: "scale into 0xAAA111 BTC shorts", "ignore 0xCCC333 ETH longs in chop", etc
+- 3 whale score updates with reasoning
+- Summary: "0xAAA111 worked beautifully, $11.90 BTC short win"
+- DB: 6 beliefs, 1 review row, all written
 
 ### TEST COUNTS
 - Python: 29 tests (test_llm.py + test_main.py), 0.43s, all green
@@ -117,9 +121,9 @@ Even Gemini 2.5 Pro (100 RPD, 5 RPM) can handle 20 calls/day. We'll never hit th
 | call | model | why |
 |---|---|---|
 | Trade decision (Rung 2, main.py) | `nvidia/deepseek-ai/deepseek-v4-flash` | tested on 9Router: clean JSON, nuanced reasoning, fast. Free via 9Router. |
-| Weekly review (Rung 3, weekly_review.py) | `nvidia/deepseek-ai/deepseek-v4-pro` | tested: deeper analysis, writes better beliefs. 1 call/week so speed doesn't matter. |
+| Weekly review (Rung 3, weekly_review.py) | `nvidia/z-ai/glm-5.2` | deepseek-v4-pro times out on 9Router (90s+ on 4K prompt). glm-5.2 returns in ~15s with quality FinCon self-critique output. |
 
-Both are available on 9Router right now and both returned clean JSON with real reasoning in our tests. No Gemini direct API key needed — 9Router handles routing.
+Both are available on 9Router right now and both returned clean JSON with real reasoning in our tests. No Gemini direct API key needed for local dev — 9Router handles routing. For GH Actions (where 9Router is unreachable), Gemini direct via GEMINI_KEY is the fallback.
 
 > `ponytail:` If 9Router is down (503), the code already has a `--llm-stub` fallback. We add a retry + model fallback: try deepseek-v4-pro, if 503 try gemini-3.1-flash-lite, if that fails too, skip the trade. 3 LLM calls max before giving up. No infinite retry loop, no cost.
 
