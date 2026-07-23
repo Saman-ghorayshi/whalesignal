@@ -49,6 +49,18 @@ test("fullPipeline: scanner→analyst→bot posts one alert", async () => {
   for (const w of r.whales) {
     assert.equal(w.analysis_status, "done", `whale ${w.id} not marked done`);
   }
+
+  // 7. news_cache written by Ladder A (proves CryptoPanic fetch fired → KV).
+  // MockKV.put stores as string, .get returns string. Verify it's parseable
+  // AND that the keyword filter kept only matching titles.
+  const newsRaw = await r.KV.get("news_cache");
+  assert.ok(newsRaw, "news_cache was written by the scanner tick");
+  const news = JSON.parse(newsRaw);
+  assert.ok(Array.isArray(news.headlines), "news_cache.headlines is an array");
+  assert.ok(news.headlines.length > 0 && news.headlines.length <= 5, "kept 1-5 headlines");
+  // fixture payload had Binance + ETF matching, beach/avocado non-matching.
+  assert.ok(news.headlines.every((h) => /binance|etf/i.test(h.title)),
+    "only keyword-matching headlines survived filterNewsKeywords");
 });
 
 test("bot fetch handler: /ping replies via Telegram", async () => {

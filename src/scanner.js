@@ -359,6 +359,51 @@ export async function refreshMarketCache(env) {
   return cache;
 }
 
+// ─── news_cache (Phase 3a / whale-reasoning Plan Ladder A) ───────────
+// CryptoPanic free-tier reader, keyword-filtered to the asset classes we
+// alert on. Mirror of refreshMarketCache: one fetch, KV write, caller wraps
+// in try/catch. Stores {headlines:Array<{title}>, updated_at} so the analyst
+// can read both shape and staleness without a second key.
+//
+// ponytail: ONE feed, ONE keyword regex, ONE KV put. No GDELT/Twitter/Reddit
+// (Phase 4+ — LLM gets diminishing returns past 5 headlines anyway). The
+// analyst prompt slot already exists; we're filling it, not building a new one.
+const NEWS_CACHE_TTL_S = 300;            // same cadence as market_cache
+const NEWS_KEYWORDS = /\b(binance|coinbase|kraken|bybit|okx|bitfinex|upbit|hack|exploit|drain|stolen|breach|vulnerability|exit scam|sec|lawsuit|sued|ban|sanctioned|settlement|charging|depeg|stablecoin|usdt|usdc|insurance|halt|withdrawal|etf|futures|expiry|options|listing|delisting|upgrade|fork|halving)\b/i;
+
+/**
+ * Pure: keyword-filter CryptoPanic items to the top 5 matching titles.
+ * Exported for unit tests. Case-insensitive whole-word match on the title.
+ * ponytail: title only → cheaper than walking body, matches what the
+ * analyst prompt slot prints (`n.title`).
+ */
+export function filterNewsKeywords(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((it) => it && typeof it.title === "string" && NEWS_KEYWORDS.test(it.title))
+    .slice(0, 5)
+    .map((it) => ({ title: it.title }));
+}
+
+/**
+ * Refresh the news_cache key in KV from CryptoPanic. Stores
+ * {headlines:Array<{title}>, updated_at:ms}. On any fetch/parse error, writes
+ * an empty-headlines object so the analyst prompt slot prints its existing
+ * "(no recent headlines cached)" fallback — no special-case code path.
+ * Mirror of refreshMarketCache (caller try/catch, not internal).
+ */
+export async function refreshNewsCache(env) {
+  const auth = env.NEWS_TOKEN ? `&auth_token=${env.NEWS_TOKEN}` : "";
+  // filter=hot returns the most-tweeted headlines — broader signal than
+  // kind=news alone, and free-tier-permitted.
+  const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot${auth}`;
+  const j = await fetchJSON(url, { timeoutMs: 6000 });
+  const headlines = filterNewsKeywords(j?.results ?? []);
+  const cache = { headlines, updated_at: Date.now() };
+  await env.KV.put("news_cache", JSON.stringify(cache));
+  return cache;
+}
+
 // ─── scan one chain (with batched catch-up) ──────────────────────────
 
 export async function scanChain(env, chain, market) {
@@ -449,6 +494,27 @@ export default {
         // continue with possibly-stale or null market
       }
     }
+
+    // news_cache: same pattern as market_cache (TTL gate + try/catch wrapper
+    // so a CryptoPanic outage or rate-limit never breaks the scan).
+    // ponytail: one extra KV read + one conditional fetch per tick. No new
+    // cron worker, no new infra. The analyst already reads `news_cache`.
+    try {
+      let needNewsRefresh = true;  // default: refresh when nothing cached
+      try {
+        const rawNews = await env.KV.get("news_cache");
+        if (rawNews) {
+          const n = JSON.parse(rawNews);
+          if (n && n.updated_at) {
+            needNewsRefresh = ((Date.now() - n.updated_at) / 1000) > NEWS_CACHE_TTL_S;
+          }
+        }
+      } catch { /* keep needNewsRefresh=true */ }
+      if (needNewsRefresh) {
+        try { await refreshNewsCache(env); }
+        catch (e) { console.warn("news cache refresh failed:", e.message); }
+      }
+    } catch { /* never break the scan over news cache */ }
 
     const results = [];
     for (const chain of ["btc", "eth"]) {

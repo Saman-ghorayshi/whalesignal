@@ -92,6 +92,19 @@ function makeFetches() {
     { match: "https://api.alternative.me/fng/",
       handler: () => ({ json: { data: [{ value: "50", value_classification: "Neutral" }] } }) },
 
+    // CryptoPanic (Phase 3a / whale-reasoning Plan Ladder A — fills news_cache)
+    // MockFetch matches by substring; the URL scanner builds is
+    // https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot[&auth_token=...]
+    // ponytail: one canned payload, two keyword-matching titles (Binance, ETF)
+    // and two non-matching ones — proves filterNewsKeywords runs server-side.
+    { match: "https://cryptopanic.com/api/v1/posts/",
+      handler: () => ({ json: { results: [
+        { title: "Binance resumes ETH withdrawals after brief pause" },
+        { title: "Beautiful sunset over the beach — not crypto news" },
+        { title: "Bitcoin ETF inflows hit 3-month high" },
+        { title: "Recipe of the week: avocado toast" },
+      ] } }) },
+
     // Gemini — returns a well-formed JSON analysis for any prompt
     { match: "https://generativelanguage.googleapis.com",
       handler: () => ({
@@ -212,6 +225,8 @@ export async function fullPipeline() {
   const analyses = DB.prepare("SELECT whale_id, signal, confidence, headline FROM analysis").all().results;
   const delivered = DB.prepare("SELECT whale_id, chat_id FROM delivered").all().results;
 
+  // Return env.KV (the MockKV instance), not just its store, so callers can
+  // assert cache keys were written (e.g. news_cache after Ladder A).
   return {
     whales,
     analyses,
@@ -220,5 +235,6 @@ export async function fullPipeline() {
     botResults,
     telegramSent: getTelegramSent(),
     fetchCalls: fetches.calls.length,
+    KV: env.KV,
   };
 }
