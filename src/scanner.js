@@ -295,23 +295,28 @@ async function bumpErrors(env, chain) {
  * Score >= SCORE_THRESHOLD → queue to analyst (AI analysis).
  * Below → INSERT with analysis_status='skipped' (no AI cost, no queue msg).
  */
-async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWallet) {
+async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWallet, market) {
   const score = computeInterestingness(wh, walletInfo, recentSameWallet);
   const shouldAnalyze = score >= SCORE_THRESHOLD;
+
+  // Price snapshot at detect time for AI accuracy evaluation.
+  const sym = (wh.symbol || "").toLowerCase();
+  const priceAtDetect = market?.[sym]?.price ?? market?.[wh.chain]?.price ?? null;
 
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO whales
        (chain, tx_hash, from_address, to_address, amount, symbol, usd_value,
         tx_type, block_number, block_time, detected_at, analysis_status,
-        interesting_score)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        interesting_score, price_at_detect)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     wh.chain, wh.tx_hash, wh.from_address, wh.to_address,
     wh.amount, wh.symbol, wh.usd_value, wh.tx_type,
     wh.block_number ?? null, wh.block_time ?? null,
     Date.now(),
     shouldAnalyze ? "pending" : "skipped",
-    score
+    score,
+    priceAtDetect
   ).run();
   if (ins.meta.changes === 0) return false; // dup
 
@@ -636,7 +641,7 @@ export async function scanChain(env, chain, market) {
         const fromKey = String(w.from_address).toLowerCase();
         const walletInfo = walletMap.get(fromKey) ?? null;
         const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
-        const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet);
+        const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
         if (inserted) newlyCounted++;
       } catch (e) {
         console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);

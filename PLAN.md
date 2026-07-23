@@ -429,25 +429,27 @@ The goal: make the product usable beyond Telegram.
    - Files: `docs/stats.html`
    - Zero cost (client-side CDN)
 
-### Sprint 3: Reports + Accuracy (1 week)
+### Sprint 3: Reports + Accuracy (1 week) — DONE
 The goal: daily intelligence + AI accountability.
 
-8. **Daily report** — GH Action cron, reads D1 via Worker endpoint,
+8. **[done] Daily report** — GH Action cron, reads D1 via Worker endpoint,
    writes `docs/data/daily/2026-08-01.json`, posts summary to Telegram
    - Files: `.github/workflows/daily.yml`, `tools/daily_report.py`
    - GH Actions: ~5 min/day (150 min/month, fine)
    - D1: ~5 reads per report generation
 
-9. **AI accuracy tracking** — snapshot BTC/ETH price at detect time,
+9. **[done] AI accuracy tracking** — snapshot BTC/ETH price at detect time,
    evaluate 24h later via GH Action
-   - Files: `schema/whalesignal.sql` (2 columns), `src/bot.js`
-     (price snapshot in postPublicAlert), `.github/workflows/evaluate.yml`
-   - D1: +2 columns on whales (written at scan time, 0 extra writes)
-   - D1: +1 write per evaluation (UPDATE analysis SET prediction_outcome)
+   - Files: `schema/whalesignal.sql` (4 columns), `src/scanner.js`
+     (price_at_detect in insertWhaleAndQueue), `src/bot.js` (accuracy in /stats),
+     `.github/workflows/evaluate.yml`, `tools/evaluate_predictions.py`
+   - D1: +1 column on whales (price_at_detect, written at scan time, 0 extra writes)
+   - D1: +3 columns on analysis (prediction_outcome, price_at_eval, evaluated_at)
+   - /stats now includes accuracy: {evaluated, correct, rate}
 
-10. **Event clustering** — bot groups transfers to same exchange within
+10. **[done] Event clustering** — bot groups transfers to same exchange within
     15 min, prepends count to alert text
-    - Files: `src/bot.js` (query in postPublicAlert)
+    - Files: `src/bot.js` (countCluster query + formatClusterNote pure fn)
     - D1: +1 read per alert (already well under budget)
 
 ### Sprint 4: Ship + polish (2-3 days)
