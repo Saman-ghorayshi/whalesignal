@@ -414,18 +414,18 @@ The goal: make alerts 2x smarter with zero new infrastructure.
 - E2E fixture: seeded wallet labels + bumped whale amounts above interestingness threshold
 - All 77 tests green, 0 failures
 
-### Sprint 2: Surfaces (1 week)
+### Sprint 2: Surfaces (1 week) — DONE
 The goal: make the product usable beyond Telegram.
 
-5. **GET endpoints in bot.js** — `/stats`, `/history`, `/wallet/:addr`
-   - Files: `src/bot.js` (3 new route handlers), `src/worker-utils.js`
+5. **[done] GET endpoints in bot.js** — `/stats`, `/history`, `/wallet/:addr`
+   - Files: `src/bot.js` (3 new route handlers + query/render functions), `src/worker-utils.js`
    - D1: +3 reads per page view, far under 100K/day
 
-6. **Static website expansion** — wallet.html, stats.html, history.html
+6. **[done] Static website expansion** — stats.html, history.html, wallet.html
    - Files: `docs/wallet.html`, `docs/stats.html`, `docs/history.html`
    - Zero cost (GitHub Pages)
 
-7. **Charts** — Chart.js on stats page, reading from /stats JSON
+7. **[done] Charts** — Chart.js on stats page, reading from /stats JSON
    - Files: `docs/stats.html`
    - Zero cost (client-side CDN)
 

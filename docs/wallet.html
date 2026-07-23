@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>WhaleSignal — Wallet</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🐋</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,510;14..32,590&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#08090a;--panel:#0f1011;--card:rgba(255,255,255,0.025);--card-hover:rgba(255,255,255,0.04);--t1:#f7f8f8;--t2:#d0d6e0;--t3:#8a8f98;--t4:#62666d;--a:#7170ff;--a-bg:#5e6ad2;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;--border:rgba(255,255,255,0.08);--border-sub:rgba(255,255,255,0.04);--r:8px;--r-sm:6px}
+html{font-size:16px}body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--t2);line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh}
+.con{max-width:960px;margin:0 auto;padding:0 24px}
+header{position:sticky;top:0;z-index:50;background:rgba(8,9,13,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border-sub)}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:960px;margin:0 auto}
+.logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:590;color:var(--t1);letter-spacing:-.3px}
+.logo i{font-size:22px;font-style:normal}
+.nav-links{display:flex;gap:16px;align-items:center}
+.nav-links a{font-size:13px;color:var(--t3);text-decoration:none;transition:color .2s}
+.nav-links a:hover{color:var(--t2)}
+.hero{padding:48px 0 24px}
+.wcard{background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:24px;margin-bottom:32px}
+.wcard-head{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.wcard-icon{font-size:28px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm);background:rgba(255,255,255,0.04);border:1px solid var(--border-sub);flex-shrink:0}
+.wcard-title{font-size:18px;font-weight:590;color:var(--t1);letter-spacing:-.3px}
+.wcard-addr{font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace;word-break:break-all}
+.badge{font-size:11px;font-weight:510;padding:3px 10px;border-radius:9999px;display:inline-block}
+.badge-exchange{background:rgba(113,112,255,0.12);color:var(--a)}
+.badge-whale{background:rgba(34,197,94,0.12);color:var(--green)}
+.badge-miner{background:rgba(245,158,11,0.12);color:var(--amber)}
+.badge-institution{background:rgba(168,85,247,0.12);color:#a855f7}
+.badge-unknown{background:rgba(255,255,255,0.06);color:var(--t3)}
+.badge-reactivated{background:rgba(59,130,246,0.12);color:#3b82f6}
+.badge-high_frequency{background:rgba(245,158,11,0.12);color:var(--amber)}
+.wcard-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.wstat{background:rgba(255,255,255,0.02);border:1px solid var(--border-sub);border-radius:var(--r-sm);padding:12px 14px}
+.wstat-l{font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px}
+.wstat-v{font-size:18px;font-weight:590;color:var(--t1);font-family:JetBrains Mono,monospace;margin-top:2px}
+.wstat-sub{font-size:11px;color:var(--t3);margin-top:1px}
+.sec-hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+.sec-title{font-size:15px;font-weight:510;color:var(--t1);letter-spacing:-.2px}
+.tbl{width:100%;border-collapse:collapse;margin-bottom:32px;font-size:13px}
+.tbl th{text-align:left;font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px;padding:8px 12px;border-bottom:1px solid var(--border-sub)}
+.tbl td{padding:8px 12px;color:var(--t2);border-bottom:1px solid var(--border-sub)}
+.tbl td.mono{font-family:JetBrains Mono,monospace}
+.dir{display:inline-block;font-size:11px;font-weight:510;padding:2px 7px;border-radius:4px}
+.dir-in{background:rgba(34,197,94,0.1);color:var(--green)}
+.dir-out{background:rgba(239,68,68,0.1);color:var(--red)}
+.sgl{display:inline-block;width:8px;height:8px;border-radius:50%}
+.sgl.b{background:var(--green)}.sgl.r{background:var(--red)}.sgl.n{background:var(--amber)}
+.tag-chain{font-size:11px;font-weight:510;padding:2px 8px;border-radius:4px}
+.tag-btc{background:rgba(247,147,26,0.12);color:#f7931a}.tag-eth{background:rgba(98,126,234,0.12);color:#627eea}
+.none{text-align:center;padding:80px 0;color:var(--t3)}
+.none .e{font-size:52px;display:block;margin-bottom:12px}
+.none p{font-size:14px;max-width:340px;margin:0 auto}
+.none a{display:inline-block;margin-top:16px;color:var(--a);text-decoration:none;font-weight:510}
+.err{text-align:center;padding:48px 0;color:var(--red);font-size:14px}
+footer{border-top:1px solid var(--border-sub);padding:32px 0 48px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--t4)}
+footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .2s}footer a:hover{color:var(--t2)}
+.ft-mono{font-family:JetBrains Mono,monospace;font-size:12px}
+@media(max-width:640px){.con{padding:0 16px}.hdr{padding:12px 16px}.wcard-grid{grid-template-columns:repeat(2,1fr)}.tbl{font-size:11px}}
+</style>
+</head>
+<body>
+<header><div class="hdr"><span class="logo"><i>🐋</i> WhaleSignal</span><div class="nav-links"><a href="index.html">Home</a><a href="history.html">History</a><a href="stats.html">Stats</a></div></div></header>
+<div class="con">
+<section class="hero" id="hero"></section>
+<div id="wallet-content"></div>
+<footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal Wallet</div></footer>
+</div>
+<script>
+const API='https://whalesignal-bot.samsha.workers.dev';
+function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
+function ago(ts){if(!ts)return'—';const s=Math.floor((Date.now()-ts)/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+function sigDot(s){const v=(s||'').toLowerCase();return v==='bullish'?'b':v==='bearish'?'r':'n'}
+function shortAddr(a){if(!a)return'—';if(a.length<=12)return a;return a.slice(0,6)+'...'+a.slice(-4)}
+async function fetchWallet(){
+  const addr=new URLSearchParams(location.search).get('addr');
+  if(!addr){document.getElementById('hero').innerHTML='<div class="none"><span class="e">🔍</span><p>Enter a wallet address in the URL: <code>wallet.html?addr=0x...</code></p><a href="index.html">← Back to Home</a></div>';return;}
+  document.getElementById('hero').innerHTML='<div class="none"><span class="e">🐋</span><p>Looking up wallet '+esc(shortAddr(addr))+'...</p></div>';
+  try{
+    const chain=new URLSearchParams(location.search).get('chain');
+    const url=chain?`${API}/wallet/${encodeURIComponent(addr)}?chain=${chain}`:`${API}/wallet/${encodeURIComponent(addr)}`;
+    const r=await fetch(url);
+    const data=await r.json();
+    if(!data.ok){
+      document.getElementById('hero').innerHTML='';
+      document.getElementById('wallet-content').innerHTML='<div class="none"><span class="e">🔍</span><p>Wallet not in our database. It hasn\'t been involved in any detected whale transfers.</p><a href="history.html">← Browse Whale History</a></div>';
+      return;
+    }
+    document.getElementById('hero').innerHTML='';
+    const typeCls='badge-'+(data.type||'unknown');
+    const repBadge=data.reputation?'<span class="badge badge-'+esc(data.reputation)+'">'+esc(data.reputation.replace(/_/g,' '))+'</span>':'';
+    const typeBadge='<span class="badge '+typeCls+'">'+esc(data.type||'unknown')+'</span>';
+    const chainTag=data.chain?'<span class="tag-chain tag-'+esc(data.chain)+'">'+esc(data.chain.toUpperCase())+'</span>':'';
+    let html='<div class="wcard"><div class="wcard-head"><div class="wcard-icon">'+(data.type==='exchange'?'🏦':'🐋')+'</div><div><div class="wcard-title">'+esc(data.label||shortAddr(data.address))+'</div><div class="wcard-addr">'+esc(data.address)+'</div></div></div>';
+    html+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+typeBadge+repBadge+chainTag+'</div>';
+    html+='<div class="wcard-grid">';
+    const stats=[
+      {l:'Transactions',v:data.tx_count||0},
+      {l:'Total Volume',v:fmt(data.total_volume)},
+      {l:'First Seen',v:ago(data.first_seen)},
+      {l:'LastSeen',v:ago(data.last_seen)},
+    ];
+    stats.forEach(s=>{html+='<div class="wstat"><div class="wstat-l">'+s.l+'</div><div class="wstat-v">'+s.v+'</div></div>';});
+    html+='</div></div>';
+    const txs=data.recent_txs||[];
+    html+='<div class="sec-hd"><h2 class="sec-title">Recent Transactions</h2><span style="font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace">'+txs.length+' events</span></div>';
+    if(!txs.length){html+='<div class="none"><p>No whale transactions detected involving this wallet.</p></div>';}
+    else{
+      html+='<table class="tbl"><thead><tr><th>Date</th><th>Chain</th><th>Dir</th><th>Counterpart</th><th>Amount</th><th>USD Value</th><th>Type</th><th>Signal</th><th>Headline</th></tr></thead><tbody>';
+      html+=txs.map(t=>{
+        const tc=(t.chain||'').toLowerCase();
+        const dirCls=t.direction==='in'?'dir-in':'dir-out';
+        const sCls=sigDot(t.signal);
+        return '<tr><td>'+ago(t.detected_at)+'</td><td><span class="tag-chain tag-'+tc+'">'+(t.chain||'?')+'</span></td><td><span class="dir '+dirCls+'">'+t.direction+'</span></td><td class="mono">'+esc(shortAddr(t.counterpart))+'</td><td class="mono">'+(t.amount?Number(t.amount).toLocaleString(undefined,{maximumFractionDigits:2}):'—')+'</td><td class="mono">'+fmt(t.usd_value)+'</td><td>'+esc(t.tx_type?t.tx_type.replace(/_/g,' '):'—')+'</td><td><span class="sgl '+sCls+'"></span></td><td>'+esc(t.headline||'—')+'</td></tr>';
+      }).join('');
+      html+='</tbody></table>';
+    }
+    document.getElementById('wallet-content').innerHTML=html;
+  }catch(e){
+    document.getElementById('hero').innerHTML='';
+    document.getElementById('wallet-content').innerHTML='<div class="err">Failed to load wallet: '+esc(e.message)+'</div>';
+  }
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fetchWallet);else fetchWallet();
+</script>
+</body></html>
