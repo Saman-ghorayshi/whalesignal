@@ -234,7 +234,8 @@ def run(args):
         with open(args.llm_stub) as f:
             review = json.load(f)
     else:
-        review = call_llm(prompt, base_url=args.llm)
+        review = call_llm(prompt, base_url=args.llm, gemini_key=args.gemini_key,
+                         model="nvidia/deepseek-ai/deepseek-v4-pro")
 
     print("[review] LLM response:")
     print(json.dumps(review, indent=2))
@@ -261,6 +262,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--db", default="./trades.db")
     p.add_argument("--llm", default="http://localhost:20128/v1/chat/completions")
+    p.add_argument("--gemini-key", default=os.environ.get("GEMINI_KEY"),
+                   help="Google AI Studio API key (bypasses 9Router, calls Gemini direct)")
     p.add_argument("--tg-token", default=os.environ.get("WS_BOT_TOKEN"))
     p.add_argument("--tg-chat-id", default=os.environ.get("WS_CHAT_ID"))
     p.add_argument("--dry-run", action="store_true")
