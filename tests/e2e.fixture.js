@@ -19,6 +19,17 @@ export function makeWorld() {
   const DB = new MockD1();
   DB.execFile("schema/whalesignal.sql");
 
+  // Seed wallet labels so classifyWhales stamps exchange_inflow/outflow.
+  // The fixture block addresses (Binance-looking dest) need to be labeled
+  // 'exchange' for the interestingness score to reach the threshold.
+  const seedWallets = [
+    "INSERT INTO wallets (address, chain, label, type) VALUES ('1WhaleDestBinanceAddr0000', 'btc', 'Binance', 'exchange')",
+    "INSERT INTO wallets (address, chain, label, type) VALUES ('0xExchangeBinanceAddr0000000000000000000000feed', 'eth', 'Binance', 'exchange')",
+    "INSERT INTO wallets (address, chain, label, type) VALUES ('16KaJxxxxxxxWhaleSource0000', 'btc', 'Whale Source', 'whale')",
+    "INSERT INTO wallets (address, chain, label, type) VALUES ('0xWhaleSourceAddr0000000000000000000000abcd', 'eth', 'Whale Source', 'whale')",
+  ];
+  for (const sql of seedWallets) DB.prepare(sql).run();
+
   const KV = new MockKV({
     market_cache: JSON.stringify({
       btc: { price: 100000, change_24h: 1.2 },
@@ -137,7 +148,7 @@ export function resetTelegramSent() { telegramSent.length = 0; }
 // ─── block fixtures ──────────────────────────────────────────────────────
 // Build a blockchain.info-style raw block with ONE whale tx above MIN_USD.
 // height 800001 .. 800010 are produced (in sequence) by the scanner's
-// catch-up loop. The FIRST block contains a 6 BTC whale (=$600k), subsequent
+// catch-up loop. The FIRST block contains a 60 BTC whale (=$6M), subsequent
 // blocks only contain dust so we can assert scanner found exactly one whale.
 
 function makeBtcBlock(height) {
@@ -148,7 +159,7 @@ function makeBtcBlock(height) {
     tx: isWhaleBlock
       ? [{
           hash: `btc-whale-tx-${height}`,
-          out: [{ value: 6 * 1e8, addr: "1WhaleDestBinanceAddr0000" }],
+          out: [{ value: 60 * 1e8, addr: "1WhaleDestBinanceAddr0000" }],  // 60 BTC = $6M at $100k
           inputs: [{ prev_out: { addr: "16KaJxxxxxxxWhaleSource0000" } }],
         }]
       : [{
@@ -160,7 +171,7 @@ function makeBtcBlock(height) {
 }
 
 // Etherscan block: at block 500001 (the one AFTER eth_blockNumber returns 500000),
-// put one whale tx of 200 ETH (= $700k). Blocks 500002+ are empty.
+// put one whale tx of 2000 ETH (= $7M). Blocks 500002+ are empty.
 function makeEthBlock(url) {
   const tag = new URL(url).searchParams.get("tag");
   const blockNum = parseInt(tag, 16);
@@ -172,9 +183,9 @@ function makeEthBlock(url) {
       timestamp: "0x" + (1700000000).toString(16),
       transactions: [{
         hash: "eth-whale-tx-500001",
-        from: "0xWhaleSourceAddr000000000000000000000000abcd",
+        from: "0xWhaleSourceAddr0000000000000000000000abcd",
         to: "0xExchangeBinanceAddr0000000000000000000000feed",
-        value: "0x" + (200 * 1e18).toString(16), // 200 ETH = $700k at $3500
+        value: "0x" + (2000 * 1e18).toString(16), // 2000 ETH = $7M at $3500
       }],
     };
   }

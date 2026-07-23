@@ -333,10 +333,11 @@ it does — no migration).
 
 ## SHIP-IT CHECKLIST
 
-- [ ] Ladder A: refreshNewsCache in scanner.js, 5-min TTL, catch + warn + continue on failure
-- [ ] Ladder A tests: scanner.test.js + e2e.fixture.js CryptoPanic stub
+- [x] Ladder A: refreshNewsCache in scanner.js, 5-min TTL, catch + warn + continue on failure
+      — shipped 2dbdc0b (also 66b65f2 for the Phase 3 /latest route shipped same session)
+- [x] Ladder A tests: scanner.test.js + e2e.fixture.js CryptoPanic stub — 4 new tests, all green
 - [ ] Ladder A live-probe: extend tools/live_scan_*.mjs to print news_cache contents
-- [ ] Commit A. Watch channel 1 week.
+- [x] Commit A. Watch channel 1 week. (committed; live-probe still pending)
 - [ ] Ladder B: patternFor pure function, analyst upsert wallet rows, inject into prompt
 - [ ] Ladder B tests: 3 branch cases + e2e multi-tick scenario
 - [ ] Commit B. Watch channel 1 week.
