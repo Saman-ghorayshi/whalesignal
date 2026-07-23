@@ -435,7 +435,9 @@ export async function statsRows(env) {
        COALESCE(SUM(CASE WHEN a.signal='neutral' THEN 1 ELSE 0 END), 0) AS neutral,
        COALESCE(SUM(CASE WHEN detected_at > ? THEN 1 ELSE 0 END), 0)   AS count_24h,
        COALESCE(SUM(CASE WHEN detected_at > ? THEN 1 ELSE 0 END), 0)   AS count_7d,
-       COALESCE(MAX(usd_value), 0)           AS largest_transfer
+       COALESCE(MAX(usd_value), 0)           AS largest_transfer,
+       COALESCE(SUM(CASE WHEN a.prediction_outcome IS NOT NULL THEN 1 ELSE 0 END), 0) AS accuracy_total,
+       COALESCE(SUM(CASE WHEN a.prediction_outcome='correct' THEN 1 ELSE 0 END), 0)  AS accuracy_correct
      FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id
      WHERE w.analysis_status IN ('done', 'skipped')`
   ).bind(Date.now() - 86_400_000, Date.now() - 7 * 86_400_000).all();
@@ -487,6 +489,11 @@ export function renderStatsJSON(stats, bySymbol, hourly, market = null) {
       bearish: s.bearish || 0,
       neutral: s.neutral || 0,
     },
+    accuracy: s.accuracy_correct || s.accuracy_total ? {
+      evaluated: s.accuracy_total || 0,
+      correct: s.accuracy_correct || 0,
+      rate: s.accuracy_total ? Math.round((s.accuracy_correct / s.accuracy_total) * 100) : 0,
+    } : null,
     top_symbols: (bySymbol || []).map((sym) => ({
       symbol: sym.symbol,
       count: sym.count,
@@ -624,6 +631,36 @@ export function renderWalletJSON(profile, txs) {
   };
 }
 
+// ─── event clustering ─────────────────────────────────────────────────
+
+/**
+ * Count other whale transfers to the same destination address on the same
+ * chain within the last 15 minutes. One D1 read. Returns the count of
+ * *other* whales (excludes the current one).
+ */
+export async function countCluster(env, toAddress, chain, detectedAt, currentWhaleId) {
+  if (!toAddress || !chain || !detectedAt) return 0;
+  const windowMs = 15 * 60 * 1000; // 15 min
+  const since = detectedAt - windowMs;
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS cnt FROM whales " +
+    "WHERE to_address = ? AND chain = ? AND detected_at >= ? AND detected_at <= ? AND id != ?"
+  ).bind(toAddress, chain, since, detectedAt + windowMs, currentWhaleId).first();
+  return row?.cnt || 0;
+}
+
+/**
+ * Pure. Format a cluster note for the alert. Returns null if no cluster.
+ * ponytail: simple count prefix, no fancy grouping. Add temporal clustering
+ * with multi-exchange correlation if volume warrants it.
+ */
+export function formatClusterNote(clusterCount) {
+  if (!clusterCount || clusterCount < 1) return null;
+  const total = clusterCount + 1;
+  const s = total === 1 ? "" : "s";
+  return `📦 ${total} whale transfer${s} to this address in the last 15 min`;
+}
+
 // ─── queue: deliver alerts to the public channel ──────────────────────
 
 export async function queueHandler(batch, env) {
@@ -669,13 +706,18 @@ async function postPublicAlert(env, whaleId) {
   let market = null;
   try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
 
-  const text = formatAlert(whale, {
+  // Event clustering: count other whales to the same destination in the last 15 min.
+  const clusterCount = await countCluster(env, whale.to_address, whale.chain, whale.detected_at, whaleId);
+  const clusterNote = formatClusterNote(clusterCount);
+
+  let text = formatAlert(whale, {
     headline: whale.headline,
     interpretation: whale.interpretation,
     signal: whale.signal,
     confidence: whale.confidence,
     related_factor: whale.related_factor,
   }, market);
+  if (clusterNote) text = clusterNote + "\n" + text;
 
   await tgSendMessage(env.BOT_TOKEN, chatId, text, { parse_mode: "" /* plain text */ });
 

@@ -1,0 +1,39 @@
+name: Daily Report
+
+# Posts a daily intelligence summary to Telegram and saves a JSON report.
+# Runs at 09:00 UTC every day. Also manually triggerable.
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate daily report
+        env:
+          WS_API: https://whalesignal-bot.samsha.workers.dev
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          PUBLIC_CHANNEL: ${{ secrets.PUBLIC_CHANNEL }}
+        run: |
+          python tools/daily_report.py \
+            --api "$WS_API" \
+            --tg-token "$BOT_TOKEN" \
+            --chat-id "$PUBLIC_CHANNEL" \
+            --output docs/data/daily
+
+      - name: Commit report
+        run: |
+          git config user.name "whalesignal-bot"
+          git config user.email "bot@whalesignal"
+          git add docs/data/daily/
+          git commit -m "daily report: $(date -u +%Y-%m-%d) [skip ci]" || true
+          git push
