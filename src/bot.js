@@ -235,7 +235,14 @@ export async function fetchHandler(request, env, ctx) {
       let market = null;
       try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
       const payload = renderStatsJSON(stats, bySymbol, hourly, market);
-      return jsonResponse(payload);
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=60",
+        },
+      });
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
