@@ -16,7 +16,7 @@ Retry: if the first call fails (503, 429, timeout), sleep 2s and retry once.
 If the retry also fails, raise — the caller decides whether to skip the trade.
 No infinite retry loops.
 
-ponytail: no openai pip package (not installed). Raw httpx to the endpoints.
+No openai pip package (not installed). Raw httpx to the endpoints.
 """
 
 import json

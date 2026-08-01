@@ -90,7 +90,7 @@ Short answer: **nobody cares about your code.** Here's why:
 
 **Conclusion: public repo is fine. The code is not the alpha. The whale wallets and timing are — and those come from whalesignal's own scanner, which is already public.**
 
-> `ponytail:` If you're still nervous, make the repo private. 2,000 min/month free is enough. But there's zero downside to public — you're paper trading with fake money, and the strategy is "follow public whale alerts." There's no secret to steal.
+> If you're still nervous, make the repo private. 2,000 min/month free is enough. But there's zero downside to public — you're paper trading with fake money, and the strategy is "follow public whale alerts." There's no secret to steal.
 
 ---
 
@@ -114,7 +114,7 @@ Short answer: **nobody cares about your code.** Here's why:
 
 Even Gemini 2.5 Pro (100 RPD, 5 RPM) can handle 20 calls/day. We'll never hit the limit.
 
-> `ponytail:` The reason flash-lite is "stupid" isn't the limit — it's the quality. For a trade decision that risks $10 of paper money, the difference between flash-lite and flash (one rung up) is: flash-lite says "COPY, confidence 65" without explaining why. Flash says "SKIP because the whale moved to Binance during fear which is sell prep, but the F&G is already at 22 which is extreme fear so it might be a bottom — net confidence 0.35, skip." That reasoning is what writes better beliefs in the weekly review. **Use flash-lite for trade decisions (speed matters, 20/day). Use a smarter model for the weekly review (1/week, quality matters).**
+> The reason flash-lite is "stupid" isn't the limit — it's the quality. For a trade decision that risks $10 of paper money, the difference between flash-lite and flash (one rung up) is: flash-lite says "COPY, confidence 65" without explaining why. Flash says "SKIP because the whale moved to Binance during fear which is sell prep, but the F&G is already at 22 which is extreme fear so it might be a bottom — net confidence 0.35, skip." That reasoning is what writes better beliefs in the weekly review. **Use flash-lite for trade decisions (speed matters, 20/day). Use a smarter model for the weekly review (1/week, quality matters).**
 
 ### Model decision:
 
@@ -125,7 +125,7 @@ Even Gemini 2.5 Pro (100 RPD, 5 RPM) can handle 20 calls/day. We'll never hit th
 
 Both are available on 9Router right now and both returned clean JSON with real reasoning in our tests. No Gemini direct API key needed for local dev — 9Router handles routing. For GH Actions (where 9Router is unreachable), Gemini direct via GEMINI_KEY is the fallback.
 
-> `ponytail:` If 9Router is down (503), the code already has a `--llm-stub` fallback. We add a retry + model fallback: try deepseek-v4-pro, if 503 try gemini-3.1-flash-lite, if that fails too, skip the trade. 3 LLM calls max before giving up. No infinite retry loop, no cost.
+> If 9Router is down (503), the code already has a `--llm-stub` fallback. We add a retry + model fallback: try deepseek-v4-pro, if 503 try gemini-3.1-flash-lite, if that fails too, skip the trade. 3 LLM calls max before giving up. No infinite retry loop, no cost.
 
 ---
 
@@ -189,7 +189,7 @@ GH Actions runners are ephemeral — the filesystem is wiped after each run. `tr
 - bot.js already has R2 access. Upload trades.db to R2 after each run.
 - More complex — need a Python R2 upload step. Add only if DB > 10MB.
 
-> `ponytail:` Option A. The DB is the state. Git is the storage. One `git add trades.db && git commit && git push` at the end of each run. No R2 upload code. No S3 client. No migrations. If the DB ever hits 10MB (unlikely for months of paper trades), switch to R2 then.
+> Option A. The DB is the state. Git is the storage. One `git add trades.db && git commit && git push` at the end of each run. No R2 upload code. No S3 client. No migrations. If the DB ever hits 10MB (unlikely for months of paper trades), switch to R2 then.
 
 ---
 
@@ -220,7 +220,7 @@ HL testnet has 210 perp markets. We don't trade all of them. The whalesignal sca
 - PAXG (gold) — but whalesignal doesn't scan gold chains, so this is out of scope
 - Oil — NOT on HL. Oil is a TradFi commodity. You'd need a CFD broker for that. Out of scope.
 
-> `ponytail:` Adding more coins = adding more scanner chains to whalesignal. That's a whalesignal change, not a trading-loop change. The trading loop already supports any coin HL has — it reads the coin from the alert JSON and passes it to `market_open(coin, ...)`. The constraint is upstream: what does whalesignal actually scan? Today: BTC + ETH. That's enough for paper trading. Expanding to SOL comes when you add a Solana scanner to whalesignal (PLAN.md Phase 5+). Not this plan's problem.
+> Adding more coins = adding more scanner chains to whalesignal. That's a whalesignal change, not a trading-loop change. The trading loop already supports any coin HL has — it reads the coin from the alert JSON and passes it to `market_open(coin, ...)`. The constraint is upstream: what does whalesignal actually scan? Today: BTC + ETH. That's enough for paper trading. Expanding to SOL comes when you add a Solana scanner to whalesignal (PLAN.md Phase 5+). Not this plan's problem.
 
 ### What about XRP?
 Not on HL testnet's 210 markets. HL doesn't list XRP perps (it's a security-controversy token). If you want XRP, you'd need a different exchange (Kraken, Bybit) — but those need KYC. Not this plan.
@@ -249,7 +249,7 @@ Not on HL testnet's 210 markets. HL doesn't list XRP perps (it's a security-cont
 
 3. **Self-host 9Router on a free VPS** (Oracle free tier, or Fly.io free tier). Then GH Actions calls the VPS URL. **Cost: $0, but setup complexity.**
 
-> `ponytail:` Option 2. Get a free Gemini API key from Google AI Studio (https://aistudio.google.com/apikey). Store it as `GEMINI_KEY` in GitHub repo secrets. Change `llm.py` to call Gemini directly instead of 9Router when `GEMINI_KEY` is set. One `if` statement. No 9Router dependency, no PC on, no VPS. Free tier 1,000 RPD vs our 20 RPD = 50x headroom.
+> Option 2. Get a free Gemini API key from Google AI Studio (https://aistudio.google.com/apikey). Store it as `GEMINI_KEY` in GitHub repo secrets. Change `llm.py` to call Gemini directly instead of 9Router when `GEMINI_KEY` is set. One `if` statement. No 9Router dependency, no PC on, no VPS. Free tier 1,000 RPD vs our 20 RPD = 50x headroom.
 
 ### Accounts you actually need:
 
@@ -457,7 +457,7 @@ Step 7: Update PLAN_trading_loop.md — mark this plan as built
 
 Total: ~6 files changed, ~100 lines new code. All YAML + small Python diffs.
 
-> `ponytail:` The architecture is: CF Worker detects whale → writes to R2 → fires one HTTP POST to GitHub → GitHub Actions runs Python → Python reads R2 + calls Gemini direct + trades on HL testnet → commits trades.db → runner dies. Weekly: GH Actions cron runs review → DMs you on Telegram → commits updated beliefs. No PC, no VPS, no money.
+> The architecture is: CF Worker detects whale → writes to R2 → fires one HTTP POST to GitHub → GitHub Actions runs Python → Python reads R2 + calls Gemini direct + trades on HL testnet → commits trades.db → runner dies. Weekly: GH Actions cron runs review → DMs you on Telegram → commits updated beliefs. No PC, no VPS, no money.
 
 ---
 

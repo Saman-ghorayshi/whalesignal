@@ -512,7 +512,7 @@ build both from scratch.
 
 ---
 
-## PART 7: WHAT I SKIPPED (per ponytail)
+## PART 7: WHAT I SKIPPED (per the analysis)
 
 Skipped: deep-diving every single GitHub whale-tracker repo. There are dozens
 of low-star repos that do variations of the same thing (Telegram alerts on big
@@ -627,7 +627,7 @@ defense is not needed yet. **Cite only when** the whalesignal roadmap adds a
 user-submitted wallet feature. Skip the citation in any cold-DM pitch —
 premature.
 
-> `ponytail:` Added these four because the honesty score of the doc goes up,
+> Added these four because the honesty score of the doc goes up,
 > not because any new code is warranted. The plan is shipped. The first
 > three are post-hoc validation of existing decisions. The fourth is a
 > pre-positioned citation for a feature not yet greenlit. Adding more than

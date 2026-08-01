@@ -11,7 +11,7 @@
 // (fixture.js) wire up the bindings + fetch router + scenarios. This is the
 // reusable piece — copy it to any worker project.
 //
-// ponytail: MockD1 is a real in-memory SQLite via node:sqlite, driven by a
+// MockD1 is a real in-memory SQLite via node:sqlite, driven by a
 // minimal .prepare()/.bind()/.all()/.first()/.run() shim that mirrors the D1
 // subset your workers actually use. If you need more of the D1 API surface
 // (batch, raw, dump) extend the stub — but only when a worker actually calls it.
@@ -108,7 +108,7 @@ export class MockKV {
 }
 
 // ─── MockQueue: collects sent messages + delivers them on demand ─────────────
-// ponytail: real Workers Queues are async, at-least-once, and rate-limited.
+// real Workers Queues are async, at-least-once, and rate-limited.
 // We model the SUBSET needed to drive tests: send()/buffer/ack()/retry().
 // Don't model delaySeconds, message retention, or rate-limit shaping —
 // add when a worker actually uses those.

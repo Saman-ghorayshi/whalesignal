@@ -57,7 +57,7 @@ test("renderStatsJSON: accuracy rate=0 when none correct", () => {
 });
 
 // ─── evaluate_signal logic (pure, mirrors Python) ─────────────────────
-// ponytail: mirror the Python eval logic in JS for testing without a Python runtime.
+// mirror the Python eval logic in JS for testing without a Python runtime.
 
 function evaluateSignal(signal, priceAtDetect, priceNow, thresholdPct = 1.0) {
   if (!signal || signal === "neutral") return "neutral";

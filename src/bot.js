@@ -14,7 +14,7 @@
 
 import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
 
-/** ponytail: shared JSON response helper for all public GET routes. */
+/** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -65,7 +65,7 @@ export function buildAlertJSON(whale, market) {
 /**
  * Append an alert as one NDJSON line to R2.
  * Uses conditional PUT with a fixed key — reads existing, appends, writes back.
- * ponytail: read-modify-write on the whole file, not a per-alert key. One file
+ * read-modify-write on the whole file, not a per-alert key. One file
  * is simple to poll and parse. Add per-hour rotation if the file grows > 1MB.
  */
 async function postAlertToR2(env, alertJSON) {
@@ -210,7 +210,7 @@ export async function fetchHandler(request, env, ctx) {
   const path = url.pathname;
 
   // ─── public GET /latest?limit=N  (Phase 3 of ship runbook) ───────────
-  // ponytail: NO auth. The alert row carries no secret — it's the same
+  // NO auth. The alert row carries no secret — it's the same
   // content the bot posts to a public Telegram channel. Read-only, CORS
   // open so the github.io demo page can fetch() it cross-origin.
   if (request.method === "GET" && path === "/latest") {
@@ -315,7 +315,7 @@ export async function fetchHandler(request, env, ctx) {
         return okJson({ ok: true, handled: "help" });
       }
       if (lc === "/latest") {
-        // ponytail: DM reply keeps 5-row behavior. Shared helper, limit=5.
+        // DM reply keeps 5-row behavior. Shared helper, limit=5.
         const rows = await latestRows(env, 5);
         let market = null;
         try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
@@ -353,7 +353,7 @@ Got a suggestion? Reply to this message.`;
  * Pull the N most-recent analyzed whales rows joined with their analysis.
  * Pure-ish (DB read only). Returns an array of row objects.
  *
- * ponytail: ONE query shape, used by both the Telegram DM /latest reply
+ * ONE query shape, used by both the Telegram DM /latest reply
  * and the public GET /latest JSON route. Two surface, one source of truth.
  * Default limit=1 (smallest JSON payload for the 30s-polling github.io demo).
  * Callers pass limit=5 for the DM reply to match the original 5-row behavior.
@@ -651,7 +651,7 @@ export async function countCluster(env, toAddress, chain, detectedAt, currentWha
 
 /**
  * Pure. Format a cluster note for the alert. Returns null if no cluster.
- * ponytail: simple count prefix, no fancy grouping. Add temporal clustering
+ * simple count prefix, no fancy grouping. Add temporal clustering
  * with multi-exchange correlation if volume warrants it.
  */
 export function formatClusterNote(clusterCount) {

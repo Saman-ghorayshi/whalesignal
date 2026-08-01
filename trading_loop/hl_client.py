@@ -7,7 +7,7 @@ Uses the official hyperliquid-python-sdk for EIP-712 signing (the docs say
   - close_market(coin, sz): close a paper position
   - mid_price(coin): current mid for TP/SL checks
 
-ponytail: the SDK does the signing. We don't hand-roll EIP-712.
+The SDK does the signing. We don't hand-roll EIP-712.
 """
 
 from hyperliquid.info import Info
