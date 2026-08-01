@@ -16,7 +16,7 @@ and the wallet-history context with curated, cheap, already-half-built
 inputs. No new LLM, no new infra, no new keys. The analyst prompt already
 asks for an interpretation — we make the inputs to it non-embarrassing.
 
-> `ponytail:` this is rung-2 of the ladder. The analyst LLM call ALREADY
+> this is rung-2 of the ladder. The analyst LLM call ALREADY
 > exists and ALREADY asks for "why". We are not building a new feature; we
 > are feeding real data into an existing prompt slot that currently ships
 > "(no recent headlines cached)" as the headline input. The lie is in the
@@ -56,7 +56,7 @@ taking the obvious empty seat that already exists in the product. The
 prompt slot literally says `RECENT HEADLINES: - (no recent headlines cached)`.
 Plug the hole.
 
-What we are NOT competing with (because ponytail):
+What we are NOT competing with (kept simple):
 - general geopolitical LLM reasoning — wrong horizon (we alert in 12s; geopolitics moves markets in days)
 - breaking-news-first bots (Reuters/Whale Alert already do raw news faster than we ever will)
 - on-chain forensics (Arkham's whole moat — we don't deanonymize, we just label what already moves)
@@ -89,7 +89,7 @@ anonymous `public` API path; OR get a free key in 30 seconds
 (cryptopanic.com/developers/api). Pick the free key path — slightly
 higher rate limit (50/hour), and gets us real headlines, not the demo feed.
 
-> `ponytail:` one RSS/JSON feed, one keyword filter, one KV write every 5
+> one RSS/JSON feed, one keyword filter, one KV write every 5
 > minutes. ~50 lines. Do NOT add GDELT, do NOT add Twitter, do NOT add
 > Reddit. They are Phase 4+ because the analyst LLM gets diminishing
 > returns past 5 headlines in the prompt anyway (token budget + signal
@@ -143,7 +143,7 @@ Three things to make wallet history actually informative:
    know who they are — just count. The next time this wallet moves, history
    is no longer "(no prior history — first sighting)".
 
-   > `ponytail:` one INSERT OR IGNORE in `analyst.js`. No new table. No graph
+   > one INSERT OR IGNORE in `analyst.js`. No new table. No graph
    > database. Wallets table already exists with `tx_count` and
    > `total_volume` columns that are currently zero everywhere except
    > seeded entities. Use them.
@@ -206,7 +206,7 @@ medium → 🐋 (current default)
 low    → 🐡 + muted
 ```
 
-> `ponytail:` one new field on the JSON schema, one emoji map in bot.js.
+> one new field on the JSON schema, one emoji map in bot.js.
 > Don't add a "spam filter" abstraction (if/else filters, confidence
 > thresholds, user-configurable rules). The LLM does the reasoning; the
 > bot does a 3-line if/else on a single field. Add the user-customizable

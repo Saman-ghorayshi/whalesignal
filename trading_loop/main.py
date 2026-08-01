@@ -188,7 +188,7 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
     now_ms = int(time.time() * 1000)
     daily_pnl = compute_daily_pnl(db, starting_balance, now_ms)
     exposure, open_count = compute_open_exposure(db)
-    current_balance = starting_balance + daily_pnl  # ponytail: simple, can refine later
+    current_balance = starting_balance + daily_pnl  # simple, can refine later
 
     rs = RiskState(
         starting_balance=starting_balance,
@@ -328,7 +328,7 @@ def run_loop(args):
     if args.dry_run:
         # single pass — fetch alerts, process each, close trades, exit
         alerts = fetch_alerts(alerts_url=alerts_url, alerts_file=alerts_file)
-        # ponytail: insert each alert as a signal so the loop sees it
+        # insert each alert as a signal so the loop sees it
         insert_signals_from_alerts(db, alerts)
         # re-read from DB so dedupe is clean
         sigs = new_signals(db)

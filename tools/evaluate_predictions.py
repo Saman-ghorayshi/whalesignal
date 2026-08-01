@@ -43,7 +43,7 @@ def evaluate_signal(signal: str, price_at_detect: float, price_now: float, thres
     """Determine if a prediction was correct, wrong, or neutral.
 
     threshold_pct: minimum price movement to count as a directional move.
-    ponytail: 1% threshold filters noise. Tune based on asset volatility.
+    1% threshold filters noise. Tune based on asset volatility.
     """
     if not signal or signal == "neutral":
         return "neutral"
@@ -76,7 +76,7 @@ def main():
     # Fetch history with analysis — we need whales > 24h old with signals and price_at_detect.
     # The /history endpoint doesn't expose price_at_detect in the JSON, but the D1 row has it.
     # For now: fetch /history with limit=100 and signal filter, then fetch current prices.
-    # ponytail: evaluating via the API means we don't have price_at_detect in the response.
+    # evaluating via the API means we don't have price_at_detect in the response.
     # The real eval needs a D1 query. This script prepares the eval file and fetches prices.
     # The Worker needs a /evaluate endpoint to do the D1 UPDATE. That's a future task.
 

@@ -11,7 +11,7 @@
 //   4. fetchHandler /latest route — end-to-end through the bot's fetch entry.
 //      Stub Request, stub env (DB + KV), assert JSON response shape + CORS header.
 //
-// ponytail: no wrangler, no real D1, no real KV. Stubs in the test file itself.
+// no wrangler, no real D1, no real KV. Stubs in the test file itself.
 // Same pattern as bot.test.js's mockEnv. No new deps.
 
 import { test } from "node:test";
@@ -48,12 +48,12 @@ const MARKET = {
 };
 
 // ─── stub env with D1 + KV ─────────────────────────────────────────────────
-// ponytail: stub the D1 prepare/bind/all chain + KV.get. Same shape the real
+// stub the D1 prepare/bind/all chain + KV.get. Same shape the real
 // Worker env has — D1's .prepare(stmt).bind(...).all() returns { results: [] },
 // KV's .get(key) returns a string or null. Small enough to inline here.
 
 function mockEnv(rows = ROWS, market = MARKET, opts = {}) {
-  // ponytail: stub D1's prepared-statement chain. Each method returns the
+  // stub D1's prepared-statement chain. Each method returns the
   // chain object so .prepare(stmt).bind(...).all() works. Class instance so
   // `this` resolves correctly through the chain.
   class Chain {
@@ -146,7 +146,7 @@ test("latestRows returns [] when D1 has no rows", async () => {
 });
 
 test("latestRows default limit is 1", async () => {
-  // ponytail: we don't intercept the LIMIT ? bind cleanly through the mock's
+  // we don't intercept the LIMIT ? bind cleanly through the mock's
   // chained-this bug — instead assert the call succeeds and returns a list.
   // The bound value is tested at integration time (Phase 2 deploy + curl).
   const env = mockEnv(ROWS, MARKET);
@@ -202,7 +202,7 @@ test("non-/latest, non-/tg/<token> path still 404s", async () => {
 });
 
 test("POST /latest falls through to the Telegram branch (not handled as get route)", async () => {
-  // ponytail: the GET /latest route is GET-only. A POST to /latest should NOT
+  // the GET /latest route is GET-only. A POST to /latest should NOT
   // be eaten by the public route — it should fall through to the /tg/<token>
   // check, which 404s because there's no token in the URL.
   const env = mockEnv(ROWS, MARKET);

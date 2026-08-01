@@ -30,7 +30,7 @@ Three repos we reuse, not rebuild:
 
 6. **FinMem repo** (pipiku915/FinMem-LLM-StockTrading) — reference for the memory code structure. They split memory/ and agents/ dirs; we follow the same shape.
 
-> `ponytail:` Each pattern is ONE LLM call or ONE SQLite column. Total new code: ~600 lines Python + ~40 lines JS in whalesignal. The full TradingAgents framework is 251 commits across 50+ files. We take the three IDEAS, not the codebases. The full FinCon multi-agent hierarchy (manager-analyst-researcher) is 5 LLM calls per decision. We collapse it to one call per week. The full FinMem has a profiling module with character design. We skip that — our agent's personality is "copy whales that make money, skip whales that don't." No character needed.
+> Each pattern is ONE LLM call or ONE SQLite column. Total new code: ~600 lines Python + ~40 lines JS in whalesignal. The full TradingAgents framework is 251 commits across 50+ files. We take the three IDEAS, not the codebases. The full FinCon multi-agent hierarchy (manager-analyst-researcher) is 5 LLM calls per decision. We collapse it to one call per week. The full FinMem has a profiling module with character design. We skip that — our agent's personality is "copy whales that make money, skip whales that don't." No character needed.
 
 Total new infra cost: $0 if you run on your Windows laptop (single Python process, you already have Python 3.11 + git-bash). Or $5/mo for a 2GB VPS. No new framework, no event bus, no message queue, no worker pool, no web UI.
 
@@ -71,7 +71,7 @@ Return JSON only.
 
 One call. Two sides. One decision. The structure that caught 93k people's attention, collapsed to the part that matters.
 
-> `ponytail:` TradingAgents' real innovation is the researcher debate. The analyst team, risk committee, portfolio manager — that's hierarchical approval, useful for a firm with humans, overkill for a $100 paper bot copying whales. One call that forces both sides captures 80% of the value at 1/5 the cost. Full TradingAgents costs ~20-50 LLM calls per decision (debate + approval chain). Our trade decision costs 1 call. Weekly review costs 1 call. Total: ~10-20 LLM calls per week depending on alert volume.
+> TradingAgents' real innovation is the researcher debate. The analyst team, risk committee, portfolio manager — that's hierarchical approval, useful for a firm with humans, overkill for a $100 paper bot copying whales. One call that forces both sides captures 80% of the value at 1/5 the cost. Full TradingAgents costs ~20-50 LLM calls per decision (debate + approval chain). Our trade decision costs 1 call. Weekly review costs 1 call. Total: ~10-20 LLM calls per week depending on alert volume.
 
 **Why we don't import their code:**
 - Their framework targets equities (Alpha Vantage, yfinance). ours is crypto perps on Hyperliquid.
@@ -93,7 +93,7 @@ The weekly-review prompt asks the LLM to output both:
 
 **Code on GitHub:** MXGao-A/FAgent (32 stars, 7 commits). Real dirs: agents/, memory/, risk_control/, modules/. Study their `memory/` for how they persist beliefs across episodes.
 
-> `ponytail:` FinCon uses 5 agents per decision and propagates beliefs between them — that's its research contribution. We use ONE weekly agent and write beliefs to a SQLite TEXT column. Same concept, zero inter-agent communication. The communication overhead in FinCon is 4-5 LLM calls per propagation step. We have one propagation step per week (weekly review → beliefs table → next week's trade decisions read those beliefs).
+> FinCon uses 5 agents per decision and propagates beliefs between them — that's its research contribution. We use ONE weekly agent and write beliefs to a SQLite TEXT column. Same concept, zero inter-agent communication. The communication overhead in FinCon is 4-5 LLM calls per propagation step. We have one propagation step per week (weekly review → beliefs table → next week's trade decisions read those beliefs).
 
 ### Paper 3: FinMem (Li et al., ICLR 2024, arXiv 2311.13743)
 
@@ -121,7 +121,7 @@ Before each weekly review, weekly_review.py reads:
 
 **Code on GitHub:** pipiku915/FinMem-LLM-StockTrading. Study their `memory/` dir for the read-write pattern. They read both layers before each decision. We do the same.
 
-> `ponytail:` FinMem has a "profiling" module that assigns the agent a personality and character setting ("you are a conservative trader named Fred"). We skip this. Our agent's personality is the beliefs table — if it has learned to be conservative by losing money on aggressive trades, it IS conservative. Character design is the nice-to-have we cut.
+> FinMem has a "profiling" module that assigns the agent a personality and character setting ("you are a conservative trader named Fred"). We skip this. Our agent's personality is the beliefs table — if it has learned to be conservative by losing money on aggressive trades, it IS conservative. Character design is the nice-to-have we cut.
 
 ---
 
@@ -221,7 +221,7 @@ One Python process. One cron. One SQLite file. No framework.
 └──────────────────────────────────────────────────────────┘
 ```
 
-> `ponytail:` One Python file for the loop, one for review, one SQLite file, one LLM call per trade decision, one per week. The full TradingAgents framework has 5+ agents per decision. The full FinCon hierarchy has 5 agents arguing per decision. We have one call per trade + one per week. Total ~10-20 LLM calls/week. At gemini-flash-lite prices through 9Router that's free.
+> One Python file for the loop, one for review, one SQLite file, one LLM call per trade decision, one per week. The full TradingAgents framework has 5+ agents per decision. The full FinCon hierarchy has 5 agents arguing per decision. We have one call per trade + one per week. Total ~10-20 LLM calls/week. At gemini-flash-lite prices through 9Router that's free.
 
 ---
 
@@ -251,7 +251,7 @@ We do NOT need:
 
 ## THE STATE (SQLite, one file, 5 tables)
 
-> `ponytail:` The `beliefs` table is the one we add vs the old draft. It's the FinCon + FinMem contribution — long-term memory in natural language, not just numbers.
+> The `beliefs` table is the one we add vs the old draft. It's the FinCon + FinMem contribution — long-term memory in natural language, not just numbers.
 
 ```sql
 CREATE TABLE signals (
@@ -336,7 +336,7 @@ That's it. One file. No migrations framework — run `CREATE TABLE IF NOT EXISTS
 
 **Cost:** $0 (R2 free tier).
 
-> `ponytail:` Option A (webhook) was on the table — Flask listening for alerts. Skip it: CF Workers can't receive arbitrary POSTs without a worker-bound route, and securing a webhook is more code than the value. R2 NDJSON file is pull-based; no security surface; Python fetches it every 60s. One read per minute is free.
+> Option A (webhook) was on the table — Flask listening for alerts. Skip it: CF Workers can't receive arbitrary POSTs without a worker-bound route, and securing a webhook is more code than the value. R2 NDJSON file is pull-based; no security surface; Python fetches it every 60s. One read per minute is free.
 
 ---
 
@@ -409,7 +409,7 @@ python trading_loop/main.py \
 
 **Cost:** $0. Testnet faucet gives free test USDC. 9Router is local + free trades cost ~1k tokens each.
 
-> `ponytail:` The risk_manager is the only safety boundary. sanketagarwal's agents got burned by LLMs suggesting 100% allocation — they added code guards after the fact. We add them up front because the code already exists to copy. Don't trust the LLM to self-limit; enforce the guards in Python before the signed message leaves the process.
+> The risk_manager is the only safety boundary. sanketagarwal's agents got burned by LLMs suggesting 100% allocation — they added code guards after the fact. We add them up front because the code already exists to copy. Don't trust the LLM to self-limit; enforce the guards in Python before the signed message leaves the process.
 
 ---
 
@@ -502,7 +502,7 @@ Cron: `0 9 * * 1` (Monday 9am — gives you weekend data + start-of-week decisio
 
 **Cost:** $0. One LLM call/week via local 9Router.
 
-> `ponytail:` The beliefs table is an append-only LOG, not a state. Old beliefs stay. The LLM reads ALL of them next week and decides which still apply. This is FinCon's pattern — beliefs accumulate, the agent reasons over the full history rather than overwriting. Avoids "the bot forgot what it learned last month."
+> The beliefs table is an append-only LOG, not a state. Old beliefs stay. The LLM reads ALL of them next week and decides which still apply. This is FinCon's pattern — beliefs accumulate, the agent reasons over the full history rather than overwriting. Avoids "the bot forgot what it learned last month."
 
 ---
 
@@ -512,13 +512,13 @@ Cron: `0 9 * * 1` (Monday 9am — gives you weekend data + start-of-week decisio
 
 Optional add-on (~20 lines): if you want ongoing visibility without waiting for Monday, add a `/paperstatus` command to whalesignal's bot.js that reads from the live trades.db and returns current open positions + running PnL. One SQL query, one Telegram message. Skip this until you actually find yourself checking — YAGNI.
 
-> `ponytail:` Use the existing whalesignal bot — don't build a second Telegram client. The summary ships via fetch to the existing bot webhook. One message/week. If you want it more often, bump cron to daily. Don't build a dashboard.
+> Use the existing whalesignal bot — don't build a second Telegram client. The summary ships via fetch to the existing bot webhook. One message/week. If you want it more often, bump cron to daily. Don't build a dashboard.
 
 ---
 
 ## RUNG 5+ (DEFERRED — only if data says to)
 
-> `ponytail:` Don't ship these until Rungs 1-4 have 4 weeks of paper-trade data showing non-trivial learning (whale_scores actually diverge, beliefs actually change, not all "scores stuck at 0.5").
+> Don't ship these until Rungs 1-4 have 4 weeks of paper-trade data showing non-trivial learning (whale_scores actually diverge, beliefs actually change, not all "scores stuck at 0.5").
 
 - **5a. Second decision rule**: skip alerts for whales the LLM demoted last week. That's one `if score < 0.3: SKIP` line added to the trade decision step. Ship this only if Rungs 1-4 show the LLM can reliably rank whales.
 - **5b. Signal causality**: did the whale's L1 move PREDICT the HL position, or did HL open first? Phase 5 in PLAN.md. Adds one timestamp-correlation table. Ship only if you want to merge L1 and HL signals formally.
