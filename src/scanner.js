@@ -173,7 +173,7 @@ export function filterWhales(candidates, minUsd) {
 //   - dormancy (wallet silent for >1yr suddenly moves = high signal)
 //   - spam penalty (>5 txs from same wallet in 24h = automation noise)
 //
-// ponytail: hand-tuned weights, not ML. The knobs stay so the physical
+// hand-tuned weights, not ML. The knobs stay so the physical
 // world (real alert quality feedback) can tune them. Upgrade path: if
 // you ever have labeled "good vs bad alert" data, fit logistic regression
 // weights on these same features and replace the constants.
@@ -245,7 +245,7 @@ export function computeInterestingness(w, walletInfo = null, recentFromSameWalle
   }
 
   // ── stablecoin neutral penalty — $10M USDT is less interesting than $10M BTC ──
-  // ponytail: stablecoin transfers are usually exchange plumbing, not whale moves.
+  // stablecoin transfers are usually exchange plumbing, not whale moves.
   // Reduce score for USDT/USDC/DAI unless the amount is very large.
   const sym = (w.symbol ?? "").toUpperCase();
   if ((sym === "USDT" || sym === "USDC" || sym === "DAI") && usd < 50_000_000) {
@@ -354,7 +354,7 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
  * - dormant for >1yr and now active → pattern='reactivated'
  * - high frequency (>10 txs in 24h visible in our data) → pattern='high_frequency'
  *
- * ponytail: 2 cheap UPDATEs piggybacking on the stats bump. No extra reads
+ * 2 cheap UPDATEs piggybacking on the stats bump. No extra reads
  * — we use the walletMap we already loaded + the walletInfo from it.
  * Upgrade path: move to a scheduled cron job that recomputes all labels
  * from scratch if the rules get complex.
@@ -436,7 +436,7 @@ async function loadWalletMap(env) {
 /**
  * Fetch recently-detected whales from a specific wallet (for the spam
  * penalty in interestingness scoring). Returns last 10 by detected_at.
- * ponytail: 1 D1 read per inserted whale. At 200 whales/day = 200 reads.
+ * 1 D1 read per inserted whale. At 200 whales/day = 200 reads.
  * Well within the 100K/day free tier.
  */
 async function recentWhalesFromWallet(env, address, chain) {
@@ -486,7 +486,7 @@ export async function fetchBlock(chain, blockNum, env) {
  * Fetch ERC20 Transfer logs for a single block, scoped to tracked tokens
  * only. One fetch per tracked contract.
  *
- * ponytail: etherscan's free-tier getLogs ignores fromBlock/toBlock when the
+ * etherscan's free-tier getLogs ignores fromBlock/toBlock when the
  * topic-only query is too wide — it just returns the 1000 latest Transfer
  * logs on the whole chain (confirmed live: querying block 0x185e703 with
  * only topic0 came back with logs from block 447767, year 2017). Scoping
@@ -552,7 +552,7 @@ export async function refreshMarketCache(env) {
 // in try/catch. Stores {headlines:Array<{title}>, updated_at} so the analyst
 // can read both shape and staleness without a second key.
 //
-// ponytail: ONE feed, ONE keyword regex, ONE KV put. No GDELT/Twitter/Reddit
+// ONE feed, ONE keyword regex, ONE KV put. No GDELT/Twitter/Reddit
 // (Phase 4+ — LLM gets diminishing returns past 5 headlines anyway). The
 // analyst prompt slot already exists; we're filling it, not building a new one.
 const NEWS_CACHE_TTL_S = 300;            // same cadence as market_cache
@@ -561,7 +561,7 @@ const NEWS_KEYWORDS = /\b(binance|coinbase|kraken|bybit|okx|bitfinex|upbit|hack|
 /**
  * Pure: keyword-filter CryptoPanic items to the top 5 matching titles.
  * Exported for unit tests. Case-insensitive whole-word match on the title.
- * ponytail: title only → cheaper than walking body, matches what the
+ * title only → cheaper than walking body, matches what the
  * analyst prompt slot prints (`n.title`).
  */
 export function filterNewsKeywords(items) {
@@ -687,7 +687,7 @@ export default {
 
     // news_cache: same pattern as market_cache (TTL gate + try/catch wrapper
     // so a CryptoPanic outage or rate-limit never breaks the scan).
-    // ponytail: one extra KV read + one conditional fetch per tick. No new
+    // one extra KV read + one conditional fetch per tick. No new
     // cron worker, no new infra. The analyst already reads `news_cache`.
     try {
       let needNewsRefresh = true;  // default: refresh when nothing cached

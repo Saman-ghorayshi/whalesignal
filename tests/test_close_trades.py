@@ -1,9 +1,8 @@
 """tests/test_close_trades.py — tests the close path nobody covered.
 
-Ponytail: one module, stdlib only (sqlite3, no pytest dep required to read).
+Stdlib only (sqlite3, no pytest dep required to read).
 Runs under the existing pytest suite BUT also has a __main__ self-check
-that exits non-zero on failure — meets the ponytail "ONE runnable check"
-rule for non-trivial logic.
+that exits non-zero on failure.
 
 Covers three real bugs found while reviewing main.py:
 
@@ -97,7 +96,7 @@ def test_old_trade_closes_on_time_limit(tmp_path):
 
 
 if __name__ == "__main__":
-    # ponytail self-check: run all three tests without pytest, exit non-zero
+    # self-check: run all three tests without pytest, exit non-zero
     # on failure. Uses a tempdir shim instead of pytest's tmp_path fixture.
     import tempfile
     failures = 0

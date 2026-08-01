@@ -22,7 +22,7 @@ const PROXY = process.env.SOCKS_URL || "socks5://127.0.0.1:10808";
 const agent = new SocksProxyAgent(PROXY);
 const UA = "whalesignal-liveprobe/0.1";
 
-// ponytail: global fetch override with a SOCKS-dispatching agent. The deployed
+// global fetch override with a SOCKS-dispatching agent. The deployed
 // Worker ignores this code entirely; this is local-dev only. Single global hook
 // rather than a wrapper factory because scanner.js already calls bare `fetch`
 // inside worker-utils.fetchJSON — patching the global is the only thing that
@@ -31,7 +31,7 @@ const _origFetch = globalThis.fetch;
 globalThis.fetch = (url, opts = {}) => _origFetch(url, { ...opts, agent, headers: { "User-Agent": UA, ...(opts.headers || {}) } });
 
 // import AFTER the fetch override so scanner.js / worker-utils.js inherit it
-// ponytail: dynamic import after global mutation — order-dependent but simple
+// dynamic import after global mutation — order-dependent but simple
 const scanner = await import("../src/scanner.js");
 const { buildWalletMap, classifyTx } = await import("../src/worker-utils.js");
 import { readFileSync } from "node:fs";
@@ -57,7 +57,7 @@ let walletRows = [];
 try {
   const dir = "./wallet_labels";
   const files = [];
-  // ponytail: readdirents + try — no glob dep
+  // readdirents + try — no glob dep
   const { readdirSync } = await import("node:fs");
   for (const f of readdirSync(dir)) {
     if (f.endsWith(".json")) files.push(dir + "/" + f);
@@ -65,7 +65,7 @@ try {
   for (const f of files) {
     const rows = JSON.parse(readFileSync(f, "utf8"));
     // wallet_labels/exchanges.json shape: { btc: [...], eth: [...] } keyed by chain
-    // ponytail: accept both this shape and a flat array — no schema dep in a probe
+    // accept both this shape and a flat array — no schema dep in a probe
     if (Array.isArray(rows)) walletRows = walletRows.concat(rows);
     else for (const v of Object.values(rows)) if (Array.isArray(v)) walletRows = walletRows.concat(v);
   }
@@ -117,7 +117,7 @@ console.log(`  ${Date.now() - t5}ms  whales=${whales.length}`);
 console.log(`\n=== whales in block ${height} (n_tx=${block.n_tx}) ===`);
 if (whales.length === 0) {
   console.log("(none above threshold — same block on mainnet can easily have no >$500K move)");
-  // ponytail: also print top 5 by USD so the probe is informative even with 0
+  // also print top 5 by USD so the probe is informative even with 0
   // whales — confirms the pipeline sorted and priced real txs, not just nothing
   const sorted = [...all].sort((a, b) => b.usd_value - a.usd_value).slice(0, 5);
   console.log(`\ntop 5 biggest txs in the block (below threshold, for sanity):`);

@@ -16,7 +16,7 @@ const UA = "whalesignal-liveprobe/0.1";
 const KEY = process.env.ETHSCAN_KEY;
 if (!KEY) { console.error("ETHSCAN_KEY required"); process.exit(1); }
 
-// ponytail: global fetch override with SOCKS — same reason as live_scan_btc.mjs,
+// global fetch override with SOCKS — same reason as live_scan_btc.mjs,
 // only local-dev. Scanner's fetchJSON calls bare fetch, this is the only hook
 // that reaches it without rewriting production code.
 const _origFetch = globalThis.fetch;

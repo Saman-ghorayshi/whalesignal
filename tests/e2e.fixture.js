@@ -106,7 +106,7 @@ function makeFetches() {
     // CryptoPanic (Phase 3a / whale-reasoning Plan Ladder A — fills news_cache)
     // MockFetch matches by substring; the URL scanner builds is
     // https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot[&auth_token=...]
-    // ponytail: one canned payload, two keyword-matching titles (Binance, ETF)
+    // one canned payload, two keyword-matching titles (Binance, ETF)
     // and two non-matching ones — proves filterNewsKeywords runs server-side.
     { match: "https://cryptopanic.com/api/v1/posts/",
       handler: () => ({ json: { results: [
@@ -175,7 +175,7 @@ function makeBtcBlock(height) {
 function makeEthBlock(url) {
   const tag = new URL(url).searchParams.get("tag");
   const blockNum = parseInt(tag, 16);
-  // ponytail: eth_blockNumber returns 500000 here, so scanner primes to 500000.
+  // eth_blockNumber returns 500000 here, so scanner primes to 500000.
   // next tick scanner scans 500001. The whale lives in 500001.
   if (blockNum === 500001) {
     return {

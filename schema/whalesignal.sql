@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS delivered (
 -- ─────────────────────────────────────────────────────────────────────
 -- Sprint 1 additions — additive ALTERs, safe on every deploy.
 -- ─────────────────────────────────────────────────────────────────────
--- ponatail: SQLite ALTER TABLE ADD COLUMN ignores a missing IF NOT EXISTS,
+-- SQLite ALTER TABLE ADD COLUMN ignores a missing IF NOT EXISTS,
 -- and D1 doesn't support it either. We guard with a pragma check in
 -- deploy_all.py instead. The statements below are idempotent *only* when
 -- run through the wrapper. If you run this file raw in a sqlite shell
