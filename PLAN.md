@@ -763,3 +763,77 @@ compound the moat faster than a prettier website.
   and accuracy evaluation are batch jobs — GH Actions is better
   (2000 free min/month). Scanner is real-time — CF Cron (already there).
   They complement, not compete. (2026-08-01)
+
+---
+
+## GROWTH IDEAS (channel → revenue)
+
+### Phase 0: Get the first 100 subscribers (free, no code)
+- Post alert screenshots in r/CryptoCurrency, r/BitcoinMarkets — "I built a
+  whale tracker that posts to Telegram, here's what it caught today"
+- Cross-post interesting catches to Crypto Twitter with the bot link
+- List on Telegram channels directories (tdirectory.me, telegramchannels.me)
+- Pin a sample alert in the channel description so people see value before joining
+
+### Phase 1: Free-tier growth features (minimal code, still $0)
+- **Alert scarcity dial.** Min USD threshold as a channel setting (start at $1M,
+  lower to $500K as subscribers grow — more alerts = more engagement but more
+  noise). One KV value, one if-check in scanner.js.
+- **Daily digest mode.** Instead of real-time alerts, a daily summary message
+  at 9am. GH Actions cron already runs. One new template in bot.js. Some users
+  prefer digest over pings — this captures them.
+- **Accuracy score in bio.** "Track record: 47/52 calls correct (90%)"
+  Update weekly via GH Actions. Social proof drives subscription. The
+  evaluate_predictions.py tool already exists — just surface its output.
+- **Unique angle: "whale narratives".** Don't just say "whale moved 500 BTC
+  to Binance." Say "Whale #4 (who called the Jul 18 bottom) is moving to
+  Binance — 3rd time this month." Wallet tracking already works (wallet_scores
+  table). Frame it as following smart money, not reacting to big moves.
+
+### Phase 2: Retention features (small code, still $0 infra)
+- **Wallet leaderboard.** "Top 10 most accurate whales this month" — weekly
+  post. Uses existing wallet_scores table. Pure D1 query + template.
+- **User-reactive alerts.** Add /track @wallet command — user picks a wallet
+  to follow. D1 table: tracked_wallets(chat_id, address). Scanner checks
+  if a detected whale is tracked — sends a DM to that user in addition to
+  the channel. One new table, one JOIN, one new bot command.
+- **Accuracy leaderboard for the bot itself.** "This week: 12 alerts, 8
+  correct predictions (67%). Best symbol: ETH (5/5)." Builds trust.
+  evaluate_predictions.py already computes this — just format and post.
+
+### Phase 3: Revenue (crypto-only, no KYC)
+- **Premium tier via crypto micro-payments.** $5/month in USDC/ETH/SOL gets:
+  - Lower threshold ($250K instead of $1M)
+  - /track wallet command (private alerts)
+  - Weekly analysis digest (longer, more depth)
+  - Access to whale rankings dashboard
+  Use a crypto payment worker (the cryptopay project already exists).
+  Bot checks subscription status before serving premium commands.
+- **Sponsored alerts.** One sponsored message per day from a crypto project.
+  "Sponsored by [project] — [their pitch]." Clear sponsorship label.
+  Direct sale to small crypto projects via DM to channel admin.
+- **API access.** Open the /latest and /stats endpoints as a public API.
+  Free tier: 10 req/day (rate limited by IP in KV). Paid tier ($10/month):
+  1000 req/day. Monetize the infrastructure without more code beyond a
+  rate limiter (KV counter per IP, 10 lines).
+
+### Phase 4: Scale (when subscriber count >1000)
+- **Multi-channel.** Separate channels per chain (BTC-only, ETH-only).
+  Scanner already knows the chain — just route to different channel IDs
+  via config. One KV value per channel, one if-check.
+- **Web dashboard.** The /stats and /history endpoints already serve JSON.
+  A static HTML page on CF Pages that fetches them = free dashboard.
+  No backend, no auth, no cost. CNAME it to whalesignal.xyz.
+- **Discord mirror.** Discord has bots too — the same alert JSON can go
+  to a Discord webhook. One fetch call in bot.js, conditional on env var.
+
+### What NOT to do yet
+- Don't build a mobile app. A Telegram channel IS a mobile app.
+- Don't add more chains until interestingness scoring has 2 weeks of data
+  showing it reduces noise. More chains + no filter = spam.
+- Don't try to predict prices. The value is interpretation, not prediction.
+  Users can find price predictions anywhere — they can't find whale
+  interpretation anywhere.
+- Don't add premium features before 100 subscribers. Build the audience first.
+- Don't pay for infrastructure. Current stack (CF free, GH Actions free,
+  9Router free, Gemini free tier) handles ~1000 subscribers at zero cost.
