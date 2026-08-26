@@ -176,6 +176,66 @@ export function templateAnalysis(whale, market, history) {
   return null;
 }
 
+// ─── wallet behavioral patterns (alpha ladder B) ─────────────────────
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Pure: derive a behavioral tag for this wallet from its recent history.
+ * Semantics follow the CODEBASE's tx types: exchange_inflow means INTO an
+ * exchange (deposit / sell-side), exchange_outflow means OUT of one.
+ *
+ *   fresh_stealth       — depositing to an exchange within a day of first sight
+ *   frequent_depositor  — 3rd+ deposit inside 30 days
+ *   accumulator         — 3+ withdrawals from exchanges in 30 days
+ *   dumper              — long history (5+) that keeps landing on exchanges
+ *   unknown             — nothing conclusive
+ *
+ * Exported for tests.
+ */
+export function patternFor(history, currentTx, firstSeen) {
+  const cur = currentTx || {};
+  const now = Date.now();
+  const toExchangeNow = cur.tx_type === "exchange_inflow";
+  const hist = (history || []).filter((h) => h?.detected_at && now - h.detected_at <= 30 * DAY_MS);
+  const deposits = hist.filter((h) => h.tx_type === "exchange_inflow").length;
+  const withdrawals = hist.filter((h) => h.tx_type === "exchange_outflow").length;
+
+  if (toExchangeNow && firstSeen && now - firstSeen < DAY_MS) return "fresh_stealth";
+  if (toExchangeNow && deposits >= 2) return "frequent_depositor"; // current tx makes 3
+  if (withdrawals >= 3) return "accumulator";
+  // dumper: long lifetime history that lands on an exchange again without
+  // enough *recent* deposits to qualify as a frequent depositor
+  if ((history || []).length >= 5 && toExchangeNow && deposits < 2) return "dumper";
+  if (deposits >= 3) return "frequent_depositor";
+  return "unknown";
+}
+
+/**
+ * Compute + persist the behavioral tag for the whale's source wallet.
+ * Best-effort: any failure returns null and never blocks analysis.
+ */
+async function applyWalletPattern(env, whale, history) {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT first_seen FROM wallets WHERE address = ? AND chain = ?"
+    ).bind(whale.from_address, whale.chain).first();
+    const firstSeen = row?.first_seen ?? null;
+    const pattern = patternFor(history, whale, firstSeen);
+    if (!pattern || pattern === "unknown") return null;
+    await env.DB.prepare(
+      `INSERT INTO wallets (address, chain, pattern, first_seen, last_seen)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(address, chain) DO UPDATE SET pattern = excluded.pattern`
+    ).bind(whale.from_address, whale.chain, pattern,
+           firstSeen ?? Date.now(), Date.now()).run();
+    return pattern;
+  } catch (e) {
+    console.warn(`[analyst] wallet pattern upsert failed: ${e.message}`);
+    return null;
+  }
+}
+
 /**
  * Build the Gemini prompt from a whale + context. Evidence-based: feeds
  * structured FACTS and forbids speculation without supporting evidence.
@@ -186,7 +246,7 @@ export function templateAnalysis(whale, market, history) {
  * @param {Array<{chain,tx_hash,from_address,to_address,amount,symbol,usd_value,tx_type,detected_at}>} history - last 5 txs for this wallet
  * @param {Array<{title}>|null} news — top headlines
  */
-export function buildPrompt(whale, market, history, news) {
+export function buildPrompt(whale, market, history, news, pattern) {
   const m = market || {};
   const usd = whale.usd_value ?? 0;
   const fgValue = m.fear_greed != null ? m.fear_greed : "unknown";
@@ -238,6 +298,7 @@ STRUCTURED FACTS:
 - BTC price: ${btcPrice}
 - ETH price: ${ethPrice}
 - Exchange involvement: ${whale.tx_type === "wallet_to_wallet" ? "no" : "yes"}
+- Wallet behavioral tag: ${pattern || "unknown"}
 - Prior similar events in wallet history: ${history?.length || 0} transactions
 
 RECENT HEADLINES:
@@ -415,6 +476,7 @@ export async function analyzeOne(env, msg) {
   } catch { /* null */ }
 
   const history = await getWalletHistory(env, whale.from_address, whale.chain, whale.id);
+  const pattern = await applyWalletPattern(env, whale, history);
 
   // Sprint 1: try template analysis first (no Gemini call needed for obvious cases).
   // Saves 80% of AI calls. Falls through to Gemini for ambiguous events.
@@ -426,7 +488,7 @@ export async function analyzeOne(env, msg) {
   }
 
   // Not obvious enough for a template → call Gemini.
-  const prompt = buildPrompt(whale, market, history, news);
+  const prompt = buildPrompt(whale, market, history, news, pattern);
 
   let parsed;
   try {

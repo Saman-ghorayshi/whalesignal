@@ -249,3 +249,46 @@ test("templateAnalysis: burn and bridge and miner branches", () => {
   const miner = templateAnalysis({ tx_type: "miner_flow", usd_value: 1_200_000, symbol: "BTC" }, null, []);
   assert.match(miner.related_factor, /miner/i);
 });
+
+// ─── alpha ladder B: wallet behavioral patterns ─────────────────────────
+import { patternFor } from "../src/analyst.js";
+
+const TS_NOW = Date.now();
+const d = (days) => TS_NOW - days * 86_400_000;
+const dep = (at) => ({ tx_type: "exchange_inflow", detected_at: at });
+const wd = (at) => ({ tx_type: "exchange_outflow", detected_at: at });
+
+test("patternFor: fresh_stealth — first-day wallet deposits to exchange", () => {
+  const p = patternFor([], { tx_type: "exchange_inflow" }, TS_NOW - 3600_000);
+  assert.equal(p, "fresh_stealth");
+});
+
+test("patternFor: frequent_depositor — 2 prior deposits + current deposit", () => {
+  const p = patternFor([dep(d(1)), dep(d(5))], { tx_type: "exchange_inflow" }, d(40));
+  assert.equal(p, "frequent_depositor");
+});
+
+test("patternFor: accumulator — 3 withdrawals in 30d regardless of current", () => {
+  const p = patternFor([wd(d(1)), wd(d(3)), wd(d(9))], { tx_type: "wallet_to_wallet" }, d(90));
+  assert.equal(p, "accumulator");
+});
+
+test("patternFor: stale history outside 30d does not count", () => {
+  const p = patternFor([wd(d(45)), wd(d(50)), wd(d(60))], { tx_type: "wallet_to_wallet" }, d(90));
+  assert.equal(p, "unknown");
+});
+
+test("patternFor: dumper — long history landing on exchanges again", () => {
+  const hist = [dep(d(1)), dep(d(2)), dep(d(3)), dep(d(4)), dep(d(5))];
+  const p = patternFor(hist, { tx_type: "exchange_inflow" }, d(400));
+  assert.equal(p, "frequent_depositor"); // precedence: depositor beats dumper
+  // long lifetime but only old/withdrawal activity recently → dumper
+  const coldHistory = [wd(d(1)), wd(d(2)), wd(d(35)), wd(d(40)), dep(d(400))];
+  assert.equal(patternFor(coldHistory, { tx_type: "exchange_inflow" }, d(400)), "dumper");
+});
+
+test("buildPrompt embeds the behavioral tag when given", () => {
+  const w = { chain: "eth", amount: 10, symbol: "ETH", usd_value: 32000, tx_type: "exchange_inflow", from_address: "0xa", to_address: "0xb" };
+  const out = buildPrompt(w, null, [], null, "frequent_depositor");
+  assert.match(out, /Wallet behavioral tag: frequent_depositor/);
+});
