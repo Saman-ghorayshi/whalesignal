@@ -89,6 +89,7 @@ export function templateAnalysis(whale, market, history) {
       signal: "neutral",
       confidence: 0.90,
       related_factor: "Exchange internal routing",
+      context_relevance: "low",
     };
   }
 
@@ -128,6 +129,7 @@ export function templateAnalysis(whale, market, history) {
       signal: "neutral",
       confidence: 0.50,
       related_factor: "Wallet-to-wallet stablecoin transfer",
+      context_relevance: "low",
     };
   }
 
@@ -160,6 +162,7 @@ export function templateAnalysis(whale, market, history) {
       signal: "neutral",
       confidence: 0.65,
       related_factor: "Cross-chain bridge flow",
+      context_relevance: "low",
     };
   }
   if (whale.tx_type === "miner_flow") {
@@ -169,6 +172,7 @@ export function templateAnalysis(whale, market, history) {
       signal: "neutral",
       confidence: 0.55,
       related_factor: "Miner wallet movement",
+      context_relevance: "medium",
     };
   }
 
@@ -312,8 +316,12 @@ Return JSON:
   "headline": "one line describing what the whale did — no emojis, no chain name, max 80 chars",
   "interpretation": "2-3 sentences: state what the structured facts indicate. Cite specific facts. If insufficient evidence, say so explicitly.",
   "signal": "bullish" | "bearish" | "neutral",
-  "confidence": 0.0-1.0 float — only above 0.7 if 3+ supporting facts exist,
-  "related_factor": "the single most relevant fact (e.g. 'exchange inflow during market fear' or 'insufficient data')"
+   "confidence": 0.0-1.0 float — only above 0.7 if 3+ supporting facts exist,
+   "context_relevance": "low" | "medium" | "high" — how much context supports this event:
+     high = exchange/wallet labels + history + headlines all line up,
+     medium = some supporting context,
+     low = routine plumbing with no supporting context (internal routing, small stablecoin moves),
+   "related_factor": "the single most relevant fact (e.g. 'exchange inflow during market fear' or 'insufficient data')"
 }`;
 }
 
@@ -348,12 +356,17 @@ function normalizeAnalysis(o) {
   confidence = Math.max(0, Math.min(1, confidence));
   let signal = String(o.signal || "neutral").toLowerCase().trim();
   if (!signals.has(signal)) signal = "neutral";
+  // context_relevance: how context-saturated this alert is. Default medium
+  // keeps old analyses and non-conforming LLM output working unchanged.
+  let relevance = String(o.context_relevance || o.contextRelevance || "medium").toLowerCase().trim();
+  if (!["low", "medium", "high"].includes(relevance)) relevance = "medium";
   return {
     headline: String(o.headline || "").slice(0, 200),
     interpretation: String(o.interpretation || "").slice(0, 800),
     signal,
     confidence,
     related_factor: String(o.related_factor || o.relatedFactor || "").slice(0, 200),
+    context_relevance: relevance,
   };
 }
 
@@ -426,15 +439,16 @@ async function labelPair(env, fromAddr, toAddr) {
 /** Record the analysis + mark the whale done. */
 async function saveAnalysis(env, whaleId, parsed) {
   await env.DB.prepare(
-    `INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, context_relevance, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(whale_id) DO UPDATE SET
        headline=excluded.headline, interpretation=excluded.interpretation,
        signal=excluded.signal, confidence=excluded.confidence,
-       related_factor=excluded.related_factor`
+       related_factor=excluded.related_factor,
+       context_relevance=excluded.context_relevance`
   ).bind(
     whaleId, parsed.headline, parsed.interpretation, parsed.signal,
-    parsed.confidence, parsed.related_factor, Date.now()
+    parsed.confidence, parsed.related_factor, parsed.context_relevance ?? "medium", Date.now()
   ).run();
   await env.DB.prepare(
     "UPDATE whales SET analysis_status = 'done' WHERE id = ?"

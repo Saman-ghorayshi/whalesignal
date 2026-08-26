@@ -251,7 +251,7 @@ test("templateAnalysis: burn and bridge and miner branches", () => {
 });
 
 // ─── alpha ladder B: wallet behavioral patterns ─────────────────────────
-import { patternFor } from "../src/analyst.js";
+import { patternFor, parseAnalysis } from "../src/analyst.js";
 
 const TS_NOW = Date.now();
 const d = (days) => TS_NOW - days * 86_400_000;
@@ -291,4 +291,26 @@ test("buildPrompt embeds the behavioral tag when given", () => {
   const w = { chain: "eth", amount: 10, symbol: "ETH", usd_value: 32000, tx_type: "exchange_inflow", from_address: "0xa", to_address: "0xb" };
   const out = buildPrompt(w, null, [], null, "frequent_depositor");
   assert.match(out, /Wallet behavioral tag: frequent_depositor/);
+});
+
+// ─── alpha ladder C: relevance tiers ────────────────────────────────────
+import { formatAlert } from "../src/bot.js";
+
+test("parseAnalysis: missing or garbage context_relevance defaults to medium", () => {
+  const legacy = parseAnalysis('{"headline":"h","interpretation":"i","signal":"neutral","confidence":0.5,"related_factor":"f"}');
+  assert.equal(legacy.context_relevance, "medium");
+  const garbage = parseAnalysis('{"headline":"h","interpretation":"i","signal":"neutral","confidence":0.5,"related_factor":"f","context_relevance":"EXTREME"}');
+  assert.equal(garbage.context_relevance, "medium");
+  const good = parseAnalysis('{"headline":"h","interpretation":"i","signal":"bullish","confidence":0.8,"related_factor":"f","context_relevance":"high"}');
+  assert.equal(good.context_relevance, "high");
+});
+
+test("formatAlert: high relevance promotes with fire, low gets muted", () => {
+  const WHALE2 = { chain: "btc", tx_hash: "0xk", from_address: "0xaaa", to_address: "0xbbb", amount: 5, symbol: "BTC", usd_value: 500_000, tx_type: "exchange_inflow", block_number: 100, detected_at: 1 };
+const mkA = (rel) => ({ headline: "h", interpretation: "i", signal: "bearish", confidence: 0.7, related_factor: "rf", context_relevance: rel });
+  const high = formatAlert(WHALE2, mkA("high"), null);
+  assert.match(high, /🔥 🔮 Signal:/);
+  const low = formatAlert(WHALE2, mkA("low"), null);
+  assert.match(low, /💤$/m);
+  assert.doesNotMatch(low, /🔥/);
 });

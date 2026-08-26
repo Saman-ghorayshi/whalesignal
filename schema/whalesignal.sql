@@ -120,3 +120,9 @@ INSERT OR IGNORE INTO scanner_state (chain, last_block, last_scan, total_whales,
 VALUES ('btc', NULL, 0, 0, 0);
 INSERT OR IGNORE INTO scanner_state (chain, last_block, last_scan, total_whales, errors)
 VALUES ('eth', NULL, 0, 0, 0);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Alpha additions — relevance tiers (ladder C). Additive, guarded the
+-- same way as earlier ALTERs (pragma check in deploy_all.py).
+-- ─────────────────────────────────────────────────────────────────────
+ALTER TABLE analysis ADD COLUMN context_relevance TEXT DEFAULT 'medium';

@@ -153,6 +153,12 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   const sig = (analysis?.signal || "neutral").toLowerCase();
   const sigEmoji = sig === "bullish" ? "🟢 BULLISH" : sig === "bearish" ? "🔴 BEARISH" : "⚪ NEUTRAL";
   const conf = analysis?.confidence != null ? (analysis.confidence).toFixed(2) : "—";
+  // relevance tier: 🔥 high-context alerts get promoted, 💤 plumbing gets
+  // visibly muted. medium/missing keeps the classic line untouched.
+  const rel = (analysis?.context_relevance || "medium").toLowerCase();
+  let signalLine = `🔮 Signal: ${sigEmoji} (confidence ${conf})`;
+  if (rel === "high") signalLine = `🔥 ${signalLine}`;
+  else if (rel === "low") signalLine = `${signalLine} · 💤`;
 
   // market footer
   const m = market || {};
@@ -184,7 +190,7 @@ export function formatAlert(whale, analysis, market, opts = {}) {
     lines.push("");
   }
   lines.push(`📊 Market: BTC ${btcP} (${btcChg}) | ${fg} | ETH ${ethP}`);
-  lines.push(`🔮 Signal: ${sigEmoji} (confidence ${conf})`);
+  lines.push(signalLine);
   if (analysis?.related_factor) lines.push(`📎 ${analysis.related_factor}`);
   lines.push("");
   lines.push(`🔍 ${explorerLink}`);
