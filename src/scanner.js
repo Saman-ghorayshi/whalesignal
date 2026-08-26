@@ -21,7 +21,7 @@
 //   MIN_USD  — string, overrides default 500000
 //   MAX_BLOCKS — string, overrides default 10
 
-import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor } from "./worker-utils.js";
+import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor, ZERO_ADDRESS, isBurnSink } from "./worker-utils.js";
 
 // consts (also overrideable via env)
 const DEFAULT_MIN_USD = 500_000;
@@ -212,6 +212,18 @@ export function computeInterestingness(w, walletInfo = null, recentFromSameWalle
   else if (w.tx_type === "exchange_internal") score += 6;
   else score += 3; // wallet_to_wallet
 
+  // ── supply operations — mint/burn are rare and market-moving (0-18) ──
+  // A $50M USDT print is the single most-watched whale signal on crypto
+  // twitter; burns shrink supply. Bridges/miners get milder treatment.
+  if (w.tx_type === "mint" || w.tx_type === "burn") {
+    score += usd >= 10_000_000 ? 18 : 10;
+  } else if (w.tx_type === "miner_flow") {
+    score += 8;
+  } else if (w.tx_type === "bridge_flow") {
+    // routine rotation unless it's big enough that size alone already scores
+    if (usd < 5_000_000) score -= 4;
+  }
+
   // ── wallet age — known wallets with history are more interesting (0-15) ──
   if (walletInfo) {
     const txCount = walletInfo.tx_count ?? 0;
@@ -258,8 +270,14 @@ export function computeInterestingness(w, walletInfo = null, recentFromSameWalle
 /** Attach a tx_type (exchange_inflow etc.) using the wallet label map. Pure. */
 export function classifyWhales(whales, walletMap) {
   return whales.map((w) => {
-    const fromType = walletMap.get(String(w.from_address).toLowerCase())?.type || null;
-    const toType = walletMap.get(String(w.to_address).toLowerCase())?.type || null;
+    const from = String(w.from_address || "").toLowerCase();
+    const to = String(w.to_address || "").toLowerCase();
+    // supply operations beat everything: a Transfer from 0x0 is a mint,
+    // one into 0x0/...dEaD is a burn — labels can't override these
+    if (from === ZERO_ADDRESS) return { ...w, tx_type: "mint" };
+    if (isBurnSink(to)) return { ...w, tx_type: "burn" };
+    const fromType = walletMap.get(from)?.type || null;
+    const toType = walletMap.get(to)?.type || null;
     const { tx_type } = classifyTx(fromType, toType);
     return { ...w, tx_type };
   });

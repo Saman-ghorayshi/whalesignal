@@ -56,12 +56,34 @@ export function buildWalletMap(rows) {
  * exchange_internal | wallet_to_wallet | unknown.
  */
 export function classifyTx(fromType, toType) {
+  // behavioral labels beat exchange plumbing: a treasury print or bridge
+  // hop tells a better story than "one side is an exchange"
+  if (fromType === "treasury") return { tx_type: "mint" };
+  if (toType === "treasury") return { tx_type: "burn" };
+  if (fromType === "bridge" || toType === "bridge") return { tx_type: "bridge_flow" };
+  if (fromType === "miner" || toType === "miner") return { tx_type: "miner_flow" };
+
   const fromEx = fromType === "exchange";
   const toEx = toType === "exchange";
   if (fromEx && toEx) return { tx_type: "exchange_internal" };
   if (!fromEx && toEx) return { tx_type: "exchange_inflow" };
   if (fromEx && !toEx) return { tx_type: "exchange_outflow" };
   return { tx_type: "wallet_to_wallet" };
+}
+
+/** ERC20 mint/burn sentinels — Transfer events touching these are supply ops. */
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const DEAD_SUFFIXES = ["dead", "dEaD", "DEAD"];
+
+/**
+ * True when the address is a conventional burn sink (0x0 or ...dEaD).
+ * Pure, case-tolerant.
+ */
+export function isBurnSink(addr) {
+  if (!addr) return false;
+  const a = String(addr).toLowerCase();
+  if (a === ZERO_ADDRESS) return true;
+  return DEAD_SUFFIXES.some((sfx) => a.endsWith(sfx));
 }
 
 /**

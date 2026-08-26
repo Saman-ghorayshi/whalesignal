@@ -131,6 +131,47 @@ export function templateAnalysis(whale, market, history) {
     };
   }
 
+  // ── supply operations (mint / burn) ──
+  // Facts only: new supply entered or left circulation. Direction claims
+  // ("prints precede pumps") need more context than one tx provides, so the
+  // template stays neutral and lets the destination/exchange facts speak.
+  if (whale.tx_type === "mint") {
+    return {
+      headline: `${fmtUSD(usd)} ${sym} newly minted`,
+      interpretation: `New ${sym} tokens were created (${fmtUSD(usd)}). This increases circulating supply. Watch where these tokens move next — deposits to exchanges after a large mint are historically read as sell-side liquidity.`,
+      signal: "neutral",
+      confidence: usd >= 10_000_000 ? 0.70 : 0.55,
+      related_factor: "Token mint — new supply created",
+    };
+  }
+  if (whale.tx_type === "burn") {
+    return {
+      headline: `${fmtUSD(usd)} ${sym} sent to burn address`,
+      interpretation: `${sym} was transferred to a burn sink, permanently removing ${fmtUSD(usd)} from circulating supply. Supply reduction is mechanically deflationary for the token; market impact depends on size relative to total supply.`,
+      signal: "neutral",
+      confidence: 0.60,
+      related_factor: "Token burn — supply removed",
+    };
+  }
+  if (whale.tx_type === "bridge_flow") {
+    return {
+      headline: `${fmtUSD(usd)} ${sym} crossed a bridge`,
+      interpretation: "Funds moved through a cross-chain bridge contract. This is infrastructure rotation between chains, not an exchange deposit or withdrawal by itself. Repeated bridge flows in one direction can indicate capital migration.",
+      signal: "neutral",
+      confidence: 0.65,
+      related_factor: "Cross-chain bridge flow",
+    };
+  }
+  if (whale.tx_type === "miner_flow") {
+    return {
+      headline: `${fmtUSD(usd)} moved by miner-linked wallet`,
+      interpretation: "A wallet labeled as mining infrastructure moved funds. Miner outflows are watched because miners are natural sellers, but a single transfer does not establish selling intent.",
+      signal: "neutral",
+      confidence: 0.55,
+      related_factor: "Miner wallet movement",
+    };
+  }
+
   // Not obvious enough → fall through to Gemini
   return null;
 }

@@ -1,7 +1,7 @@
 // tests/utils.test.js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shortAddr, buildWalletMap, labelFor, classifyTx, usdValue, fmtUSD, mdEscape } from "../src/worker-utils.js";
+import { shortAddr, buildWalletMap, labelFor, classifyTx, usdValue, fmtUSD, mdEscape, isBurnSink, ZERO_ADDRESS } from "../src/worker-utils.js";
 
 test("shortAddr truncates long evm addrs", () => {
   // head=6, tail=4 -> "0x28C6" + "..." + "23e4"
@@ -58,4 +58,29 @@ test("mdEscape escapes asterisks/underscores for telegram markdown", () => {
   assert.equal(mdEscape("hello *world*"), "hello \\*world\\*");
   assert.equal(mdEscape("a_b_c"), "a\\_b\\_c");
   assert.equal(mdEscape(null), "");
+});
+
+// ─── behavioral tx types: treasury / bridge / miner ───────────────────
+
+test("classifyTx: treasury prints and burns outrank exchange logic", () => {
+  assert.equal(classifyTx("treasury", null).tx_type, "mint");
+  assert.equal(classifyTx(null, "treasury").tx_type, "burn");
+  // even an exchange on the other side loses to the supply story
+  assert.equal(classifyTx("treasury", "exchange").tx_type, "mint");
+});
+
+test("classifyTx: bridge and miner flows", () => {
+  assert.equal(classifyTx("bridge", null).tx_type, "bridge_flow");
+  assert.equal(classifyTx(null, "bridge").tx_type, "bridge_flow");
+  assert.equal(classifyTx("miner", "exchange").tx_type, "miner_flow");
+  // exchange plumbing still wins when no behavioral label is present
+  assert.equal(classifyTx(null, "exchange").tx_type, "exchange_inflow");
+});
+
+test("isBurnSink: zero address and dEaD variants, case-tolerant", () => {
+  assert.equal(isBurnSink(ZERO_ADDRESS), true);
+  assert.equal(isBurnSink("0x000000000000000000000000000000000000dEaD"), true);
+  assert.equal(isBurnSink("0xdeadbeef00000000000000000000000000000999"), false);
+  assert.equal(isBurnSink(""), false);
+  assert.equal(isBurnSink(null), false);
 });

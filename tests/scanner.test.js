@@ -195,3 +195,42 @@ test("filterNewsKeywords handles bad input without throwing", () => {
   assert.deepEqual(filterNewsKeywords([{ title: "no kw here" }]), []);
   assert.deepEqual(filterNewsKeywords([{ title: "Binance x" }, { noTitle: 1 }, null]), [{ title: "Binance x" }]);
 });
+
+// ─── supply operations: mint / burn / bridge / miner (alpha track 1.1) ─────
+
+test("classifyWhales: zero-address Transfer is a mint regardless of labels", () => {
+  const cands = [
+    { tx_hash: "m1", chain: "eth", from_address: "0x0000000000000000000000000000000000000000", to_address: "0xSOMEWHERE" },
+    { tx_hash: "b1", chain: "eth", from_address: "0xHOLDER", to_address: "0x000000000000000000000000000000000000dEaD" },
+    { tx_hash: "n1", chain: "eth", from_address: "0xA", to_address: "0xB" },
+  ];
+  const out = classifyWhales(cands, buildWalletMap([]));
+  assert.equal(out[0].tx_type, "mint");
+  assert.equal(out[1].tx_type, "burn");
+  assert.equal(out[2].tx_type, "wallet_to_wallet");
+});
+
+test("classifyWhales: label-driven bridge and miner flows", () => {
+  const cands = [
+    { tx_hash: "br1", chain: "eth", from_address: "0xUSER", to_address: "0xACROSS" },
+    { tx_hash: "mn1", chain: "eth", from_address: "0xPOOLPAYOUT", to_address: "0xCOLDWALLET" },
+  ];
+  const wallets = buildWalletMap([
+    { address: "0xacross", label: "Across SpokePool", type: "bridge", chain: "eth" },
+    { address: "0xpoolpayout", label: "SomePool Payout", type: "miner", chain: "eth" },
+  ]);
+  const out = classifyWhales(cands, wallets);
+  assert.equal(out[0].tx_type, "bridge_flow");
+  assert.equal(out[1].tx_type, "miner_flow");
+});
+
+test("interestingness: big mints outscore small ones; tiny bridges get dinged", () => {
+  const base = { detected_at: Date.now(), from_address: "0xX" };
+  const bigMint = computeInterestingness({ ...base, usd_value: 50_000_000, tx_type: "mint" }, null, []);
+  const smallMint = computeInterestingness({ ...base, usd_value: 600_000, tx_type: "mint" }, null, []);
+  const smallBridge = computeInterestingness({ ...base, usd_value: 600_000, tx_type: "bridge_flow" }, null, []);
+  const plainSmall = computeInterestingness({ ...base, usd_value: 600_000, tx_type: "wallet_to_wallet" }, null, []);
+  assert.ok(bigMint > smallMint, "size still dominates within a type");
+  assert.ok(smallMint > plainSmall, "mint bonus beats plain transfer at same size");
+  assert.ok(smallBridge < plainSmall, "small bridge is less interesting than a plain move");
+});

@@ -196,6 +196,10 @@ const TX_TYPE_LABEL = {
   exchange_outflow: "← exchange (likely withdraw)",
   exchange_internal: "↔ exchange-to-exchange",
   wallet_to_wallet: "↔ wallet to wallet",
+  mint: "✨ newly minted",
+  burn: "🔥 burned",
+  bridge_flow: "🌉 cross-chain bridge",
+  miner_flow: "⛏️ miner wallet move",
   unknown: "wallet move",
 };
 

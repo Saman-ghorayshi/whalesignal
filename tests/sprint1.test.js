@@ -227,3 +227,25 @@ test("buildPrompt counts prior events from history length", () => {
   const p = buildPrompt(WHALE, MARKET, hist, null);
   assert.match(p, /Prior similar events in wallet history: 2 transactions/i);
 });
+
+// ─── alpha: supply-op + infrastructure templates ────────────────────────
+import { templateAnalysis as _ta } from "../src/analyst.js";
+// (templateAnalysis already imported at top; alias kept for the new block)
+
+test("templateAnalysis: mint states supply fact, stays neutral", () => {
+  const w = { tx_type: "mint", usd_value: 60_000_000, symbol: "USDT", interesting_score: 80 };
+  const r = templateAnalysis(w, null, []);
+  assert.equal(r.signal, "neutral");
+  assert.match(r.headline, /newly minted/);
+  assert.match(r.related_factor, /mint/i);
+});
+
+test("templateAnalysis: burn and bridge and miner branches", () => {
+  const burn = templateAnalysis({ tx_type: "burn", usd_value: 2_000_000, symbol: "ETH" }, null, []);
+  assert.match(burn.related_factor, /burn/i);
+  const bridge = templateAnalysis({ tx_type: "bridge_flow", usd_value: 3_000_000, symbol: "USDC" }, null, []);
+  assert.equal(bridge.signal, "neutral");
+  assert.match(bridge.related_factor, /bridge/i);
+  const miner = templateAnalysis({ tx_type: "miner_flow", usd_value: 1_200_000, symbol: "BTC" }, null, []);
+  assert.match(miner.related_factor, /miner/i);
+});
