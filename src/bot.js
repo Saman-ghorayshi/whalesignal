@@ -330,6 +330,18 @@ export async function fetchHandler(request, env, ctx) {
         await tgSendMessage(env.BOT_TOKEN, chatId, reply);
         return okJson({ ok: true, handled: "latest" });
       }
+      if (lc === "/stats") {
+        // Admin-only. Non-admins get the generic unknown-command reply so
+        // the command's existence isn't advertised.
+        if (!isAdmin(msg, env.ADMIN_CHAT_ID)) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            `I don't know that command yet. Try /help, /ping, or /latest.`);
+          return okJson({ ok: true, handled: "unknown" });
+        }
+        const stats = await statsRows(env);
+        await tgSendMessage(env.BOT_TOKEN, chatId, renderAdminStats(stats));
+        return okJson({ ok: true, handled: "admin_stats" });
+      }
       // unknown
       await tgSendMessage(env.BOT_TOKEN, chatId,
         `I don't know that command yet. Try /help, /ping, or /latest.`);
@@ -342,6 +354,38 @@ export async function fetchHandler(request, env, ctx) {
 
   // acknowledgment of non-message updates (inline, callbacks, edits)
   return okJson({ ok: true, handled: "noop" });
+}
+
+// ─── admin gating (Phase 2 preview — full panel comes with the admin worker) ──
+
+/**
+ * Pure: is this Telegram update from the configured admin?
+ * Compares numeric from.id against ADMIN_CHAT_ID (stored as a string secret).
+ * No ADMIN_CHAT_ID configured → nobody is admin.
+ */
+export function isAdmin(msg, adminChatId) {
+  if (!adminChatId || !msg?.from?.id) return false;
+  return String(msg.from.id) === String(adminChatId);
+}
+
+/**
+ * Pure: format statsRows() output into a compact admin status message.
+ * Separate from renderStatsJSON (HTTP shape) — this one reads like a DM.
+ */
+export function renderAdminStats(stats) {
+  const s = stats || {};
+  const total = s.total_whales || 0;
+  const accTotal = s.accuracy_total || 0;
+  const accCorrect = s.accuracy_correct || 0;
+  const accRate = accTotal > 0 ? `${Math.round((accCorrect / accTotal) * 100)}%` : "n/a";
+  const lines = [
+    "📊 WhaleSignal admin stats",
+    `Whales: ${total} total | ${s.count_24h ?? 0} last 24h | ${s.count_7d ?? 0} last 7d`,
+    `Volume: ${fmtUSD(s.total_volume || 0)} | Largest: ${fmtUSD(s.largest_transfer || 0)}`,
+    `Signals: 🟢 ${s.bullish || 0} · 🔴 ${s.bearish || 0} · ⚪ ${s.neutral || 0}`,
+    `Accuracy: ${accRate} (${accCorrect}/${accTotal} evaluated)`,
+  ];
+  return lines.join("\n");
 }
 
 const HELP_TEXT = `🐋 WhaleSignal — AI whale alerts

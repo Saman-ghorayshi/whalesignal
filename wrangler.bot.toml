@@ -27,23 +27,28 @@ max_retries = 3
 binding = "DB"
 database_name = "whalesignal-db"
 # placeholder — replaced by deploy_all.py
-database_id = "__FILL_ME__"
+database_id = "c8e9d8a9-fc2f-4fce-98d4-86f5ab99100a"
 
 [[kv_namespaces]]
 binding = "KV"
 # placeholder — replaced by deploy_all.py
-id = "__FILL_ME__"
+id = "786f5d23d25d46d58558341c6029d89b"
 
 # R2 bucket: append-only NDJSON of alerts for the Python trading loop to poll.
-[[r2_buckets]]
-binding = "ALERTS_R2"
-bucket_name = "whalesignal-alerts"
+# NOTE(2026-08-26): commented out until R2 is enabled on the CF account
+# (dashboard one-click). postAlertToR2() skips gracefully when unbound.
+# [[r2_buckets]]
+# binding = "ALERTS_R2"
+# bucket_name = "whalesignal-alerts"
 
 # Non-secret vars are fine to set as plain vars. Set the channel via:
 #   wrangler secret put PUBLIC_CHANNEL  -> @yourchannel
 # or hardcode here if you prefer (not recommended).
+#
+# 2026-08-26: PUBLIC_CHANNEL moved from [vars] to a Worker secret so the
+# real channel handle never lands in this (public) repo. A var+secret
+# name collision makes deploys fail, so the [vars] block stays empty.
 [vars]
-PUBLIC_CHANNEL = "@yourchannel"
 
 # Routes: this worker is the one that gets a public URL.
 # Deploy script will print the workers.dev URL after deploy; you use that

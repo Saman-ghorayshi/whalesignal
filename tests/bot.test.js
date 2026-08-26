@@ -3,7 +3,7 @@
 // No Telegram, no D1, no real GitHub API — fetch is mocked for dispatch tests.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatAlert, buildAlertJSON, fireGitHubDispatch, latestRows, renderLatestReply, renderLatestJSON } from "../src/bot.js";
+import { formatAlert, buildAlertJSON, fireGitHubDispatch, latestRows, renderLatestReply, renderLatestJSON, isAdmin, renderAdminStats } from "../src/bot.js";
 
 const WHALE = {
   chain: "eth",
@@ -212,4 +212,38 @@ test("fireGitHubDispatch handles null alertJSON fields safely", async () => {
   } finally {
     globalThis.fetch = origFetch;
   }
+});
+
+// ─── admin gating (ADMIN_CHAT_ID) ─────────────────────────────────────
+
+test("isAdmin matches numeric from.id against ADMIN_CHAT_ID string", () => {
+  const msg = { from: { id: 823456789, username: "saman" } };
+  assert.equal(isAdmin(msg, "823456789"), true);
+  assert.equal(isAdmin(msg, 823456789), true); // numeric secret also works
+});
+
+test("isAdmin rejects wrong user, missing id, and unconfigured admin", () => {
+  const msg = { from: { id: 111 } };
+  assert.equal(isAdmin(msg, "222"), false);
+  assert.equal(isAdmin({ from: {} }, "111"), false);
+  assert.equal(isAdmin(msg, ""), false);
+  assert.equal(isAdmin(msg, undefined), false);
+});
+
+test("renderAdminStats formats a compact DM summary", () => {
+  const out = renderAdminStats({
+    total_whales: 42, count_24h: 5, count_7d: 20,
+    total_volume: 125_000_000, largest_transfer: 16_750_000,
+    bullish: 10, bearish: 22, neutral: 10,
+    accuracy_total: 12, accuracy_correct: 9,
+  });
+  assert.match(out, /Whales: 42 total \| 5 last 24h \| 20 last 7d/);
+  assert.match(out, /Volume: \$125\.00M \| Largest: \$16\.75M/);
+  assert.match(out, /Accuracy: 75% \(9\/12 evaluated\)/);
+});
+
+test("renderAdminStats handles empty db without NaN", () => {
+  const out = renderAdminStats({});
+  assert.match(out, /Whales: 0 total/);
+  assert.match(out, /Accuracy: n\/a \(0\/0 evaluated\)/);
 });
