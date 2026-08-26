@@ -374,34 +374,58 @@ function normalizeAnalysis(o) {
 
 /** Call Gemini. Returns the raw text response. Throws on error.
  *  Key source: GEMINI_KEY env secret first, then KV `key:gemini` (writable
- *  from the admin bot's /setkey — lets you rotate keys without a redeploy). */
+ *  from the admin bot's /setkey — lets you rotate keys without a redeploy).
+ *
+ *  Endpoint: tries the classic generativelanguage surface first, then the
+ *  Vertex publisher path — new-format AI Studio keys (AQ.*) only work on
+ *  Vertex. Model comes from GEMINI_MODEL env / KV config:model, defaulting
+ *  to gemini-2.0-flash; override without a redeploy via /setkey model <name>.
+ */
 export async function callGemini(env, prompt) {
   let key = env.GEMINI_KEY;
   if (!key) {
     try { key = await env.KV.get("key:gemini"); } catch { /* kv hiccup → treat as missing */ }
   }
   if (!key) throw new Error("GEMINI_KEY missing");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${env.GEMINI_KEY}`;
-  const ctl = new AbortController();
-  const tid = setTimeout(() => ctl.abort(), 12000);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
-      }),
-      signal: ctl.signal,
-    });
-    const j = await res.json();
-    if (j.error) throw new Error(`Gemini API: ${j.error.message || JSON.stringify(j.error)}`);
-    const cand = j.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!cand) throw new Error("Gemini returned no candidates");
-    return cand;
-  } finally {
-    clearTimeout(tid);
+
+  let model = env.GEMINI_MODEL || "gemini-2.0-flash";
+  if (!env.GEMINI_MODEL) {
+    try { model = (await env.KV.get("config:model")) || model; } catch {}
   }
+
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
+  });
+  const attempts = [
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`,
+  ];
+
+  let lastErr = null;
+  for (const url of attempts) {
+    const ctl = new AbortController();
+    const tid = setTimeout(() => ctl.abort(), 12000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body,
+        signal: ctl.signal,
+      });
+      const j = await res.json();
+      if (j.error) throw new Error(`Gemini API (${url.split("/")[2]}): ${j.error.message || JSON.stringify(j.error).slice(0, 200)}`);
+      const cand = j.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!cand) throw new Error("Gemini returned no candidates");
+      return cand;
+    } catch (e) {
+      lastErr = e;
+      // aborts and hard network errors bubble on the next attempt anyway
+    } finally {
+      clearTimeout(tid);
+    }
+  }
+  throw lastErr || new Error("all Gemini endpoints failed");
 }
 
 // ─── per-message workflow ─────────────────────────────────────────────

@@ -443,8 +443,8 @@ export function renderAdminStats(stats) {
 
 // KV-backed keys workers can pick up at runtime. Whitelist keeps /setkey from
 // becoming an arbitrary-write primitive.
-const MANAGEABLE_KEYS = new Set(["gemini", "news"]);
-const kvKeyName = (name) => `key:${name}`;
+const MANAGEABLE_KEYS = new Set(["gemini", "news", "model"]);
+const kvKeyName = (name) => (name === "model" ? "config:model" : `key:${name}`);
 const maskValue = (v) => (v && v.length > 6 ? `…${String(v).slice(-4)} (${String(v).length} chars)` : "(set)");
 
 /**
