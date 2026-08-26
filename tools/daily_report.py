@@ -8,7 +8,7 @@ via the bot's channel.
 Runs via .github/workflows/daily.yml on a cron schedule.
 
 Usage:
-    python tools/daily_report.py --api https://whalesignal-bot.samsha.workers.dev \
+    python tools/daily_report.py --api https://whalesignal-bot.sthidontknow.workers.dev \
         --tg-token $BOT_TOKEN --chat-id $PUBLIC_CHANNEL --output docs/data/daily/
 
 Ponytail: one script, one fetch, one file write, one TG message.
@@ -109,7 +109,7 @@ def send_telegram(token: str, chat_id: str, text: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="WhaleSignal daily report")
-    parser.add_argument("--api", default=os.environ.get("WS_API", "https://whalesignal-bot.samsha.workers.dev"),
+    parser.add_argument("--api", default=os.environ.get("WS_API", "https://whalesignal-bot.sthidontknow.workers.dev"),
                         help="Worker API base URL")
     parser.add_argument("--tg-token", default=os.environ.get("BOT_TOKEN", ""),
                         help="Telegram bot token")
