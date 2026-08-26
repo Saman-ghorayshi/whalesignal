@@ -70,7 +70,7 @@ footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .
 <footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal Stats</div></footer>
 </div>
 <script>
-const API='https://whalesignal-bot.samsha.workers.dev/stats';const POLL_S=60;let chart;
+const API='https://whalesignal-bot.sthidontknow.workers.dev/stats';const POLL_S=60;let chart;
 function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 function render(data){
