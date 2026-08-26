@@ -47,6 +47,7 @@ WRANGLER_TOMLS = {
     "scanner": HERE / "wrangler.scanner.toml",
     "analyst": HERE / "wrangler.analyst.toml",
     "bot": HERE / "wrangler.bot.toml",
+    "admin": HERE / "wrangler.admin.toml",   # private control plane (alpha)
 }
 SCHEMA = HERE / "schema" / "whalesignal.sql"
 SEED   = HERE / "wallet_labels" / "seed.py"

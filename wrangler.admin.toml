@@ -1,0 +1,21 @@
+# wrangler.admin.toml
+# Worker #4: PRIVATE control plane. Token-gated, own subdomain, no cron,
+# no queues — reads the same D1/KV the other three use.
+#
+# Secrets: ADMIN_TOKEN  (wrangler secret put ADMIN_TOKEN -c wrangler.admin.toml)
+#
+# The d1/kv ids below are injected by deploy_all.py like the other tomls.
+
+name = "whalesignal-admin"
+main = "src/admin.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+database_id = "c8e9d8a9-fc2f-4fce-98d4-86f5ab99100a"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "786f5d23d25d46d58558341c6029d89b"

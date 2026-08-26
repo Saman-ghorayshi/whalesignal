@@ -497,18 +497,22 @@ export async function fetchLatestBlockHeight(env, chain) {
   throw new Error(`unsupported chain: ${chain}`);
 }
 
-/** Fetch a block's full transaction set for a chain. */
+/** Fetch a block's full transaction set for a chain.
+ *  maxBytes guards against monster blocks: parsing a multi-MB body exceeds
+ *  the free-tier CPU budget and kills the invocation before anything
+ *  persists — the poison-pill loop. Better to skip the block entirely. */
 export async function fetchBlock(chain, blockNum, env) {
   if (chain === "btc") {
     // blockchain.info rawblock by height works
-    const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`);
+    const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`, { maxBytes: 1_500_000 });
     return j;
   }
   if (chain === "eth") {
     const key = etherscanKeyParam(env);
     const hex = "0x" + Number(blockNum).toString(16);
     const j = await fetchJSON(
-      `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`
+      `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`,
+      { maxBytes: 3_000_000 }
     );
     return j.result;
   }
@@ -753,7 +757,15 @@ export default {
     } catch { /* never break the scan over news cache */ }
 
     const results = [];
+    // kill switches (admin panel writes config:paused) — checked per chain
+    let paused = {};
+    try { paused = JSON.parse(await env.KV.get("config:paused") || "{}"); } catch {}
     for (const chain of ["eth", "btc"]) {
+      if (paused.global || paused[chain]) {
+        console.log(`[scanner:${chain}] paused via admin — skipping tick`);
+        results.push({ chain, skipped: "paused" });
+        continue;
+      }
       try {
         results.push(await scanChain(env, chain, market));
       } catch (e) {

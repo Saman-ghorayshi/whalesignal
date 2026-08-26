@@ -112,7 +112,7 @@ export function nowMs() {
  * Workers — without it a slow API can burn the whole request envelope.
  */
 export async function fetchJSON(url, opts = {}) {
-  const { headers = {}, timeoutMs = 8000 } = opts;
+  const { headers = {}, timeoutMs = 8000, maxBytes = 0 } = opts;
   // Workers send no User-Agent by default and some public APIs (CoinGecko)
   // 403 requests without one. Merge caller headers over a descriptive default.
   const allHeaders = {
@@ -129,6 +129,17 @@ export async function fetchJSON(url, opts = {}) {
       err.status = res.status;
       err.body = body;
       throw err;
+    }
+    // size gate: a payload too big to parse within the free-tier CPU budget
+    // would otherwise kill the whole invocation (exceededCpu can't be caught).
+    // Caller decides what "too big" means; 0 disables the check.
+    if (maxBytes > 0) {
+      const len = parseInt(res.headers.get("content-length") || "0", 10);
+      if (len > maxBytes) {
+        const err = new Error(`payload too large: ${len} bytes > ${maxBytes} limit for ${url}`);
+        err.tooLarge = true;
+        throw err;
+      }
     }
     return await res.json();
   } finally {

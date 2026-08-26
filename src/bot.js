@@ -814,6 +814,19 @@ export async function queueHandler(batch, env) {
       let body;
       try { body = JSON.parse(m.body); } catch { body = {}; }
       if (body.kind === "public_alert") {
+        // kill switch: skip public delivery when the admin panel paused us
+        let paused = {};
+        try { paused = JSON.parse(await env.KV.get("config:paused") || "{}"); } catch {}
+        let chainOfWhale = null;
+        try {
+          const w = await env.DB.prepare("SELECT chain FROM whales WHERE id = ?").bind(body.whale_id).first();
+          chainOfWhale = w?.chain ?? null;
+        } catch {}
+        if (paused.global || (chainOfWhale && paused[chainOfWhale])) {
+          console.warn(`[bot] paused via admin — suppressing alert ${body.whale_id}`);
+          m.ack();
+          continue;
+        }
         await postPublicAlert(env, body.whale_id);
       } else {
         console.warn("[bot] unknown queue kind:", body.kind);
