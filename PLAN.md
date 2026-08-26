@@ -452,12 +452,23 @@ The goal: daily intelligence + AI accountability.
     - Files: `src/bot.js` (countCluster query + formatClusterNote pure fn)
     - D1: +1 read per alert (already well under budget)
 
-### Sprint 4: Ship + polish (2-3 days) — NEXT (requires live infrastructure)
-11. Run `wizard.py`, `deploy_all.py`, set webhook, add bot to channel
-12. Verify scanner picks up blocks, analyst runs, bot posts
-13. Verify `docs/index.html` fetches `/latest` and renders
-14. Post first real alerts, verify quality
-15. Submit to DoraHacks BUIDL + onboarding findings
+### Sprint 4: Ship + polish — IN PROGRESS (first deploy live 2026-08-26)
+
+11. **[done] Infra created + 3 workers deployed** — D1 `whalesignal-db`
+    (schema applied, 14 labels seeded), KV `whalesignal-kv`, two queues,
+    scanner/analyst/bot on workers.dev. Cron ticking every minute.
+12. **[done] Telegram wired end-to-end** — webhook set, /ping /help /latest
+    and admin /stats verified against the live worker; test post delivered
+    to the public channel.
+13. **[done] GET /latest serving JSON** — polled from the deployed bot.
+14. **[in progress] First real alerts** — BTC + ETH blocks advancing;
+    Gemini key still pending, template analysis covers obvious cases meanwhile.
+15. [ ] DoraHacks BUIDL submission after a week of clean alerts.
+
+Deploy notes worth keeping:
+- CoinGecko 403s agentless Workers — fetchJSON sends a User-Agent now.
+- Etherscan V2 needs a key even on free tier; scanner takes ETHSCAN_KEY.
+- wrangler 4 doesn't auto-create queues; create them before first deploy.
 
 **Sprints 1-3 are code-complete: 108 tests pass, 3 commits.**
 **Sprint 4 needs:** wrangler CLI, CF account, secrets (BOT_TOKEN, GEMINI_KEY, GH_PAT),
