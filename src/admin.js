@@ -135,6 +135,25 @@ async function handleApi(request, env, path) {
     return okJson({ ok: true, alerts: results || [] });
   }
 
+  if (path === "/api/reanalyze" && request.method === "POST") {
+    // requeue whales for analysis — used after adding/rotating the Gemini
+    // key so failed (and optionally skipped) rows get another pass.
+    let body = {};
+    try { body = await request.json(); } catch {}
+    const status = body.status === "skipped" ? "skipped" : "failed";
+    const limit = Math.min(parseInt(body.limit, 10) || 25, 100);
+    const { results } = await env.DB.prepare(
+      `SELECT id FROM whales WHERE analysis_status = ? ORDER BY detected_at DESC LIMIT ?`
+    ).bind(status, limit).all();
+    let queued = 0;
+    for (const row of results || []) {
+      await env.DB.prepare("UPDATE whales SET analysis_status = 'pending' WHERE id = ?").bind(row.id).run();
+      await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id }));
+      queued++;
+    }
+    return okJson({ ok: true, requeued: queued, from_status: status });
+  }
+
   return errJson("not found", 404);
 }
 
