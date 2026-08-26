@@ -18,7 +18,7 @@ or directly if running with D1 access. For now, writes results to
 docs/data/evaluations/YYYY-MM-DD.json for manual review.
 
 Usage:
-    python tools/evaluate_predictions.py --api https://whalesignal-bot.samsha.workers.dev
+    python tools/evaluate_predictions.py --api https://whalesignal-bot.sthidontknow.workers.dev
 
 Ponytail: one script, one eval pass, one JSON write. Add a D1 UPDATE
 Worker endpoint when the JSON stops being enough.
@@ -63,7 +63,7 @@ def evaluate_signal(signal: str, price_at_detect: float, price_now: float, thres
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate AI prediction accuracy")
-    parser.add_argument("--api", default=os.environ.get("WS_API", "https://whalesignal-bot.samsha.workers.dev"),
+    parser.add_argument("--api", default=os.environ.get("WS_API", "https://whalesignal-bot.sthidontknow.workers.dev"),
                         help="Worker API base URL")
     parser.add_argument("--output", default="docs/data/evaluations",
                         help="Output directory for evaluation results")

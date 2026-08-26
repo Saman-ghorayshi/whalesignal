@@ -20,7 +20,7 @@ jobs:
 
       - name: Evaluate predictions
         env:
-          WS_API: https://whalesignal-bot.samsha.workers.dev
+          WS_API: https://whalesignal-bot.sthidontknow.workers.dev
         run: |
           python tools/evaluate_predictions.py \
             --api "$WS_API" \
