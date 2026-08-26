@@ -1,6 +1,8 @@
 # secrets & local config
 config.json
 secrets.json
+PLAN_ALPHA.md
+trades.db
 .wrangler/
 .dev.vars
 .env

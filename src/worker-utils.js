@@ -91,10 +91,16 @@ export function nowMs() {
  */
 export async function fetchJSON(url, opts = {}) {
   const { headers = {}, timeoutMs = 8000 } = opts;
+  // Workers send no User-Agent by default and some public APIs (CoinGecko)
+  // 403 requests without one. Merge caller headers over a descriptive default.
+  const allHeaders = {
+    "User-Agent": "whalesignal/1.0 (Cloudflare Worker; +https://github.com/Saman-ghorayshi/whalesignal)",
+    ...headers,
+  };
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { headers, signal: ctl.signal });
+    const res = await fetch(url, { headers: allHeaders, signal: ctl.signal });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} — ${body.slice(0, 200)}`);

@@ -12,6 +12,7 @@ Usage:
     python wallet_labels/seed.py --dry-run         # print sql, don't run
 """
 import argparse
+import shutil
 import json
 import subprocess
 import sys
@@ -61,11 +62,19 @@ def wrangler_exec(sql, db, dry_run=False):
         print(sql)
         return 0
     print(f"[seed] applying SQL to D1 database '{db}' via wrangler...")
-    res = subprocess.run(
-        ["npx", "wrangler", "d1", "execute", db, "--remote", "--command", sql],
-        cwd=REPO,
-    )
-    return res.returncode
+    # Multi-line SQL can't survive Windows .cmd arg quoting, so stage it
+    # through a temp file and use --file (same as deploy_all's schema step).
+    tmp = HERE / "_seed_tmp.sql"
+    tmp.write_text(sql + "\n", encoding="utf-8")
+    try:
+        res = subprocess.run(
+            [shutil.which("npx") or "npx", "wrangler", "d1", "execute", db,
+             "--remote", "--file", str(tmp)],
+            cwd=REPO,
+        )
+        return res.returncode
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def main():

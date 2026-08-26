@@ -25,11 +25,24 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+
+def npx():
+    """Resolve npx cross-platform — on Windows subprocess needs npx.cmd."""
+    return shutil.which("npx") or "npx"
+
+
+# wrangler output and our own checkmarks are UTF-8; Windows consoles default
+# to cp1252 and explode on both.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 WRANGLER_TOMLS = {
     "scanner": HERE / "wrangler.scanner.toml",
     "analyst": HERE / "wrangler.analyst.toml",
@@ -47,7 +60,8 @@ def run(cmd, dry=False, capture=False, cwd=HERE):
         return 0
     print(f"  $ {subprocess.list2cmdline(cmd)}")
     if capture:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
         if r.returncode != 0:
             print("--- stderr ---")
             print(r.stderr)
@@ -59,29 +73,34 @@ def run(cmd, dry=False, capture=False, cwd=HERE):
 def d1_find_or_create(dry=False):
     """Return existing d1 database id or create one. Reads `wrangler d1 list` output."""
     print("[1/6] checking D1 database...")
-    r = run(["npx", "wrangler", "d1", "list"], dry=dry, capture=True)
+    r = run([npx(), "wrangler", "d1", "list"], dry=dry, capture=True)
     if r is None or r.returncode != 0:
         if dry:
             return "<dry-run-db-id>"
         print("could not list D1; check `wrangler login`.")
         sys.exit(1)
     out = r.stdout
-    # wrangler d1 list prints a table — database_name | database_id
+    # wrangler 4 prints a table: uuid │ name │ created_at │ ...
+    # (older versions used ascii pipes and name-first ordering)
     for line in out.splitlines():
-        m = re.match(r"\s*" + re.escape(DB_NAME) + r"\s*\|\s*([0-9a-fA-F-]{20,})\s*\|", line)
+        m = re.search(
+            r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+            r"\s*[|│]\s*" + re.escape(DB_NAME) + r"\b",
+            line, re.IGNORECASE)
         if m:
             print(f"  ✓ found existing D1 '{DB_NAME}' id={m.group(1)}")
             return m.group(1)
     # not found — create
     print(f"  ✗ '{DB_NAME}' not found, creating...")
-    r = run(["npx", "wrangler", "d1", "create", DB_NAME], dry=dry, capture=True)
+    r = run([npx(), "wrangler", "d1", "create", DB_NAME], dry=dry, capture=True)
     if dry:
         return "<dry-run-db-id>"
     if r.returncode != 0:
         print("d1 create failed:", r.stderr)
         sys.exit(1)
-    # parse "database_id = \"...\"" from output
-    m = re.search(r'database_id\s*=\s*"([0-9a-fA-F-]{20,})"', r.stdout + r.stderr)
+    # parse database_id from output — wrangler 4 prints JSON
+    # ("database_id": "..."), older versions printed TOML (database_id = "...")
+    m = re.search(r'database_id"?\s*[:=]\s*"?([0-9a-fA-F-]{20,})', r.stdout + r.stderr)
     if not m:
         print("could not parse database_id from wrangler output:")
         print(r.stdout, r.stderr)
@@ -93,7 +112,7 @@ def d1_find_or_create(dry=False):
 
 def kv_find_or_create(dry=False):
     print("[2/6] checking KV namespace...")
-    r = run(["npx", "wrangler", "kv", "namespace", "list"], dry=dry, capture=True)
+    r = run([npx(), "wrangler", "kv", "namespace", "list"], dry=dry, capture=True)
     if r is None:
         return "<dry-run-kv-id>"
     if r.returncode != 0:
@@ -115,13 +134,14 @@ def kv_find_or_create(dry=False):
             print(f"  ✓ found KV '{KV_NAME}' id={m.group(1)} (parsed from table)")
             return m.group(1)
     print(f"  ✗ '{KV_NAME}' not found, creating...")
-    r = run(["npx", "wrangler", "kv", "namespace", "create", KV_NAME], dry=dry, capture=True)
+    r = run([npx(), "wrangler", "kv", "namespace", "create", KV_NAME], dry=dry, capture=True)
     if dry:
         return "<dry-run-kv-id>"
     if r.returncode != 0:
         print("kv create failed:", r.stderr)
         sys.exit(1)
-    m = re.search(r'\bid\s*=\s*"?([0-9a-fA-F]{32})"?', r.stdout + r.stderr)
+    # same dual-format parse as D1: JSON in wrangler 4, TOML before
+    m = re.search(r'"?id"?\s*[:=]\s*"?([0-9a-fA-F]{32})', r.stdout + r.stderr)
     if not m:
         print("could not parse kv id from wrangler output:")
         print(r.stdout, r.stderr)
@@ -154,7 +174,7 @@ def apply_schema(dry=False):
     if not SCHEMA.exists():
         print(f"  ! missing schema {SCHEMA}")
         return
-    run(["npx", "wrangler", "d1", "execute", DB_NAME, "--remote",
+    run([npx(), "wrangler", "d1", "execute", DB_NAME, "--remote",
          "--file", str(SCHEMA)], dry=dry)
 
 
@@ -170,7 +190,7 @@ def deploy_workers(dry=False):
     print("[6/6] deploying workers...")
     for name in WRANGLER_TOMLS:
         toml = WRANGLER_TOMLS[name]
-        run(["npx", "wrangler", "deploy", "-c", toml.name], dry=dry)
+        run([npx(), "wrangler", "deploy", "-c", toml.name], dry=dry)
 
 
 def set_webhook_step():

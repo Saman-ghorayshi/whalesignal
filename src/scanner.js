@@ -446,6 +446,17 @@ async function recentWhalesFromWallet(env, address, chain) {
   return results || [];
 }
 
+/**
+ * Etherscan API key under either spelling — ETHSCAN_KEY is the historical
+ * name in wrangler.scanner.toml comments, ETHERSCAN_KEY is the intuitive
+ * one people actually paste. Accepting both costs one line and saves a
+ * "why is eth not scanning" debugging session.
+ */
+function etherscanKeyParam(env) {
+  const k = env.ETHSCAN_KEY || env.ETHERSCAN_KEY || "";
+  return k ? `&apikey=${k}` : "";
+}
+
 /** Fetch the latest block height for a chain. Returns an int (eth: decimal number, btc: height). */
 export async function fetchLatestBlockHeight(env, chain) {
   if (chain === "btc") {
@@ -455,7 +466,7 @@ export async function fetchLatestBlockHeight(env, chain) {
   if (chain === "eth") {
     // etherscan V2 (V1 was deprecated — returns "switch to V2 migration").
     // V2 requires a key even for free tier; ETHSCAN_KEY env var is mandatory.
-    const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
+    const key = etherscanKeyParam(env);
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
     );
@@ -472,7 +483,7 @@ export async function fetchBlock(chain, blockNum, env) {
     return j;
   }
   if (chain === "eth") {
-    const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
+    const key = etherscanKeyParam(env);
     const hex = "0x" + Number(blockNum).toString(16);
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`
@@ -495,7 +506,7 @@ export async function fetchBlock(chain, blockNum, env) {
  * (currently 5) — well within 5 req/s free-tier cap.
  */
 export async function fetchERC20Logs(blockNum, env) {
-  const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
+  const key = etherscanKeyParam(env);
   const fromBlock = "0x" + Number(blockNum).toString(16);
   const toBlock = fromBlock;
   const out = [];
