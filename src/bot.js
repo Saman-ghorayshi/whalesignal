@@ -334,6 +334,13 @@ export async function fetchHandler(request, env, ctx) {
         await tgSendMessage(env.BOT_TOKEN, chatId, reply);
         return okJson({ ok: true, handled: "latest" });
       }
+      if (lc === "/id") {
+        // diagnostics: shows the numeric ids the bot actually sees, so
+        // ADMIN_CHAT_ID mismatches stop being guesswork
+        await tgSendMessage(env.BOT_TOKEN, chatId,
+          `chat.id: ${msg.chat?.id ?? "?"}\nfrom.id: ${msg.from?.id ?? "(none — channel post?)"}\n\nDM the bot directly; channel posts have no from.id.`);
+        return okJson({ ok: true, handled: "id" });
+      }
       if (lc === "/stats") {
         // Admin-only. Non-admins get the generic unknown-command reply so
         // the command's existence isn't advertised.
