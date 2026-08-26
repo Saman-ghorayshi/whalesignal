@@ -88,7 +88,7 @@ def build_summary(data: dict, date_str: str) -> str:
             lines[-1] += f" | F&G {fg}"
         lines.append("")
 
-    lines.append("Full stats: https://whalesignal.samsha.dev/stats.html")
+    lines.append("Full stats: https://saman-ghorayshi.github.io/whalesignal/stats.html")
     return "\n".join(lines)
 
 

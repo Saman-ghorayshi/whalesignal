@@ -417,7 +417,17 @@ export default {
         out.push(r);
       } catch (e) {
         console.error("[analyst] msg handler threw:", e.message);
-        // retry — but Workers Queues default max_retries=3, so this won't loop forever
+        // Missing-key is permanent, not transient — retrying just burns
+        // queue ops 3x per whale during a backlog. Fail it and move on;
+        // the whale stays 'failed' in D1 and can be re-analyzed later.
+        if (/GEMINI_KEY missing/i.test(e.message)) {
+          try { await markFailed(env, JSON.parse(m.body || "{}")?.whale_id); }
+          catch { /* best effort */ }
+          m.ack();
+          out.push({ ok: false, error: e.message, permanent: true });
+          continue;
+        }
+        // everything else: retry — max_retries=3 bounds this
         m.retry();
         out.push({ ok: false, error: e.message });
       }
