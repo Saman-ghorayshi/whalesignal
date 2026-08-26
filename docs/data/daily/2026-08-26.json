@@ -1,0 +1,72 @@
+{
+  "date": "2026-08-26",
+  "generated_at": "2026-08-26T10:50:21.998937+00:00",
+  "data": {
+    "ok": true,
+    "total_whales": 862,
+    "total_volume": 3023190776.4361067,
+    "count_24h": 862,
+    "count_7d": 862,
+    "largest_transfer": 36342210.7733754,
+    "signals": {
+      "bullish": 0,
+      "bearish": 0,
+      "neutral": 0
+    },
+    "accuracy": null,
+    "top_symbols": [
+      {
+        "symbol": "BTC",
+        "count": 730,
+        "volume": 2787031777.3064137
+      },
+      {
+        "symbol": "USDT",
+        "count": 86,
+        "volume": 121473466.1265
+      },
+      {
+        "symbol": "USDC",
+        "count": 35,
+        "volume": 103044077.299999
+      },
+      {
+        "symbol": "WBTC",
+        "count": 11,
+        "volume": 11641455.70319394
+      }
+    ],
+    "hourly": [
+      {
+        "hour": 1787706000000,
+        "count": 62,
+        "volume": 159426446.53439447
+      },
+      {
+        "hour": 1787709600000,
+        "count": 332,
+        "volume": 1052005026.2928162
+      },
+      {
+        "hour": 1787716800000,
+        "count": 358,
+        "volume": 1306092653.5321796
+      },
+      {
+        "hour": 1787731200000,
+        "count": 85,
+        "volume": 372351324.18760353
+      },
+      {
+        "hour": 1787738400000,
+        "count": 25,
+        "volume": 133315325.88911285
+      }
+    ],
+    "market": {
+      "btc_price": 78706,
+      "eth_price": 2464.25,
+      "fear_greed": 65
+    }
+  }
+}
