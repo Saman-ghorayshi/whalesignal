@@ -1,91 +1,182 @@
 # WhaleSignal 🐳
 
-AI-powered whale-intelligence Telegram bot. Detects large on-chain moves, adds
-context (market + news + wallet history), and posts interpreted alerts — not raw
-"whale moved X."
+AI-powered whale-intelligence for crypto. Detects large on-chain BTC/ETH moves,
+adds market + wallet context, and posts *interpreted* alerts to Telegram — not a
+raw "whale moved X" feed, but an explanation of what the facts indicate.
 
-Runs 100% on Cloudflare free tier (Workers + D1 + KV + Queues).
+Runs entirely on free-tier infrastructure: Cloudflare Workers + D1 + KV +
+Queues, Gemini 2.0 Flash, GitHub Actions and GitHub Pages. Total cost: $0.
 
-## Build progress
+| | |
+|---|---|
+| 📊 **Live dashboard** | [saman-ghorayshi.github.io/whalesignal](https://saman-ghorayshi.github.io/whalesignal/) |
+| 🤖 **Bot** | [@Whalynbot](https://t.me/Whalynbot) on Telegram |
+| 📢 **Alert channel** | [@Whaletracker_sig](https://t.me/Whaletracker_sig) |
+| 🔌 **Public JSON API** | `https://whalesignal-bot.sthidontknow.workers.dev/latest` |
 
-Phase 1 (MVP): public channel with AI-enhanced whale alerts from BTC + ETH.
-All Phase 1 items **done**: 4 src files, 3 wrangler configs, schema, seed,
-wizard, deploy script, 26/26 tests green, 3-worker bundle validates clean
-via `wrangler --dry-run`. See `PLAN.md` for per-item `[done]` markers.
+---
 
-**To actually ship it** you still need:
-1. Run `python wizard.py` — answer questions, copy the printed
-   `wrangler secret put` commands and run them.
-2. `python deploy_all.py` — creates D1 + KV, runs schema, seeds wallet
-   labels, deploys all 3 workers.
-3. Set the Telegram webhook: `export BOT_TOKEN=...` then
-   `python deploy_all.py --set-webhook`.
-4. Add the bot as admin to your public channel.
-5. Watch logs: `npx wrangler tail whalesignal-scanner`.
+## How it works
 
-The first scan primes `last_block` to the current tip (no historical
-whales get scanned); from the next scan onward, BTC + ETH blocks within
-your USD threshold get queued → analyzed → posted. Realistic latency is
-_block time + 1min scan + 3-5s Gemini + 1s Telegram_, not the plan's
-"30s cron" — that isn't achievable on free-tier cron (real floor is 1min).
+```
+blockchain.info ──┐                          ┌── CoinGecko (prices)
+etherscan V2 ─────┤   ┌───────────┐   KV      │
+                  ▼   ▼           ▼   ▼       │
+            ┌─────────────────────────────┐   │  every 60s
+            │ scanner (cron worker)       │◄──┘
+            │ • new blocks on BTC + ETH   │
+            │ • native txs + ERC20 logs   │
+            │ • USD filter ($500K+)       │
+            │ • interestingness score     │── low score → stored, no AI
+            │ • classify exchange flows   │
+            └──────────────┬──────────────┘
+                           │ Cloudflare Queue
+                           ▼
+            ┌─────────────────────────────┐
+            │ analyst (queue consumer)    │
+            │ • template analysis first   │── obvious case → no AI call
+            │ • Gemini for the ambiguous  │
+            │ • evidence-only prompting   │
+            └──────────────┬──────────────┘
+                           │ Cloudflare Queue
+                           ▼
+            ┌─────────────────────────────┐        ┌──► Telegram channel
+            │ bot (webhook + consumer)    ├────────┤
+            │ • alert formatting          │        ├──► GET endpoints (JSON)
+            │ • event clustering          │        └──► R2 export (trading loop)
+            │ • DM commands               │
+            └─────────────────────────────┘
 
-## Stack
+  GitHub Actions (cron): daily reports · 24h prediction evaluation · paper-trading loop
+  GitHub Pages:          this static dashboard, fed by the GET endpoints
+```
 
-- Cloudflare Workers (3: `scanner`, `analyst`, `bot`)
-- Cloudflare D1 (relational storage)
-- Cloudflare KV (market + news cache — kept under 1K writes/day)
-- Cloudflare Queues (scanner → analyst → bot decoupling)
-- Gemini 2.0 Flash free tier (AI analysis)
-- Free blockchain APIs (blockchain.info, etherscan, etc.)
+**Why three workers?** The Gemini call takes seconds; the cron scan must not
+block on it. Queues decouple scan → analyze → deliver so each stage fails and
+retries independently.
 
-## Quick start
+## What makes alerts different
+
+1. **Interestingness scoring** — every candidate gets a 0–100 score (size,
+   wallet age, dormancy, spam penalty, exchange involvement). Below threshold
+   it's stored but never analyzed: 50–90% fewer AI calls.
+2. **Templates before Gemini** — obvious patterns (exchange inflow during
+   fear, internal wallet routing) get rule-based analysis with zero AI cost.
+   Only genuinely ambiguous events reach the model (~80% savings).
+3. **Evidence-only prompts** — when Gemini runs, it receives structured facts
+   and explicit anti-speculation rules. No "this could potentially lead to…"
+4. **Accountability** — BTC/ETH price is snapshotted at detection time; a daily
+   GitHub Action grades every prediction 24h later. Accuracy stats are computed,
+   not claimed.
+5. **Event clustering** — five whales depositing to Binance within 15 minutes
+   is one story, not five alerts.
+
+## Public API
+
+All read-only, no auth, served by the bot worker:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /latest?limit=6` | Most recent analyzed whale events |
+| `GET /stats` | Totals, 24h/7d counts, signal split, accuracy rate |
+| `GET /history?limit=50&offset=0` | Paginated event history |
+| `GET /wallet/:address` | Wallet profile + recent movements |
+
+Example:
 
 ```bash
-# 1. install deps (none needed at runtime — workers have no node_modules)
-# 2. configure
-python wizard.py           # interactive — writes config.json + prints wrangler secret commands
-# 3. deploy
-python deploy_all.py       # creates D1/KV/Queue, runs schema, deploys workers, seeds wallets
-# 4. set the telegram webhook
-python deploy_all.py --set-webhook
-# 5. watch logs
-npx wrangler tail scanner
+curl "https://whalesignal-bot.sthidontknow.workers.dev/stats"
 ```
+
+## Dashboard
+
+Static HTML in [`docs/`](docs/) served by GitHub Pages — charts, history
+browser and wallet profiles, all client-side against the endpoints above.
+No backend, no cookies, no tracking. Daily report snapshots land in
+[`docs/data/daily/`](docs/data/daily/) as dated JSON files.
+
+## Run your own
+
+```bash
+# 1. configure (writes config locally, prints secret commands)
+python wizard.py
+
+# 2. create infra + deploy all three workers
+python deploy_all.py
+
+# 3. wire the Telegram webhook
+export BOT_TOKEN=...
+python deploy_all.py --set-webhook
+
+# 4. watch the first scans
+npx wrangler tail whalesignal-scanner
+```
+
+You'll need free accounts/keys: Cloudflare, a Telegram bot token
+(@BotFather), [Google AI Studio](https://aistudio.google.com/apikey)
+(Gemini), [Etherscan](https://etherscan.io/apis). Optional: CryptoPanic for
+news context, Hyperliquid testnet for the trading loop.
+
+### GitHub Actions setup
+
+Fork/push the repo, then set these repo secrets:
+
+| Secret | Used by |
+|---|---|
+| `BOT_TOKEN` + `PUBLIC_CHANNEL` | Daily Report |
+| `GEMINI_KEY` | Trade Loop, Weekly Review |
+| `WS_BOT_TOKEN` + `WS_CHAT_ID` | Weekly Review DMs |
+| `HL_TESTNET_KEY`, `R2_ALERTS_URL` | Trade Loop (paper trading) |
+
+Workflows run on their own crons after that — no maintenance.
+
+## Tests
+
+```bash
+node tests/run_tests.js
+```
+
+Plain `node:test` + asserts, zero dependencies. Covers classification, scoring,
+templates, prompt building, parsing, alert formatting, clustering notes and
+end-to-end queue flow through a mocked Worker runtime.
+
+## Free-tier budget
+
+| Resource | Limit/day | Typical use |
+|---|---|---|
+| Worker requests | 100K | ~3.5K |
+| D1 writes | 10K | ~600 |
+| D1 reads | 100K | ~6K |
+| KV writes | 1K | ~330 (tightest — market cache is TTL-gated) |
+| Queue ops | 10K | ~600 |
+| Gemini calls | 1,500 | ~20–40 after scoring + templates |
+
+Headroom math lives in [PLAN.md](PLAN.md).
 
 ## Layout
 
 ```
-whalesignal/
-  PLAN.md                  — roadmap + done markers
-  README.md
-  .gitignore
-  wrangler.toml            — bindings for 3 workers
-  config.example.json      — copy → config.json, fill in keys
-  wizard.py                — interactive setup
-  deploy_all.py            — one-shot deploy
-  schema/
-    whalesignal.sql        — D1 schema
-  src/
-    worker-utils.js        — shared helpers (imported by all 3 workers)
-    scanner.js             — cron-triggered chain scanner
-    analyst.js             — queue consumer, Gemini analysis
-    bot.js                 — Telegram webhook handler
-  wallet_labels/
-    exchanges.json         — seed: known exchange addresses per chain
-    seed.py                — loads exchanges.json into D1 wallets table
-  tests/
-    *.test.js              — node tests (no test runner — plain assert)
-    run_tests.js           — `node tests/run_tests.js` runs everything
+src/
+  scanner.js      cron worker: blocks → candidates → scores → queue
+  analyst.js      queue worker: templates / Gemini → analysis rows
+  bot.js          webhook + delivery + public GET routes
+  worker-utils.js shared pure helpers
+schema/           D1 schema (additive migrations only)
+wallet_labels/    seed data for known exchanges
+trading_loop/     experimental paper-trading bot (Hyperliquid testnet)
+tools/            daily report + prediction evaluation scripts
+tests/            node:test suites
+docs/             static dashboard (GitHub Pages)
+.github/workflows trade · weekly review · daily report · evaluate predictions
 ```
 
-## Why three workers
+## Status & roadmap
 
-A single worker can't do scanning + AI analysis + bot interaction within one
-request envelope. Splitting them via a queue decouples the slow Gemini call
-(3–5s) from the fast cron scan and the Telegram webhook.
+Phase 1 MVP shipped and running live. Sprints 1–3 (scoring, surfaces, reports,
+accuracy tracking) complete — see the `[done]` markers in
+[PLAN.md](PLAN.md). Current phase: watching real alerts, tuning thresholds.
 
-## Free-tier budget
+## Not financial advice
 
-See `PLAN.md` → "LIMITS SUMMARY". TL;DR: ~600 D1 writes/day at Phase 1,
-~312 KV writes/day, ~3500 worker requests/day. All well within free limits.
-KV is the tightest — we use it ONLY for market_cache + news_cache.
+This project interprets on-chain activity. It does not predict prices and
+nothing here is a recommendation to buy or sell anything.
