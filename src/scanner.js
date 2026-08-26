@@ -25,7 +25,11 @@ import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor } from "./wor
 
 // consts (also overrideable via env)
 const DEFAULT_MIN_USD = 500_000;
-const DEFAULT_MAX_BLOCKS = 10;
+// 10 blocks/tick sounded nice until a fat BTC block (3k+ txs) blew the
+// free-tier CPU budget mid-batch and the whole invocation died — taking
+// unsaved progress with it. 2-3 keeps each tick comfortably under the cap;
+// catch-up still converges because state persists after every block.
+const DEFAULT_MAX_BLOCKS = 3;
 // KV free tier = 1K writes/day. Scanner cron = 1/min (real cron floor), so
 // we must NOT write per-tick. Instead we decay-cache: refresh market_cache
 // only if the cached object is older than MARKET_CACHE_TTL_S. That gives us
@@ -625,45 +629,53 @@ export async function scanChain(env, chain, market) {
   let processed = 0;
   let newlyCounted = 0;
   while (cursor <= latest && processed < maxBlocks) {
-    const block = await fetchBlock(chain, cursor, env);
-    const candidates =
-      chain === "btc"
-        ? extractCandidatesBTC(block, market)
-        : extractCandidatesETH(block, market);
+    try {
+      const block = await fetchBlock(chain, cursor, env);
+      const candidates =
+        chain === "btc"
+          ? extractCandidatesBTC(block, market)
+          : extractCandidatesETH(block, market);
 
-    // for ETH, also pull ERC20 Transfer logs (extra RPC, bounded by 1 block)
-    let erc20 = [];
-    if (chain === "eth") {
-      const logs = await fetchERC20Logs(cursor, env);
-      erc20 = extractERC20Candidates(logs, market).map((c) => ({
-        ...c,
-        block_time: parseInt(block?.timestamp, 16) * 1000 || null,
-      }));
-    }
-
-    const all = [...candidates, ...erc20];
-    const whales = classifyWhales(
-      filterWhales(all, parseInt(env.MIN_USD ?? DEFAULT_MIN_USD, 10)),
-      walletMap
-    );
-
-    for (const w of whales) {
-      try {
-        const fromKey = String(w.from_address).toLowerCase();
-        const walletInfo = walletMap.get(fromKey) ?? null;
-        const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
-        const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
-        if (inserted) newlyCounted++;
-      } catch (e) {
-        console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);
+      // for ETH, also pull ERC20 Transfer logs (extra RPC, bounded by 1 block)
+      let erc20 = [];
+      if (chain === "eth") {
+        const logs = await fetchERC20Logs(cursor, env);
+        erc20 = extractERC20Candidates(logs, market).map((c) => ({
+          ...c,
+          block_time: parseInt(block?.timestamp, 16) * 1000 || null,
+        }));
       }
+
+      const all = [...candidates, ...erc20];
+      const whales = classifyWhales(
+        filterWhales(all, parseInt(env.MIN_USD ?? DEFAULT_MIN_USD, 10)),
+        walletMap
+      );
+
+      for (const w of whales) {
+        try {
+          const fromKey = String(w.from_address).toLowerCase();
+          const walletInfo = walletMap.get(fromKey) ?? null;
+          const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
+          const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
+          if (inserted) newlyCounted++;
+        } catch (e) {
+          console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);
+        }
+      }
+      lastProcessed = cursor;
+    } catch (e) {
+      // one bad block (API hiccup, malformed body) must not sink the batch;
+      // skip it — a whale in that block is lost, the state is not.
+      console.error(`[scanner:${chain}] block ${cursor} failed:`, e.message);
     }
-    lastProcessed = cursor;
+    // persist after every block: if the CPU cap kills the invocation
+    // mid-catch-up, everything before this line is already safe.
+    await persistState(env, chain, lastProcessed);
     processed++;
     cursor++;
   }
 
-  await persistState(env, chain, lastProcessed);
   return { chain, processed, newWhales: newlyCounted, primed: false };
 }
 
@@ -718,7 +730,7 @@ export default {
     } catch { /* never break the scan over news cache */ }
 
     const results = [];
-    for (const chain of ["btc", "eth"]) {
+    for (const chain of ["eth", "btc"]) {
       try {
         results.push(await scanChain(env, chain, market));
       } catch (e) {
