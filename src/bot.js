@@ -346,6 +346,40 @@ export async function fetchHandler(request, env, ctx) {
         await tgSendMessage(env.BOT_TOKEN, chatId, renderAdminStats(stats));
         return okJson({ ok: true, handled: "admin_stats" });
       }
+      if (lc === "/keys" || lc.startsWith("/setkey ") || lc.startsWith("/delkey ")) {
+        // Admin-only key management. Values live in KV; workers read env
+        // first and fall back to KV, so a set here survives without deploys.
+        if (!isAdmin(msg, env.ADMIN_CHAT_ID)) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            `I don't know that command yet. Try /help, /ping, or /latest.`);
+          return okJson({ ok: true, handled: "unknown" });
+        }
+        if (lc === "/keys") {
+          const status = {
+            env_gemini: !!env.GEMINI_KEY,
+            kv_gemini: await env.KV.get(kvKeyName("gemini")),
+            env_news: !!env.NEWS_TOKEN,
+            kv_news: await env.KV.get(kvKeyName("news")),
+          };
+          await tgSendMessage(env.BOT_TOKEN, chatId, renderKeyStatus(status));
+          return okJson({ ok: true, handled: "admin_keys" });
+        }
+        const parsed = parseKeyCommand(txt);
+        if (!parsed) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            "usage: /setkey gemini|news <value>   or   /delkey gemini|news");
+          return okJson({ ok: true, handled: "admin_keys_usage" });
+        }
+        if (parsed.op === "set") {
+          await env.KV.put(kvKeyName(parsed.name), parsed.value);
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            `✓ ${parsed.name} key stored (${maskValue(parsed.value)}). Workers pick it up on the next read.`);
+        } else {
+          await env.KV.delete(kvKeyName(parsed.name));
+          await tgSendMessage(env.BOT_TOKEN, chatId, `✓ ${parsed.name} key deleted from KV.`);
+        }
+        return okJson({ ok: true, handled: "admin_key_" + parsed.op });
+      }
       // unknown
       await tgSendMessage(env.BOT_TOKEN, chatId,
         `I don't know that command yet. Try /help, /ping, or /latest.`);
@@ -390,6 +424,49 @@ export function renderAdminStats(stats) {
     `Accuracy: ${accRate} (${accCorrect}/${accTotal} evaluated)`,
   ];
   return lines.join("\n");
+}
+
+// ─── admin key management (rotate API keys from the DM, no redeploy) ────────
+
+// KV-backed keys workers can pick up at runtime. Whitelist keeps /setkey from
+// becoming an arbitrary-write primitive.
+const MANAGEABLE_KEYS = new Set(["gemini", "news"]);
+const kvKeyName = (name) => `key:${name}`;
+const maskValue = (v) => (v && v.length > 6 ? `…${String(v).slice(-4)} (${String(v).length} chars)` : "(set)");
+
+/**
+ * Pure: parse "/setkey <name> <value>" / "/delkey <name>".
+ * Returns {op, name, value?} or null when malformed or not whitelisted.
+ */
+export function parseKeyCommand(text) {
+  let m = /^\/setkey\s+(\S+)\s+([\s\S]+)$/.exec(String(text || "").trim());
+  if (m) {
+    const name = m[1].toLowerCase();
+    return MANAGEABLE_KEYS.has(name) ? { op: "set", name, value: m[2].trim() } : null;
+  }
+  m = /^\/delkey\s+(\S+)$/.exec(String(text || "").trim());
+  if (m) {
+    const name = m[1].toLowerCase();
+    return MANAGEABLE_KEYS.has(name) ? { op: "del", name } : null;
+  }
+  return null;
+}
+
+/**
+ * Pure: build the /keys status message.
+ * @param {{env_gemini:boolean, kv_gemini:string|null, env_news:boolean, kv_news:string|null}} s
+ */
+export function renderKeyStatus(s) {
+  const fmt = (fromEnv, kvVal) => {
+    if (kvVal) return "KV " + maskValue(kvVal);
+    if (fromEnv) return "worker secret ✓";
+    return "— missing —";
+  };
+  return [
+    "🔑 key status",
+    `gemini: ${fmt(s.env_gemini, s.kv_gemini)}`,
+    `news:   ${fmt(s.env_news, s.kv_news)}`,
+  ].join("\n");
 }
 
 const HELP_TEXT = `🐋 WhaleSignal — AI whale alerts

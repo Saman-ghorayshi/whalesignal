@@ -298,9 +298,15 @@ function normalizeAnalysis(o) {
 
 // ─── Gemini call ─────────────────────────────────────────────────────
 
-/** Call Gemini. Returns the raw text response. Throws on error. */
+/** Call Gemini. Returns the raw text response. Throws on error.
+ *  Key source: GEMINI_KEY env secret first, then KV `key:gemini` (writable
+ *  from the admin bot's /setkey — lets you rotate keys without a redeploy). */
 export async function callGemini(env, prompt) {
-  if (!env.GEMINI_KEY) throw new Error("GEMINI_KEY missing");
+  let key = env.GEMINI_KEY;
+  if (!key) {
+    try { key = await env.KV.get("key:gemini"); } catch { /* kv hiccup → treat as missing */ }
+  }
+  if (!key) throw new Error("GEMINI_KEY missing");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${env.GEMINI_KEY}`;
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), 12000);

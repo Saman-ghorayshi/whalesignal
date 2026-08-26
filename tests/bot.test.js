@@ -3,7 +3,7 @@
 // No Telegram, no D1, no real GitHub API — fetch is mocked for dispatch tests.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatAlert, buildAlertJSON, fireGitHubDispatch, latestRows, renderLatestReply, renderLatestJSON, isAdmin, renderAdminStats } from "../src/bot.js";
+import { formatAlert, buildAlertJSON, fireGitHubDispatch, latestRows, renderLatestReply, renderLatestJSON, isAdmin, renderAdminStats, parseKeyCommand, renderKeyStatus } from "../src/bot.js";
 
 const WHALE = {
   chain: "eth",
@@ -246,4 +246,30 @@ test("renderAdminStats handles empty db without NaN", () => {
   const out = renderAdminStats({});
   assert.match(out, /Whales: 0 total/);
   assert.match(out, /Accuracy: n\/a \(0\/0 evaluated\)/);
+});
+
+// ─── admin key management (/setkey /delkey /keys) ─────────────────────
+
+test("parseKeyCommand accepts whitelisted set and del", () => {
+  assert.deepEqual(parseKeyCommand("/setkey gemini AIzaABC123"),
+    { op: "set", name: "gemini", value: "AIzaABC123" });
+  assert.deepEqual(parseKeyCommand("/setkey NEWS tok-99"),
+    { op: "set", name: "news", value: "tok-99" });
+  assert.deepEqual(parseKeyCommand("/delkey gemini"), { op: "del", name: "gemini" });
+});
+
+test("parseKeyCommand rejects unknown names and malformed input", () => {
+  assert.equal(parseKeyCommand("/setkey BOT_TOKEN x"), null); // not whitelisted
+  assert.equal(parseKeyCommand("/setkey gemini"), null);      // no value
+  assert.equal(parseKeyCommand("/delkey"), null);
+  assert.equal(parseKeyCommand("/latest"), null);
+});
+
+test("renderKeyStatus shows source precedence without leaking values", () => {
+  const out = renderKeyStatus({
+    env_gemini: false, kv_gemini: "AIzaSy_verysecretvalue",
+    env_news: true, kv_news: null,
+  });
+  assert.match(out, /gemini: KV …alue \(22 chars\)/);   // masked, tail only
+  assert.match(out, /news:   worker secret ✓/);
 });

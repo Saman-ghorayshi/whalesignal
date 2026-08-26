@@ -609,7 +609,12 @@ export function filterNewsKeywords(items) {
  * Mirror of refreshMarketCache (caller try/catch, not internal).
  */
 export async function refreshNewsCache(env) {
-  const auth = env.NEWS_TOKEN ? `&auth_token=${env.NEWS_TOKEN}` : "";
+  // token from env secret first, then KV `key:news` (admin /setkey writable)
+  let token = env.NEWS_TOKEN;
+  if (!token) {
+    try { token = await env.KV.get("key:news"); } catch { /* treat as missing */ }
+  }
+  const auth = token ? `&auth_token=${token}` : "";
   // filter=hot returns the most-tweeted headlines — broader signal than
   // kind=news alone, and free-tier-permitted.
   const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot${auth}`;
