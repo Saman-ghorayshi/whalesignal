@@ -68,7 +68,7 @@ footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .
 <footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal History</div></footer>
 </div>
 <script>
-const API='https://whalesignal-bot.samsha.workers.dev';
+const API='https://whalesignal-bot.sthidontknow.workers.dev';
 let page=1,limit=20,total=0;
 function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
 function ago(ts){if(!ts)return'';const d=new Date(ts);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})} 
