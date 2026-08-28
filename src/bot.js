@@ -804,9 +804,10 @@ export async function historyRows(env, opts = {}) {
   sql += " ORDER BY w.detected_at DESC LIMIT ? OFFSET ?";
   binds.push(n, offset);
 
-  const stmt = env.DB.prepare(sql);
-  for (let i = 0; i < binds.length; i++) stmt.bind(binds[i]);
-  const { results } = await stmt.all();
+  // D1 gotcha: .bind() REPLACES bindings — it must be called ONCE with all
+  // values. The old loop called it per-value, so only the last (offset)
+  // survived → "Wrong number of parameter bindings" 500s on real D1.
+  const { results } = await env.DB.prepare(sql).bind(...binds).all();
   return results || [];
 }
 

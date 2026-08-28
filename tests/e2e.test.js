@@ -101,6 +101,32 @@ test("bot fetch handler: wrong path returns 404", async () => {
   assert.equal(res.status, 404);
 });
 
+test("/history binds every SQL parameter (regression: real-D1 binding count bug)", async () => {
+  const w = makeWorld();
+  await w.DB.prepare(
+    "INSERT INTO whales (chain, tx_hash, from_address, to_address, amount, symbol, " +
+    "usd_value, tx_type, block_number, detected_at, analysis_status, interesting_score) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind("eth", "0xhist-regression-1", "0xAAA1111111111111", "0xBBB2222222222222",
+    1500, "ETH", 5_000_000, "exchange_inflow", 20_000_001,
+    Date.now(), "done", 75).run();
+
+  // historyRows through the real MockD1 (node:sqlite): the old per-value
+  // .bind() loop failed here with "Wrong number of parameter bindings".
+  const rows = await bot.historyRows(w.env, { limit: 100 });
+  assert.equal(rows.length, 1, "historyRows returns the seeded whale");
+  assert.equal(rows[0].tx_hash, "0xhist-regression-1");
+
+  // and the HTTP route serves it with filters + pagination applied
+  const res = await w.harness.fetch(bot.default,
+    new Request("https://bot.test/history?limit=100&chain=eth&min_usd=1000000"));
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.limit, 100);
+  assert.ok(j.alerts.length >= 1, "filtered history returns the whale");
+});
+
 test("webhook dedup: redelivered update_id is ACKed without replying again", async () => {
   const w = makeWorld();
   const mkReq = () => new Request(`https://bot.test/tg/TEST_TOKEN_123`, {
