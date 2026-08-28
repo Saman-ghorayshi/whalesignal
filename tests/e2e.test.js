@@ -13,6 +13,23 @@ import * as scanner from "../src/scanner.js";
 import * as analyst from "../src/analyst.js";
 import * as bot from "../src/bot.js";
 
+test("renderLatestReply hides chain tag when it repeats the symbol", () => {
+  const out = bot.renderLatestReply([
+    {
+      usd_value: 23_490_000, symbol: "BTC", chain: "btc", signal: "neutral",
+      headline: "Whale moves 297.5 BTC between unknown private wallets",
+      from_address: "1JPh4Kaaaaaaaaaaaaaaaa", to_address: "1G47mSbbbbbbbbbbbbbbb",
+    },
+    {
+      usd_value: 4_200_000, symbol: "USDT", chain: "eth", signal: "neutral",
+      headline: "USDT transfer to exchange",
+      from_address: "0xaaa11111111111111111", to_address: "0xbbb22222222222222222",
+    },
+  ]);
+  assert.ok(out.includes("$23.49M BTC —"), `BTC row should not show redundant chain tag:\n${out}`);
+  assert.ok(out.includes("USDT eth —"), "non-matching chain tag is kept");
+});
+
 test("fullPipeline: scanner→analyst→bot posts one alert", async () => {
   const r = await fullPipeline();
 
@@ -83,6 +100,30 @@ test("bot fetch handler: wrong path returns 404", async () => {
   const res = await w.harness.fetch(bot.default, req);
   assert.equal(res.status, 404);
 });
+
+test("webhook dedup: redelivered update_id is ACKed without replying again", async () => {
+  const w = makeWorld();
+  const mkReq = () => new Request(`https://bot.test/tg/TEST_TOKEN_123`, {
+    method: "POST",
+    body: JSON.stringify({
+      update_id: 777001,
+      message: { chat: { id: 42 }, from: { username: "samsha" }, text: "/ping" },
+    }),
+    headers: { "content-type": "application/json" },
+  });
+  const r1 = await w.harness.fetch(bot.default, mkReq());
+  assert.equal((await r1.json()).handled, "ping", "first delivery answers normally");
+  const sentAfterFirst = getTelegramSent().length;
+  assert.ok(sentAfterFirst >= 1, "first delivery did send");
+
+  // same update_id replayed (Telegram at-least-once redelivery)
+  const r2 = await w.harness.fetch(bot.default, mkReq());
+  assert.equal((await r2.json()).handled, "dup", "replay is flagged as dup");
+  assert.equal(getTelegramSent().length, sentAfterFirst, "no second Telegram send for a dup");
+});
+
+// note: updates WITHOUT an update_id (legacy fixtures) skip dedup entirely —
+// proven implicitly by every other fetch test which sends multiple commands.
 
 test("scanner is idempotent across ticks (whales don't get re-inserted or re-queued)", async () => {
   const w = makeWorld();

@@ -3,7 +3,7 @@
 // No Telegram, no D1, no real GitHub API — fetch is mocked for dispatch tests.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatAlert, buildAlertJSON, fireGitHubDispatch, latestRows, renderLatestReply, renderLatestJSON, isAdmin, renderAdminStats, parseKeyCommand, renderKeyStatus } from "../src/bot.js";
+import { formatAlert, buildAlertJSON, fireGitHubDispatch, latestRows, renderLatestReply, renderLatestJSON, isAdmin, renderAdminStats, parseKeyCommand, renderKeyStatus, parseChainCommand, parseCfgCommand } from "../src/bot.js";
 
 const WHALE = {
   chain: "eth",
@@ -269,7 +269,28 @@ test("renderKeyStatus shows source precedence without leaking values", () => {
   const out = renderKeyStatus({
     env_gemini: false, kv_gemini: "AIzaSy_verysecretvalue",
     env_news: true, kv_news: null,
+    kv_groq: null, kv_etherscan: null, kv_model: null, kv_model_groq: null,
+    kv_chain: null, kv_min_usd: null, kv_score: null, kv_max_blocks: null,
   });
-  assert.match(out, /gemini: KV …alue \(22 chars\)/);   // masked, tail only
-  assert.match(out, /news:   worker secret ✓/);
+  assert.match(out, /gemini:.*KV …alue \(22 chars\)/);   // masked, tail only
+  assert.match(out, /news:.*worker secret ✓/);
+  assert.match(out, /LLM chain:.*groq → gemini/);  // default chain shown
+});
+
+test("parseChainCommand validates and lowercases provider names", () => {
+  assert.deepEqual(parseChainCommand("/chain groq gemini"), ["groq", "gemini"]);
+  assert.deepEqual(parseChainCommand("/chain gemini"), ["gemini"]);
+  assert.equal(parseChainCommand("/chain"), null);
+  assert.equal(parseChainCommand("/chain unknown"), null);
+  assert.equal(parseChainCommand("/chain groq bad"), null);
+});
+
+test("parseCfgCommand accepts whitelisted numeric config names", () => {
+  assert.deepEqual(parseCfgCommand("/cfg min_usd 250000"), { kvKey: "config:min_usd", name: "min_usd", value: 250000 });
+  assert.deepEqual(parseCfgCommand("/cfg score_cutoff 50"), { kvKey: "config:score_cutoff", name: "score_cutoff", value: 50 });
+  assert.deepEqual(parseCfgCommand("/cfg max_blocks 3"), { kvKey: "config:max_blocks", name: "max_blocks", value: 3 });
+  assert.equal(parseCfgCommand("/cfg unknown 100"), null);
+  assert.equal(parseCfgCommand("/cfg min_usd -5"), null);
+  assert.equal(parseCfgCommand("/cfg min_usd abc"), null);
+  assert.equal(parseCfgCommand("/cfg"), null);
 });

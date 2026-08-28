@@ -116,6 +116,18 @@ CREATE INDEX IF NOT EXISTS idx_analysis_whale     ON analysis(whale_id);
 -- seed scanner_state rows so the scanner has a starting point.
 -- INSERT OR IGNORE so re-running won't overwrite last_block mid-operation.
 -- ─────────────────────────────────────────────────────────────────────
+
+-- ─────────────────────────────────────────────────────────────────────
+-- webhook_seen — Telegram webhook idempotency. Telegram delivers updates
+-- at-least-once: retries after our old 5xx responses, manual setWebhook
+-- nudges, and network blips can all replay an update we already answered.
+-- Only updates that trigger a REPLY are recorded here (channel echoes /
+-- noops stay free). Only rows for actual replies, so volume is tiny.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS webhook_seen (
+    update_id INTEGER PRIMARY KEY,
+    seen_at   INTEGER NOT NULL
+);
 INSERT OR IGNORE INTO scanner_state (chain, last_block, last_scan, total_whales, errors)
 VALUES ('btc', NULL, 0, 0, 0);
 INSERT OR IGNORE INTO scanner_state (chain, last_block, last_scan, total_whales, errors)

@@ -119,8 +119,9 @@ test("renderLatestJSON tolerates missing market (nulls not crash)", () => {
 test("renderLatestReply builds the original 5-row DM text", () => {
   const out = renderLatestReply(ROWS, MARKET);
   assert.match(out, /🐋 Latest whale moves:/);
-  assert.match(out, /🟢 \$5\.20M ETH eth/);     // row 1 bullish, fmtUSD formats as $5.20M
-  assert.match(out, /🔴 \$12\.00M BTC btc/);    // row 2 bearish
+  // chain tag hidden when it repeats the symbol ("ETH eth" read terribly)
+  assert.match(out, /🟢 \$5\.20M ETH —/);        // row 1 bullish, fmtUSD formats as $5.20M
+  assert.match(out, /🔴 \$12\.00M BTC —/);       // row 2 bearish
   assert.match(out, /Whale withdrew 1500 ETH/);    // headline carried
 });
 

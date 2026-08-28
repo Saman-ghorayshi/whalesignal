@@ -315,7 +315,40 @@ export async function fetchHandler(request, env, ctx) {
   // to `ctx.waitUntil(tgSendMessage(...))` and return 200 immediately so we
   // don't hold the request open for slow /latest queries.
   const msg = update.message || update.channel_post;
-  if (msg?.text) {
+  // Commands are a DM feature. Channel echoes must NEVER be answered: every
+  // alert the bot posts into PUBLIC_CHANNEL comes back to this webhook as a
+  // channel_post update — and answering those ("I don't know that command
+  // yet…") created a reply→post→echo→reply loop spamming the channel.
+  const selfBotId = String(env.BOT_TOKEN || "").split(":")[0];
+  const fromIsSelfOrBot = !!msg?.from &&
+    (msg.from.is_bot === true || String(msg.from.id) === selfBotId);
+  const isDmCommand = !!msg?.text
+    && msg.chat?.type !== "channel"
+    && !fromIsSelfOrBot;
+  if (isDmCommand) {
+    // Idempotency guard: Telegram delivers webhooks at-least-once (retries
+    // after our old 5xx era, manual setWebhook nudges, network blips). Record
+    // every update we're about to ANSWER; a replayed update_id is ACKed with
+    // no side effects so users never get double replies.
+    const uid = update?.update_id;
+    if (uid != null) {
+      try {
+        const ins = await env.DB.prepare(
+          "INSERT OR IGNORE INTO webhook_seen (update_id, seen_at) VALUES (?, ?)"
+        ).bind(uid, Date.now()).run();
+        if (ins.meta && ins.meta.changes === 0) {
+          return okJson({ ok: true, handled: "dup" });
+        }
+        // bounded growth: prune 48h+ rows on ~2% of writes (cheap)
+        if (Math.random() < 0.02) {
+          await env.DB.prepare("DELETE FROM webhook_seen WHERE seen_at < ?")
+            .bind(Date.now() - 48 * 3600 * 1000).run();
+        }
+      } catch (e) {
+        // fail open: missing table / D1 hiccup must not break replying
+        console.warn("webhook_seen guard skipped:", e.message);
+      }
+    }
     const chatId = String(msg.chat.id);
     const from = msg.from?.username ? `@${msg.from.username}` : (msg.from?.first_name || "friend");
     const txt = msg.text.trim();
@@ -373,6 +406,14 @@ export async function fetchHandler(request, env, ctx) {
             kv_gemini: await env.KV.get(kvKeyName("gemini")),
             env_news: !!env.NEWS_TOKEN,
             kv_news: await env.KV.get(kvKeyName("news")),
+            kv_groq: await env.KV.get(kvKeyName("groq")),
+            kv_etherscan: await env.KV.get(kvKeyName("etherscan")),
+            kv_model: await env.KV.get(kvKeyName("model")),
+            kv_model_groq: await env.KV.get(kvKeyName("model_groq")),
+            kv_chain: await env.KV.get("config:llm_chain"),
+            kv_min_usd: await env.KV.get("config:min_usd"),
+            kv_score: await env.KV.get("config:score_cutoff"),
+            kv_max_blocks: await env.KV.get("config:max_blocks"),
           };
           await tgSendMessage(env.BOT_TOKEN, chatId, renderKeyStatus(status));
           return okJson({ ok: true, handled: "admin_keys" });
@@ -380,7 +421,7 @@ export async function fetchHandler(request, env, ctx) {
         const parsed = parseKeyCommand(txt);
         if (!parsed) {
           await tgSendMessage(env.BOT_TOKEN, chatId,
-            "usage: /setkey gemini|news <value>   or   /delkey gemini|news");
+            "usage:\n/setkey groq|gemini|news|etherscan|model|model_groq <value>\n/delkey <name>\n/chain groq gemini  (set LLM fallback order)\n/cfg min_usd 250000  (set scan threshold)\n/cfg score_cutoff 50  (set min alert score)\n/cfg max_blocks 5  (set blocks per tick)");
           return okJson({ ok: true, handled: "admin_keys_usage" });
         }
         if (parsed.op === "set") {
@@ -393,13 +434,53 @@ export async function fetchHandler(request, env, ctx) {
         }
         return okJson({ ok: true, handled: "admin_key_" + parsed.op });
       }
+      if (lc.startsWith("/chain ")) {
+        if (!isAdmin(msg, env.ADMIN_CHAT_ID)) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            `I don't know that command yet. Try /help, /ping, or /latest.`);
+          return okJson({ ok: true, handled: "unknown" });
+        }
+        const parsed = parseChainCommand(txt);
+        if (!parsed) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            "usage: /chain groq gemini\nor /chain gemini (single provider)\nowned: groq, gemini");
+          return okJson({ ok: true, handled: "admin_chain_usage" });
+        }
+        await env.KV.put("config:llm_chain", JSON.stringify(parsed));
+        await tgSendMessage(env.BOT_TOKEN, chatId,
+          `✓ LLM chain → ${parsed.join(" → ")}\nWorkers use this fallback order for the next analysis call.`);
+        return okJson({ ok: true, handled: "admin_chain" });
+      }
+      if (lc.startsWith("/cfg ")) {
+        if (!isAdmin(msg, env.ADMIN_CHAT_ID)) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            `I don't know that command yet. Try /help, /ping, or /latest.`);
+          return okJson({ ok: true, handled: "unknown" });
+        }
+        const parsed = parseCfgCommand(txt);
+        if (!parsed) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            "usage: /cfg min_usd 250000\n/cfg score_cutoff 50\n/cfg max_blocks 5\nThese affect scanner thresholds (read on each tick).");
+          return okJson({ ok: true, handled: "admin_cfg_usage" });
+        }
+        await env.KV.put(parsed.kvKey, String(parsed.value));
+        await tgSendMessage(env.BOT_TOKEN, chatId,
+          `✓ ${parsed.name} → ${parsed.value}\nScanner reads this on the next tick.`);
+        return okJson({ ok: true, handled: "admin_cfg" });
+      }
       // unknown
       await tgSendMessage(env.BOT_TOKEN, chatId,
         `I don't know that command yet. Try /help, /ping, or /latest.`);
       return okJson({ ok: true, handled: "unknown" });
     } catch (e) {
-      console.error("bot fetch handler failed:", e.message);
-      return errJson("tg error: " + e.message, 502);
+      // A failed reply (chat not found, bot blocked, markdown parse error,
+      // transient 4xx/5xx from Telegram) must NOT surface as a webhook 5xx.
+      // Telegram treats any non-2xx as "delivery failed" and redelivers the
+      // same update forever ("Wrong response from the webhook: 502 Bad
+      // Gateway"). Log it and ACK with 200 instead; the queue-consumer path
+      // (alerts) keeps its own retry semantics and is unaffected.
+      console.error("bot update handling failed:", e.message);
+      return okJson({ ok: true, handled: "error" });
     }
   }
 
@@ -443,9 +524,33 @@ export function renderAdminStats(stats) {
 
 // KV-backed keys workers can pick up at runtime. Whitelist keeps /setkey from
 // becoming an arbitrary-write primitive.
-const MANAGEABLE_KEYS = new Set(["gemini", "news", "model"]);
-const kvKeyName = (name) => (name === "model" ? "config:model" : `key:${name}`);
+const MANAGEABLE_KEYS = new Set(["gemini", "news", "model", "groq", "etherscan", "model_groq"]);
+const kvKeyName = (name) => ({ model: "config:model", model_groq: "config:model_groq", etherscan: "key:etherscan" }[name] || `key:${name}`);
 const maskValue = (v) => (v && v.length > 6 ? `…${String(v).slice(-4)} (${String(v).length} chars)` : "(set)");
+
+/** Pure: parse "/chain groq gemini" → ["groq","gemini"] or null */
+export function parseChainCommand(text) {
+  const known = new Set(["groq", "gemini"]);
+  const parts = String(text || "").trim().split(/\s+/).slice(1);
+  if (parts.length === 0 || !parts.every(p => known.has(p))) return null;
+  return parts;
+}
+
+/** Pure: parse "/cfg <name> <number>" → { kvKey, name, value } or null */
+export function parseCfgCommand(text) {
+  const whitelist = {
+    min_usd:    { kvKey: "config:min_usd",    name: "min_usd",    fn: Number },
+    score_cutoff: { kvKey: "config:score_cutoff", name: "score_cutoff", fn: Number },
+    max_blocks: { kvKey: "config:max_blocks",  name: "max_blocks",  fn: Number },
+  };
+  const m = /^\/cfg\s+(\S+)\s+(.+)$/.exec(String(text || "").trim());
+  if (!m) return null;
+  const def = whitelist[m[1].toLowerCase()];
+  if (!def) return null;
+  const n = def.fn(m[2].trim());
+  if (!Number.isFinite(n) || n < 0 || n > 1_000_000) return null;
+  return { kvKey: def.kvKey, name: def.name, value: n };
+}
 
 /**
  * Pure: parse "/setkey <name> <value>" / "/delkey <name>".
@@ -475,10 +580,25 @@ export function renderKeyStatus(s) {
     if (fromEnv) return "worker secret ✓";
     return "— missing —";
   };
+  const kvOnly = (kvVal) => (kvVal ? "KV " + maskValue(kvVal) : "— missing —");
+  const num = (v, d) => (v != null ? Number(v) : d);
+  let chain = [];
+  try { chain = JSON.parse(s.kv_chain || "null"); } catch {}
+  if (!Array.isArray(chain) || !chain.length) chain = ["groq", "gemini"];
   return [
-    "🔑 key status",
-    `gemini: ${fmt(s.env_gemini, s.kv_gemini)}`,
-    `news:   ${fmt(s.env_news, s.kv_news)}`,
+    "🔑 API keys",
+    `  gemini:      ${fmt(s.env_gemini, s.kv_gemini)}`,
+    `  groq:        ${kvOnly(s.kv_groq)}`,
+    `  news:        ${fmt(s.env_news, s.kv_news)}`,
+    `  etherscan:   ${kvOnly(s.kv_etherscan)}  (comma-sep rotate)`,
+    `  model:       ${kvOnly(s.kv_model)}  (gemini override)`,
+    `  model_groq:  ${kvOnly(s.kv_model_groq)}`,
+    "",
+    "⚙️ config",
+    `  LLM chain:   ${chain.join(" → ")}`,
+    `  min_usd:     ${num(s.kv_min_usd, "$500,000")}`,
+    `  score_cutoff:${num(s.kv_score, 50)}`,
+    `  max_blocks:  ${num(s.kv_max_blocks, 5)} / tick`,
   ].join("\n");
 }
 
@@ -523,7 +643,10 @@ export function renderLatestReply(rows, market = null) {
   const blocks = rows.map((w) => {
     const sig = (w.signal || "—").toLowerCase();
     const emoji = sig === "bullish" ? "🟢" : sig === "bearish" ? "🔴" : "⚪";
-    return `${emoji} ${fmtUSD(w.usd_value)} ${w.symbol} ${w.chain} — ${w.headline || "(no headline)"}\n  ${shortAddr(w.from_address)} → ${shortAddr(w.to_address)}`;
+    // hide the chain tag when it just repeats the symbol ("BTC btc" → "BTC")
+    const tag = String(w.chain || "").toLowerCase() === String(w.symbol || "").toLowerCase()
+      ? "" : ` ${w.chain}`;
+    return `${emoji} ${fmtUSD(w.usd_value)} ${w.symbol}${tag} — ${w.headline || "(no headline)"}\n  ${shortAddr(w.from_address)} → ${shortAddr(w.to_address)}`;
   });
   return ["🐋 Latest whale moves:", "", ...blocks].join("\n");
 }
@@ -876,6 +999,16 @@ async function postPublicAlert(env, whaleId) {
     related_factor: whale.related_factor,
   }, market);
   if (clusterNote) text = clusterNote + "\n" + text;
+
+  // Telegram bot pacing: ~1 msg/sec per chat and channels punish bursts
+  // during whale clusters. Queue consumers can afford a small wait; enforce a
+  // ≥3.5s gap between channel posts via a KV timestamp marker.
+  try {
+    const last = parseInt(await env.KV.get("tg_last_channel_send") || "0", 10);
+    const wait = 3500 - (Date.now() - last);
+    if (wait > 0 && wait < 4000) await new Promise((r) => setTimeout(r, wait));
+    await env.KV.put("tg_last_channel_send", String(Date.now()));
+  } catch { /* pacing is best-effort */ }
 
   await tgSendMessage(env.BOT_TOKEN, chatId, text, { parse_mode: "" /* plain text */ });
 
