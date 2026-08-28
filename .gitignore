@@ -2,6 +2,9 @@
 config.json
 secrets.json
 PLAN_ALPHA.md
+PLAN*.md
+plan_*.md
+RESEARCH_*.md
 .wrangler/
 .dev.vars
 .env

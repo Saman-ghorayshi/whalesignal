@@ -5,7 +5,8 @@ adds market + wallet context, and posts *interpreted* alerts to Telegram — not
 raw "whale moved X" feed, but an explanation of what the facts indicate.
 
 Runs entirely on free-tier infrastructure: Cloudflare Workers + D1 + KV +
-Queues, Gemini 2.0 Flash, GitHub Actions and GitHub Pages. Total cost: $0.
+Queues, Groq + Gemini (multi-provider chain), GitHub Actions and GitHub Pages.
+Total cost: $0.
 
 | | |
 |---|---|
@@ -151,7 +152,8 @@ end-to-end queue flow through a mocked Worker runtime.
 | Queue ops | 10K | ~600 |
 | Gemini calls | 1,500 | ~20–40 after scoring + templates |
 
-Headroom math lives in [PLAN.md](PLAN.md).
+Headroom math: ~312 KV writes/day of the 1K cap; LLM calls routed through a
+Groq → Gemini chain with templates absorbing ~80% of alerts.
 
 ## Layout
 
@@ -172,9 +174,23 @@ docs/             static dashboard (GitHub Pages)
 
 ## Status & roadmap
 
-Phase 1 MVP shipped and running live. Sprints 1–3 (scoring, surfaces, reports,
-accuracy tracking) complete — see the `[done]` markers in
-[PLAN.md](PLAN.md). Current phase: watching real alerts, tuning thresholds.
+**Running live.** Phase 1 MVP + Sprints 1–3 shipped (interestingness scoring,
+multi-surface APIs, daily reports, 24h prediction grading). Recent additions:
+
+- **Multi-provider LLM chain** — Groq primary, Gemini fallback, runtime
+  switchable via admin commands (`/chain groq gemini`), keys hot-swappable
+  with `/setkey` without redeploying
+- **Private control plane** — separate token-gated admin worker: health,
+  pause/resume per chain, threshold dials, reanalysis queue
+- **Webhook hardening** — at-least-once delivery handled via `update_id`
+  dedup; failed replies ACK 200 instead of poisoning the webhook; channel
+  posts rate-paced
+- **Scanner resilience** — per-chain pause, cache-refresh valve, Bitcoin
+  data via blockchain.info with PublicNode RPC failover
+- Observability enabled on all workers
+
+Current phase: accumulating the prediction ledger and public accuracy
+track record (the data moat compounds from here).
 
 ## Not financial advice
 
