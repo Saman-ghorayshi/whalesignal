@@ -474,21 +474,39 @@ async function recentWhalesFromWallet(env, address, chain) {
  * one people actually paste. Accepting both costs one line and saves a
  * "why is eth not scanning" debugging session.
  */
-function etherscanKeyParam(env) {
-  const k = env.ETHSCAN_KEY || env.ETHERSCAN_KEY || "";
-  return k ? `&apikey=${k}` : "";
+/** Rotate across comma-separated keys (KV or env) to spread rate limits. */
+async function etherscanKeyParam(env) {
+  let keys = [];
+  try {
+    const kv = await env.KV.get("key:etherscan");
+    if (kv) keys = kv.split(",").map(s => s.trim()).filter(Boolean);
+  } catch { /* kv hiccup */ }
+  if (!keys.length) {
+    const raw = env.ETHSCAN_KEY || env.ETHERSCAN_KEY || "";
+    if (raw) keys = raw.split(",").map(s => s.trim()).filter(Boolean);
+  }
+  if (!keys.length) return "";
+  const k = keys[Math.floor(Math.random() * keys.length)];
+  return `&apikey=${k}`;
 }
 
 /** Fetch the latest block height for a chain. Returns an int (eth: decimal number, btc: height). */
 export async function fetchLatestBlockHeight(env, chain) {
   if (chain === "btc") {
-    const j = await fetchJSON("https://blockchain.info/latestblock");
-    return j.height;
+    try {
+      const j = await fetchJSON("https://blockchain.info/latestblock");
+      return j.height;
+    } catch (e) {
+      // blockchain.info throttles/blocks shared Workers egress IPs — fall
+      // through to PublicNode's plain bitcoind RPC rather than stalling.
+      console.warn("btc tip via blockchain.info failed, falling back to publicnode:", e.message);
+      return await btcRpc("getblockcount", []);
+    }
   }
   if (chain === "eth") {
     // etherscan V2 (V1 was deprecated — returns "switch to V2 migration").
     // V2 requires a key even for free tier; ETHSCAN_KEY env var is mandatory.
-    const key = etherscanKeyParam(env);
+    const key = await etherscanKeyParam(env);
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
     );
@@ -503,12 +521,22 @@ export async function fetchLatestBlockHeight(env, chain) {
  *  persists — the poison-pill loop. Better to skip the block entirely. */
 export async function fetchBlock(chain, blockNum, env) {
   if (chain === "btc") {
-    // blockchain.info rawblock by height works
-    const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`, { maxBytes: 1_500_000 });
-    return j;
+    // blockchain.info rawblock by height works — until their WAF decides
+    // Workers' shared IPs are bots. PublicNode bitcoind RPC is the failover;
+    // its verbose block is normalized into the blockchain.info shape so
+    // extractCandidatesBTC stays untouched.
+    try {
+      const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`, { maxBytes: 1_500_000 });
+      return j;
+    } catch (e) {
+      console.warn(`btc block ${blockNum} via blockchain.info failed, falling back to publicnode:`, e.message);
+      const hash = await btcRpc("getblockhash", [blockNum]);
+      const blk = await btcRpc("getblock", [hash, 2]);
+      return normalizeRpcBtcBlock(blockNum, blk);
+    }
   }
   if (chain === "eth") {
-    const key = etherscanKeyParam(env);
+    const key = await etherscanKeyParam(env);
     const hex = "0x" + Number(blockNum).toString(16);
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`,
@@ -517,6 +545,42 @@ export async function fetchBlock(chain, blockNum, env) {
     return j.result;
   }
   throw new Error(`unsupported chain: ${chain}`);
+}
+
+// ─── BTC failover source (PublicNode bitcoind RPC) ────────────────────────
+
+/** One JSON-RPC call to PublicNode's public bitcoin node. Throws on rpc error. */
+async function btcRpc(method, params) {
+  const j = await fetchJSON("https://bitcoin-rpc.publicnode.com", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    timeoutMs: 9000,
+  });
+  if (j.error) throw new Error(`btc rpc ${method}: ${JSON.stringify(j.error).slice(0, 140)}`);
+  return j.result;
+}
+
+/**
+ * Pure: map a bitcoind verbosity-2 block into the blockchain.info rawblock
+ * shape that extractCandidatesBTC already understands
+ * ({height, time(s), tx:[{hash, inputs:[{prev_out:{addr}}], out:[{addr, value_sats}]}]}).
+ * Bitcoind vout values are decimal BTC → sats via round(value * 1e8), exact
+ * for the 8-decimal Bitcoin precision within double range.
+ */
+export function normalizeRpcBtcBlock(height, blk) {
+  return {
+    height,
+    time: blk?.time ?? null,
+    tx: (blk?.tx || []).map((t) => ({
+      hash: t.txid,
+      inputs: [{ prev_out: { addr: t.vin?.[0]?.prevout?.scriptpubkey_address || "" } }],
+      out: (t.vout || []).map((v) => ({
+        addr: v.scriptPubKey?.address || "",
+        value: Math.round((v.value || 0) * 1e8),
+      })),
+    })),
+  };
 }
 
 /**
@@ -532,7 +596,7 @@ export async function fetchBlock(chain, blockNum, env) {
  * (currently 5) — well within 5 req/s free-tier cap.
  */
 export async function fetchERC20Logs(blockNum, env) {
-  const key = etherscanKeyParam(env);
+  const key = await etherscanKeyParam(env);
   const fromBlock = "0x" + Number(blockNum).toString(16);
   const toBlock = fromBlock;
   const out = [];
@@ -637,7 +701,7 @@ export async function refreshNewsCache(env) {
 
 export async function scanChain(env, chain, market) {
   const state = await getState(env, chain);
-  const maxBlocks = parseInt(env.MAX_BLOCKS ?? DEFAULT_MAX_BLOCKS, 10);
+  const maxBlocks = parseInt((await env.KV.get("config:max_blocks")) ?? env.MAX_BLOCKS ?? DEFAULT_MAX_BLOCKS, 10);
   // first run: prime from latest (no processing this tick, just record where we are)
   const latest = await fetchLatestBlockHeight(env, chain);
   if (state.last_block == null) {
@@ -675,7 +739,7 @@ export async function scanChain(env, chain, market) {
 
       const all = [...candidates, ...erc20];
       const whales = classifyWhales(
-        filterWhales(all, parseInt(env.MIN_USD ?? DEFAULT_MIN_USD, 10)),
+        filterWhales(all, parseInt((await env.KV.get("config:min_usd")) ?? env.MIN_USD ?? DEFAULT_MIN_USD, 10)),
         walletMap
       );
 
@@ -717,6 +781,12 @@ export default {
   async scheduled(event, env, ctx) {
     let market = null;
     let needMarketRefresh = true;
+    // Emergency valve: upstream outages (CoinGecko 429 / CryptoPanic 403) eat
+    // the free-plan 50-subrequest-per-invocation budget before any block gets
+    // scanned. config:skip_cache_refresh = "1" bypasses both cache refreshes
+    // so ticks stay lean until the operator clears the flag.
+    let skipCacheRefresh = false;
+    try { skipCacheRefresh = (await env.KV.get("config:skip_cache_refresh")) === "1"; } catch {}
     try {
       const raw = await env.KV.get("market_cache");
       market = raw ? JSON.parse(raw) : null;
@@ -726,7 +796,7 @@ export default {
       }
     } catch { /* ignore — will be null/refresh */ }
 
-    if (needMarketRefresh) {
+    if (needMarketRefresh && !skipCacheRefresh) {
       try {
         market = await refreshMarketCache(env);
       } catch (e) {
@@ -750,7 +820,7 @@ export default {
           }
         }
       } catch { /* keep needNewsRefresh=true */ }
-      if (needNewsRefresh) {
+      if (needNewsRefresh && !skipCacheRefresh) {
         try { await refreshNewsCache(env); }
         catch (e) { console.warn("news cache refresh failed:", e.message); }
       }

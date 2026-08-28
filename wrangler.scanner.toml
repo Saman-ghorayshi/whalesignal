@@ -39,5 +39,8 @@ id = "786f5d23d25d46d58558341c6029d89b"
 [triggers]
 crons = ["* * * * *"]
 
+[observability]
+enabled = true
+
 # Optional: free etherscan key can be set via `wrangler secret put ETHSCAN_KEY`
 # If left unset, scanner falls back to no-key requests (lower rate limit).

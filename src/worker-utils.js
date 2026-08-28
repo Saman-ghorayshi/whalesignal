@@ -112,7 +112,7 @@ export function nowMs() {
  * Workers — without it a slow API can burn the whole request envelope.
  */
 export async function fetchJSON(url, opts = {}) {
-  const { headers = {}, timeoutMs = 8000, maxBytes = 0 } = opts;
+  const { headers = {}, timeoutMs = 8000, maxBytes = 0, method = "GET", body } = opts;
   // Workers send no User-Agent by default and some public APIs (CoinGecko)
   // 403 requests without one. Merge caller headers over a descriptive default.
   const allHeaders = {
@@ -122,7 +122,7 @@ export async function fetchJSON(url, opts = {}) {
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { headers: allHeaders, signal: ctl.signal });
+    const res = await fetch(url, { method, headers: allHeaders, signal: ctl.signal, body });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} — ${body.slice(0, 200)}`);

@@ -79,6 +79,25 @@ function makeFetches() {
     { match: "https://blockchain.info/rawblock/",
       handler: (url) => ({ json: makeBtcBlock(parseInt(url.pathname.split('/').pop(), 10)) }) },
 
+    // PublicNode BTC RPC — fallback source used when blockchain.info fails.
+    // Distinguishes methods by the JSON-RPC body; heights reuse the same
+    // incrementing sequence as latestblock so scenario assertions hold.
+    { match: "https://bitcoin-rpc.publicnode.com",
+      handler: (url, init) => {
+        const req = JSON.parse(init.body);
+        if (req.method === "getblockcount") {
+          return { json: { result: 800000 + btcLatestCallNum - 1 } };
+        }
+        if (req.method === "getblockhash") {
+          return { json: { result: `fakehash-${req.params[0]}` } };
+        }
+        if (req.method === "getblock") {
+          const height = parseInt(String(req.params[0]).split("-").pop(), 10);
+          return { json: { result: makeRpcBtcBlock(height) } };
+        }
+        return { json: { error: { code: -32601, message: "unknown method" } } };
+      } },
+
     // etherscan V2 eth_blockNumber — tick 1 (priming): 500000. Tick 2: 500001 so scanner
     // sees a new block. Subsequent ticks increment. My whale lives at block 500001.
     { match: "https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber",
@@ -167,6 +186,20 @@ function makeBtcBlock(height) {
           out: [{ value: 10000, addr: "1SmallDest00" }],
           inputs: [{ prev_out: { addr: "1SmallSrc00" } }],
         }],
+  };
+}
+
+// bitcoind verbosity-2 variant of makeBtcBlock — exercises the PublicNode
+// failover normalization path with identical whale content.
+function makeRpcBtcBlock(height) {
+  const b = makeBtcBlock(height);
+  return {
+    time: Math.round(b.time / 1000),
+    tx: b.tx.map((t) => ({
+      txid: t.hash,
+      vin: [{ prevout: { scriptpubkey_address: t.inputs?.[0]?.prev_out?.addr } }],
+      vout: t.out.map((o) => ({ scriptPubKey: { address: o.addr }, value: o.value / 1e8 })),
+    })),
   };
 }
 
