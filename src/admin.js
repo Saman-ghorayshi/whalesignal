@@ -135,6 +135,48 @@ async function handleApi(request, env, path) {
     return okJson({ ok: true, alerts: results || [] });
   }
 
+  if (path === "/api/test-llm" && request.method === "POST") {
+    const provider = new URL(request.url).searchParams.get("provider") || "groq";
+    if (provider === "groq") {
+      let key = null;
+      try { key = await env.KV.get("key:groq"); } catch {}
+      if (!key) return errJson("no groq key in KV", 400);
+      let model = "qwen/qwen3.8-27b";
+      try { model = (await env.KV.get("config:model_groq")) || model; } catch {}
+      const body = JSON.stringify({ model, messages: [{ role: "user", content: "reply OK" }], max_tokens: 5 });
+      const ctl = new AbortController();
+      const tid = setTimeout(() => ctl.abort(), 10000);
+      try {
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+          body, signal: ctl.signal,
+        });
+        const j = await res.json();
+        return okJson({ provider: "groq", model, status: res.status, response: j });
+      } finally { clearTimeout(tid); }
+    }
+    if (provider === "gemini") {
+      let key = env.GEMINI_KEY || null;
+      if (!key) { try { key = await env.KV.get("key:gemini"); } catch {} }
+      if (!key) return errJson("no gemini key configured", 400);
+      let model = "gemini-3.6-flash";
+      try { model = (await env.KV.get("config:model")) || model; } catch {}
+      const gbody = JSON.stringify({ contents: [{ parts: [{ text: "reply OK" }] }] });
+      const gctl = new AbortController();
+      const tid2 = setTimeout(() => gctl.abort(), 10000);
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": key }, body: gbody, signal: gctl.signal }
+        );
+        const j = await res.json();
+        return okJson({ provider: "gemini", model, status: res.status, response: j });
+      } finally { clearTimeout(tid2); }
+    }
+    return errJson("unsupported provider", 400);
+  }
+
   if (path === "/api/reanalyze" && request.method === "POST") {
     // requeue whales for analysis — used after adding/rotating the Gemini
     // key so failed (and optionally skipped) rows get another pass.

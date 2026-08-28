@@ -370,40 +370,78 @@ function normalizeAnalysis(o) {
   };
 }
 
-// ─── Gemini call ─────────────────────────────────────────────────────
+// ─── LLM providers (multi-provider chain, admin-managed at runtime) ─────
+//
+// config:llm_chain (KV JSON array) decides the order — e.g. ["groq","gemini"].
+// Missing/empty → default ["groq","gemini"]. Keys resolve env secret first,
+// then KV key:<provider>. First provider that answers wins; failures fall
+// through and get collected into one error at the end.
 
-/** Call Gemini. Returns the raw text response. Throws on error.
- *  Key source: GEMINI_KEY env secret first, then KV `key:gemini` (writable
- *  from the admin bot's /setkey — lets you rotate keys without a redeploy).
- *
- *  Endpoint: tries the classic generativelanguage surface first, then the
- *  Vertex publisher path — new-format AI Studio keys (AQ.*) only work on
- *  Vertex. Model comes from GEMINI_MODEL env / KV config:model, defaulting
- *  to gemini-2.0-flash; override without a redeploy via /setkey model <name>.
- */
-export async function callGemini(env, prompt) {
-  let key = env.GEMINI_KEY;
-  if (!key) {
-    try { key = await env.KV.get("key:gemini"); } catch { /* kv hiccup → treat as missing */ }
+const DEFAULT_LLM_CHAIN = ["groq", "gemini"];
+
+export async function resolveLlmChain(env) {
+  try {
+    const chain = JSON.parse((await env.KV.get("config:llm_chain")) || "null");
+    if (Array.isArray(chain) && chain.length > 0) return chain.map(String);
+  } catch { /* fall through to default */ }
+  return [...DEFAULT_LLM_CHAIN];
+}
+
+/** env secret first, then KV key:<provider> */
+async function providerKey(env, provider) {
+  const secretName = { gemini: "GEMINI_KEY", groq: "GROQ_KEY" }[provider];
+  if (secretName && env[secretName]) return env[secretName];
+  try { return await env.KV.get(`key:${provider}`); } catch { return null; }
+}
+
+/** Groq: OpenAI-compatible chat completions. Model via KV config:model_groq. */
+async function callGroqProvider(env, prompt, key) {
+  let model = "qwen/qwen3.8-27b";
+  try { model = (await env.KV.get("config:model_groq")) || model; } catch {}
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.4,
+        max_tokens: 400,
+      }),
+      signal: ctl.signal,
+    });
+    const j = await res.json();
+    if (j.error) throw new Error(`groq: ${j.error.message || JSON.stringify(j.error).slice(0, 200)}`);
+    const text = j.choices?.[0]?.message?.content;
+    if (!text) throw new Error("groq returned no content");
+    return text;
+  } finally {
+    clearTimeout(tid);
   }
-  if (!key) throw new Error("GEMINI_KEY missing");
+}
 
-  let model = env.GEMINI_MODEL || "gemini-2.0-flash";
+/**
+ * Gemini: classic generativelanguage surface first, then the Vertex
+ * publisher path (new-format AI Studio keys only authenticate on Vertex).
+ * Model via GEMINI_MODEL env / KV config:model.
+ */
+async function callGeminiProvider(env, prompt, key) {
+  let model = env.GEMINI_MODEL || "gemini-3.6-flash";
   if (!env.GEMINI_MODEL) {
     try { model = (await env.KV.get("config:model")) || model; } catch {}
   }
-
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
   });
-  const attempts = [
+  const urls = [
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`,
   ];
-
   let lastErr = null;
-  for (const url of attempts) {
+  for (const url of urls) {
     const ctl = new AbortController();
     const tid = setTimeout(() => ctl.abort(), 12000);
     try {
@@ -414,20 +452,47 @@ export async function callGemini(env, prompt) {
         signal: ctl.signal,
       });
       const j = await res.json();
-      if (j.error) throw new Error(`Gemini API (${url.split("/")[2]}): ${j.error.message || JSON.stringify(j.error).slice(0, 200)}`);
+      if (j.error) throw new Error(`gemini (${url.split("/")[2]}): ${j.error.message || JSON.stringify(j.error).slice(0, 200)}`);
       const cand = j.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!cand) throw new Error("Gemini returned no candidates");
+      if (!cand) throw new Error("gemini returned no candidates");
       return cand;
     } catch (e) {
       lastErr = e;
-      // aborts and hard network errors bubble on the next attempt anyway
     } finally {
       clearTimeout(tid);
     }
   }
-  throw lastErr || new Error("all Gemini endpoints failed");
+  throw lastErr || new Error("gemini endpoints failed");
 }
 
+const PROVIDERS = {
+  groq: callGroqProvider,
+  gemini: callGeminiProvider,
+};
+
+/**
+ * Run the prompt through the configured chain. Throws a combined error when
+ * every provider in the chain fails (or has no key).
+ */
+export async function callLLM(env, prompt) {
+  const chain = await resolveLlmChain(env);
+  const errors = [];
+  for (const p of chain) {
+    const fn = PROVIDERS[p];
+    if (!fn) { errors.push(`${p}: unknown provider`); continue; }
+    const key = await providerKey(env, p);
+    if (!key) { errors.push(`${p}: no key configured`); continue; }
+    try {
+      return await fn(env, prompt, key);
+    } catch (e) {
+      errors.push(e.message);
+    }
+  }
+  throw new Error(`all LLM providers failed [${chain.join(",")}]: ${errors.join(" | ")}`);
+}
+
+// back-compat alias — older tests/callers reference callGemini
+export const callGemini = callLLM;
 // ─── per-message workflow ─────────────────────────────────────────────
 
 /** Look up a whale by id. Returns null if not found. */
@@ -567,7 +632,9 @@ export default {
         // Missing-key is permanent, not transient — retrying just burns
         // queue ops 3x per whale during a backlog. Fail it and move on;
         // the whale stays 'failed' in D1 and can be re-analyzed later.
-        if (/GEMINI_KEY missing/i.test(e.message)) {
+        // Matches both legacy "GEMINI_KEY missing" and the new multi-provider
+        // "no key configured" or "all LLM providers failed" patterns.
+        if (/(?:GEMINI_KEY missing|no key configured|all LLM providers failed)/i.test(e.message)) {
           try { await markFailed(env, JSON.parse(m.body || "{}")?.whale_id); }
           catch { /* best effort */ }
           m.ack();
