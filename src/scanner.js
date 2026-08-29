@@ -636,29 +636,54 @@ export async function fetchERC20Logs(blockNum, env) {
   return out;
 }
 
-/** Refresh the market_cache key in KV from CoinGecko + alternative.me. */
+/** Refresh the market_cache key in KV from CoinGecko + alternative.me.
+ *  CoinGecko hard-rate-limits shared Workers egress IPs (429s for days on
+ *  end — not transient), so Coinbase's public spot API is the failover price
+ *  source. Spot doesn't carry 24h change; the alert footer renders that as
+ *  "n/a" via the existing null handling in formatAlert. */
 export async function refreshMarketCache(env) {
   const cgid = Math.floor(Date.now() / 1000);
-  const cgUrl =
-    "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
-  const cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
+  let btc = null, btcChg = null, eth = null, ethChg = null;
+  try {
+    const cgUrl =
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
+    const cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
+    btc = (cg.bitcoin || cg.prices?.bitcoin)?.usd ?? null;
+    btcChg = (cg.bitcoin || cg.prices?.bitcoin)?.usd_24h_change ?? null;
+    eth = (cg.ethereum || cg.prices?.ethereum)?.usd ?? null;
+    ethChg = (cg.ethereum || cg.prices?.ethereum)?.usd_24h_change ?? null;
+  } catch (e) {
+    console.warn("coingecko price fetch failed, falling back to coinbase spot:", e.message);
+    try {
+      const [cbBtc, cbEth] = await Promise.all([
+        fetchJSON("https://api.coinbase.com/v2/prices/BTC-USD/spot", { timeoutMs: 6000 }),
+        fetchJSON("https://api.coinbase.com/v2/prices/ETH-USD/spot", { timeoutMs: 6000 }),
+      ]);
+      btc = parseFloat(cbBtc?.data?.amount) || null;
+      eth = parseFloat(cbEth?.data?.amount) || null;
+    } catch (e2) {
+      // both sources down — write nulls; scanner keeps using the last cache
+      // shape and usdValue() will undercount until a later tick succeeds.
+      console.warn("coinbase spot fallback also failed:", e2.message);
+    }
+  }
 
   const fg = await fetchJSON("https://api.alternative.me/fng/?limit=1", { timeoutMs: 4000 });
 
   const cache = {
     // coingecko simple/price responds as { bitcoin: {usd, usd_24h_change}, ethereum: {...} }
     btc: {
-      price: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd) ?? null,
-      change_24h: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd_24h_change) ?? null,
+      price: btc,
+      change_24h: btcChg,
     },
     eth: {
-      price: (cg && (cg.ethereum || cg.prices?.ethereum)?.usd) ?? null,
-      change_24h: (cg && (cg.ethereum || cg.prices?.ethereum)?.usd_24h_change) ?? null,
+      price: eth,
+      change_24h: ethChg,
     },
     // stablecoins/WBTC aliases so usdValue() works for ERC20 candidates
     usdt: { price: 1, change_24h: 0 },
     usdc: { price: 1, change_24h: 0 },
-    wbtc: { price: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd) ?? null, change_24h: null },
+    wbtc: { price: btc, change_24h: null },
     dai: { price: 1, change_24h: 0 },
     fear_greed: fg?.data?.[0]?.value ? parseInt(fg.data[0].value, 10) : null,
     fear_greed_label: fg?.data?.[0]?.value_classification ?? null,
