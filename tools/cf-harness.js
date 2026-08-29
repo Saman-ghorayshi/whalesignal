@@ -53,6 +53,13 @@ export class MockD1 {
   prepare(sql) {
     return new _Stmt(this.db, sql);
   }
+  /** D1 batch: statements run sequentially in one roundtrip. Returns the
+   *  per-statement run() results in order, mirroring real D1. */
+  async batch(stmts) {
+    const out = [];
+    for (const s of stmts) out.push(await s.run());
+    return out;
+  }
 }
 
 class _Stmt {

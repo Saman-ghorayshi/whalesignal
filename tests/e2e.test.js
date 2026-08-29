@@ -127,6 +127,42 @@ test("/history binds every SQL parameter (regression: real-D1 binding count bug)
   assert.ok(j.alerts.length >= 1, "filtered history returns the whale");
 });
 
+test("walletProfile binds variadic values, not arrays (regression: real-D1 type error)", async () => {
+  const w = makeWorld();
+  await w.DB.prepare(
+    "INSERT INTO wallets (address, chain, label, type) VALUES (?, ?, ?, ?)"
+  ).bind("0x28c6c06298d514de13c02684fa65b7c0c1f723e4", "eth", "Binance", "exchange").run();
+  await w.DB.prepare(
+    "INSERT INTO whales (chain, tx_hash, from_address, to_address, amount, symbol, " +
+    "usd_value, tx_type, detected_at, analysis_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind("eth", "0xwallet-tx-1", "0xSomeWhale0000000000000000000000000000",
+    "0x28c6c06298d514de13c02684fa65b7c0c1f723e4", 500, "ETH", 1_500_000,
+    "exchange_inflow", Date.now(), "done").run();
+
+  // no chain filter — the old code bound an array here and real D1 500'd
+  const a = await bot.walletProfile(w.env, "0x28c6c06298d514de13c02684fa65b7c0c1f723e4");
+  assert.ok(a.profile, "profile found");
+  assert.equal(a.profile.label, "Binance");
+  assert.equal(a.txs.length, 1, "recent tx joined");
+
+  // with chain filter — the exact call shape that used to throw D1_TYPE_ERROR
+  const b = await bot.walletProfile(w.env, "0x28c6c06298d514de13c02684fa65b7c0c1f723e4", "eth");
+  assert.ok(b.profile, "profile found with chain filter");
+  assert.equal(b.txs.length, 1);
+
+  // unknown wallet → 404-shaped response, not a crash
+  const c = await bot.walletProfile(w.env, "notanaddress");
+  assert.equal(c.profile, null);
+  assert.deepEqual(c.txs, []);
+
+  const res = await w.harness.fetch(bot.default,
+    new Request("https://bot.test/wallet/0x28c6c06298d514de13c02684fa65b7c0c1f723e4"));
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.recent_txs.length, 1);
+});
+
 test("webhook dedup: redelivered update_id is ACKed without replying again", async () => {
   const w = makeWorld();
   const mkReq = () => new Request(`https://bot.test/tg/TEST_TOKEN_123`, {

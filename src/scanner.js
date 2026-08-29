@@ -317,7 +317,12 @@ async function bumpErrors(env, chain) {
  * Score >= SCORE_THRESHOLD → queue to analyst (AI analysis).
  * Below → INSERT with analysis_status='skipped' (no AI cost, no queue msg).
  */
-async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWallet, market) {
+/**
+ * Build (not execute) the full statement set for one whale: the INSERT plus
+ * any wallet-stats/auto-label UPDATEs. Executed by the caller via DB.batch()
+ * so a whole block's whales cost ~1 subrequest instead of ~6 each.
+ */
+function prepareWhaleWrite(env, wh, walletMap, walletInfo, recentSameWallet, market) {
   const score = computeInterestingness(wh, walletInfo, recentSameWallet);
   const shouldAnalyze = score >= SCORE_THRESHOLD;
 
@@ -325,7 +330,7 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
   const sym = (wh.symbol || "").toLowerCase();
   const priceAtDetect = market?.[sym]?.price ?? market?.[wh.chain]?.price ?? null;
 
-  const ins = await env.DB.prepare(
+  const insertStmt = env.DB.prepare(
     `INSERT OR IGNORE INTO whales
        (chain, tx_hash, from_address, to_address, amount, symbol, usd_value,
         tx_type, block_number, block_time, detected_at, analysis_status,
@@ -339,35 +344,23 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
     shouldAnalyze ? "pending" : "skipped",
     score,
     priceAtDetect
-  ).run();
-  if (ins.meta.changes === 0) return false; // dup
+  );
 
-  const row = await env.DB.prepare(
-    "SELECT id FROM whales WHERE tx_hash = ?"
-  ).bind(wh.tx_hash).first();
-  if (!row?.id) return false;
-
-  // Queue only for interesting whales — saves 50-90% of Gemini calls.
-  if (shouldAnalyze) {
-    await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
-  }
-
-  // Bump wallet stats for non-exchange addresses.
+  // Bump wallet stats for non-exchange addresses, folded into the same batch.
+  const extraStmts = [];
   const fromType = walletMap?.get(String(wh.from_address).toLowerCase())?.type || null;
   const toType = walletMap?.get(String(wh.to_address).toLowerCase())?.type || null;
   const targets = statTargets(wh.from_address, wh.to_address, fromType, toType);
   if (targets.length > 0) {
-    await env.DB.prepare(
+    extraStmts.push(env.DB.prepare(
       "UPDATE wallets SET last_seen = ?, last_tx_hash = ?, " +
       "tx_count = tx_count + 1, total_volume = total_volume + ? " +
       "WHERE address IN (" + targets.map(() => "?").join(",") + ") AND chain = ?"
-    ).bind(Date.now(), wh.tx_hash, wh.usd_value, ...targets, wh.chain).run();
-
-    // Auto-label: if a wallet crosses 3 txs, label it as 'whale'.
-    // dormancy reactivate: previously dormant wallet waking up.
-    await autoLabelWallets(env, targets, wh.chain, walletMap, walletInfo);
+    ).bind(Date.now(), wh.tx_hash, wh.usd_value, ...targets, wh.chain));
+    extraStmts.push(...autoLabelStmts(targets, wh.chain, walletMap, walletInfo));
   }
-  return true;
+
+  return { insertStmt, extraStmts, shouldAnalyze };
 }
 
 /**
@@ -381,7 +374,20 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
  * Upgrade path: move to a scheduled cron job that recomputes all labels
  * from scratch if the rules get complex.
  */
-async function autoLabelWallets(env, targets, chain, walletMap, walletInfo) {
+/**
+ * Auto-assign wallet reputation labels after the stats bump — statement
+ * BUILDER (pure, no execution): the caller folds these into the same
+ * DB.batch() as the inserts. Rules:
+ * - tx_count >= 3 → type='whale'
+ * - dormant for >1yr and now active → pattern='reactivated'
+ * - high frequency (>10 txs in 24h visible in our data) → pattern='high_frequency'
+ *
+ * No extra reads — we use the walletMap we already loaded + walletInfo.
+ * Upgrade path: move to a scheduled cron job that recomputes all labels
+ * from scratch if the rules get complex.
+ */
+function autoLabelStmts(targets, chain, walletMap, walletInfo) {
+  const stmts = [];
   for (const addr of targets) {
     const key = String(addr).toLowerCase();
     const info = walletMap?.get(key) ?? walletInfo;
@@ -389,7 +395,6 @@ async function autoLabelWallets(env, targets, chain, walletMap, walletInfo) {
 
     const txCount = (info.tx_count ?? 0) + 1; // +1 for the one we just inserted
     const updates = [];
-    const bindArgs = [];
 
     // crossing threshold 3 → become a whale
     if (txCount >= 3 && info.type !== "exchange" && info.type !== "whale") {
@@ -410,12 +415,12 @@ async function autoLabelWallets(env, targets, chain, walletMap, walletInfo) {
     }
 
     if (updates.length > 0) {
-      bindArgs.push(chain);
-      await env.DB.prepare(
+      stmts.push(env.DB.prepare(
         "UPDATE wallets SET " + updates.join(", ") + " WHERE address = ? AND chain = ?"
-      ).bind(addr, chain).run();
+      ).bind(addr, chain));
     }
   }
+  return stmts;
 }
 
 /**
@@ -456,16 +461,28 @@ async function loadWalletMap(env) {
 }
 
 /**
- * Fetch recently-detected whales from a specific wallet (for the spam
- * penalty in interestingness scoring). Returns last 10 by detected_at.
- * 1 D1 read per inserted whale. At 200 whales/day = 200 reads.
- * Well within the 100K/day free tier.
+ * Spam-penalty context for EVERY wallet in a block, in ONE query. Replaces
+ * the old per-whale recentWhalesFromWallet() call (1 subrequest each — the
+ * main reason busy blocks blew the 50-subrequest cap). Returns
+ * Map<lowercased_from_address, [{detected_at}, …]> capped at last 10 per
+ * wallet, matching the old shape consumed by computeInterestingness.
  */
-async function recentWhalesFromWallet(env, address, chain) {
+async function recentWhalesForAddresses(env, addresses, chain) {
+  const map = new Map();
+  if (!addresses.length) return map;
+  const placeholders = addresses.map(() => "?").join(",");
   const { results } = await env.DB.prepare(
-    "SELECT detected_at FROM whales WHERE from_address = ? AND chain = ? ORDER BY detected_at DESC LIMIT 10"
-  ).bind(address, chain).all();
-  return results || [];
+    `SELECT from_address, detected_at FROM whales
+     WHERE chain = ? AND from_address IN (${placeholders})
+     ORDER BY detected_at DESC LIMIT 300`
+  ).bind(chain, ...addresses).all();
+  for (const r of results || []) {
+    const k = String(r.from_address || "").toLowerCase();
+    if (!k) continue;
+    if (!map.has(k)) map.set(k, []);
+    if (map.get(k).length < 10) map.get(k).push({ detected_at: r.detected_at });
+  }
+  return map;
 }
 
 /**
@@ -531,7 +548,7 @@ export async function fetchBlock(chain, blockNum, env) {
     } catch (e) {
       console.warn(`btc block ${blockNum} via blockchain.info failed, falling back to publicnode:`, e.message);
       const hash = await btcRpc("getblockhash", [blockNum]);
-      const blk = await btcRpc("getblock", [hash, 2]);
+      const blk = await btcRpc("getblock", [hash, 2], { maxBytes: 4_000_000 });
       return normalizeRpcBtcBlock(blockNum, blk);
     }
   }
@@ -549,13 +566,17 @@ export async function fetchBlock(chain, blockNum, env) {
 
 // ─── BTC failover source (PublicNode bitcoind RPC) ────────────────────────
 
-/** One JSON-RPC call to PublicNode's public bitcoin node. Throws on rpc error. */
-async function btcRpc(method, params) {
+/** One JSON-RPC call to PublicNode's public bitcoin node. Throws on rpc error.
+ *  opts.maxBytes guards the CPU budget: a verbose multi-MB block that would
+ *  die in res.json() gets rejected on content-length BEFORE parsing, so the
+ *  caller's per-block catch can skip it and persistState keeps moving. */
+async function btcRpc(method, params, opts = {}) {
   const j = await fetchJSON("https://bitcoin-rpc.publicnode.com", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     timeoutMs: 9000,
+    maxBytes: opts.maxBytes ?? 0,
   });
   if (j.error) throw new Error(`btc rpc ${method}: ${JSON.stringify(j.error).slice(0, 140)}`);
   return j.result;
@@ -719,6 +740,9 @@ export async function scanChain(env, chain, market) {
   let lastProcessed = state.last_block;
   let processed = 0;
   let newlyCounted = 0;
+  // config read hoisted out of the block loop — every KV op is a subrequest
+  // against the free-plan 50-per-invocation cap.
+  const minUsd = parseInt((await env.KV.get("config:min_usd")) ?? env.MIN_USD ?? DEFAULT_MIN_USD, 10);
   while (cursor <= latest && processed < maxBlocks) {
     try {
       const block = await fetchBlock(chain, cursor, env);
@@ -738,22 +762,52 @@ export async function scanChain(env, chain, market) {
       }
 
       const all = [...candidates, ...erc20];
-      const whales = classifyWhales(
-        filterWhales(all, parseInt((await env.KV.get("config:min_usd")) ?? env.MIN_USD ?? DEFAULT_MIN_USD, 10)),
-        walletMap
-      );
+      const whales = classifyWhales(filterWhales(all, minUsd), walletMap);
 
-      for (const w of whales) {
-        try {
-          const fromKey = String(w.from_address).toLowerCase();
-          const walletInfo = walletMap.get(fromKey) ?? null;
-          const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
-          const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
-          if (inserted) newlyCounted++;
-        } catch (e) {
-          console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);
+      if (whales.length > 0) {
+        // ── batched write path ──────────────────────────────────────────
+        // A single busy block can hold 40+ qualifying transfers. The old
+        // per-whale chain (dup-context read + INSERT + id SELECT + wallet
+        // stats UPDATE + auto-labels, each a separate subrequest) blew the
+        // free-plan 50-subrequests-per-invocation cap and silently killed
+        // the tick mid-block. Now: ONE read for every wallet's spam context,
+        // ONE batched write for all inserts/stats/labels, then ONE id lookup
+        // for the few analyze-worthy rows.
+        const addrs = [...new Set(whales.map((w) => String(w.from_address).toLowerCase()))];
+        const recentMap = await recentWhalesForAddresses(env, addrs, chain);
+
+        const stmts = [];
+        const insertIdxs = [];
+        const queueHashes = [];
+        for (const w of whales) {
+          const lcFrom = String(w.from_address).toLowerCase();
+          const walletInfo = walletMap.get(lcFrom) ?? null;
+          const prepared = prepareWhaleWrite(env, w, walletMap, walletInfo, recentMap.get(lcFrom) || [], market);
+          insertIdxs.push(stmts.length);
+          stmts.push(prepared.insertStmt);
+          for (const s of prepared.extraStmts) stmts.push(s);
+          if (prepared.shouldAnalyze) queueHashes.push(w.tx_hash);
+        }
+
+        const results = await env.DB.batch(stmts);
+        for (const idx of insertIdxs) {
+          if (results[idx]?.meta?.changes > 0) newlyCounted++;
+        }
+
+        // Queue only for interesting whales — saves 50-90% of Gemini calls.
+        if (queueHashes.length > 0) {
+          const ph = queueHashes.map(() => "?").join(",");
+          const { results: idRows } = await env.DB.prepare(
+            `SELECT id, tx_hash FROM whales WHERE tx_hash IN (${ph})`
+          ).bind(...queueHashes).all();
+          const idByHash = new Map((idRows || []).map((r) => [r.tx_hash, r.id]));
+          for (const hash of queueHashes) {
+            const id = idByHash.get(hash);
+            if (id) await env.ANALYSTQ.send(JSON.stringify({ whale_id: id, chain }));
+          }
         }
       }
+
       lastProcessed = cursor;
     } catch (e) {
       // one bad block (API hiccup, malformed body) must not sink the batch;

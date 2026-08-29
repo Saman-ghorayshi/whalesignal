@@ -852,15 +852,21 @@ export async function walletProfile(env, address, chain = null) {
   const profile = await env.DB.prepare(sql).bind(...binds).first();
 
   // Recent txs involving this wallet (as from or to), joined with analysis.
-  const txs = await env.DB.prepare(
+  // D1 gotcha: .bind() is variadic — passing an ARRAY here (old code) makes
+  // real D1 throw D1_TYPE_ERROR on every request. Bind spread instead.
+  const txSql =
     "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
     "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
     "a.signal, a.headline, a.confidence " +
     "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
     "WHERE (w.from_address = ? OR w.to_address = ?) " +
     (chain ? "AND w.chain = ? " : "") +
-    "ORDER BY w.detected_at DESC LIMIT 20"
-  ).bind(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr]).all();
+    "ORDER BY w.detected_at DESC LIMIT 20";
+  const txStmt = env.DB.prepare(txSql);
+  const txs = await (chain
+    ? txStmt.bind(addr, addr, chain.toLowerCase())
+    : txStmt.bind(addr, addr)
+  ).all();
 
   return { profile, txs: txs?.results || [] };
 }

@@ -33,3 +33,9 @@ desktop.ini
 
 # logs
 *.log
+
+# session artifacts
+middle.txt
+_*.ps1
+*_dep*.log
+scan_dep*.log
