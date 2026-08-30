@@ -1,7 +1,7 @@
 // tests/utils.test.js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shortAddr, buildWalletMap, labelFor, classifyTx, usdValue, fmtUSD, mdEscape, isBurnSink, ZERO_ADDRESS } from "../src/worker-utils.js";
+import { shortAddr, buildWalletMap, labelFor, classifyTx, usdValue, fmtUSD, mdEscape, isBurnSink, ZERO_ADDRESS, fetchJSON } from "../src/worker-utils.js";
 
 test("shortAddr truncates long evm addrs", () => {
   // head=6, tail=4 -> "0x28C6" + "..." + "23e4"
@@ -73,6 +73,49 @@ test("classifyTx: bridge and miner flows", () => {
   assert.equal(classifyTx("bridge", null).tx_type, "bridge_flow");
   assert.equal(classifyTx(null, "bridge").tx_type, "bridge_flow");
   assert.equal(classifyTx("miner", "exchange").tx_type, "miner_flow");
+
+// ─── fetchJSON maxRawBytes guard ─────────────────────────────────────────
+// The gzip trap: content-length measures the COMPRESSED size, so a "small"
+// header can hide a huge decompressed body whose JSON.parse blows the
+// free-tier CPU budget (exceededCpu, uncatchable — poison-pill stall).
+
+function streamResponse(jsonText) {
+  const bytes = new TextEncoder().encode(jsonText);
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+  return new Response(stream, { headers: { "content-length": String(bytes.length) } });
+}
+
+test("fetchJSON maxRawBytes: parses payloads under the raw-byte cap", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => streamResponse(JSON.stringify({ ok: true, n: 5 }));
+  try {
+    const j = await fetchJSON("https://mock.test/small", { maxRawBytes: 10_000 });
+    assert.equal(j.ok, true);
+    assert.equal(j.n, 5);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test("fetchJSON maxRawBytes: aborts with tooLarge on oversized bodies", async () => {
+  const orig = globalThis.fetch;
+  // 1MB of JSON that would parse fine — the cap exists to protect the CPU
+  const big = JSON.stringify({ pad: "x".repeat(1_000_000) });
+  globalThis.fetch = async () => streamResponse(big);
+  try {
+    await assert.rejects(
+      fetchJSON("https://mock.test/big", { maxRawBytes: 600_000 }),
+      (e) => e.tooLarge === true && /payload too large/.test(e.message)
+    );
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
   // exchange plumbing still wins when no behavioral label is present
   assert.equal(classifyTx(null, "exchange").tx_type, "exchange_inflow");
 });

@@ -112,7 +112,7 @@ export function nowMs() {
  * Workers — without it a slow API can burn the whole request envelope.
  */
 export async function fetchJSON(url, opts = {}) {
-  const { headers = {}, timeoutMs = 8000, maxBytes = 0, method = "GET", body } = opts;
+  const { headers = {}, timeoutMs = 8000, maxBytes = 0, maxRawBytes = 0, method = "GET", body } = opts;
   // Workers send no User-Agent by default and some public APIs (CoinGecko)
   // 403 requests without one. Merge caller headers over a descriptive default.
   const allHeaders = {
@@ -124,10 +124,10 @@ export async function fetchJSON(url, opts = {}) {
   try {
     const res = await fetch(url, { method, headers: allHeaders, signal: ctl.signal, body });
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} — ${body.slice(0, 200)}`);
+      const bodyText = await res.text().catch(() => "");
+      const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} — ${bodyText.slice(0, 200)}`);
       err.status = res.status;
-      err.body = body;
+      err.body = bodyText;
       throw err;
     }
     // size gate: a payload too big to parse within the free-tier CPU budget
@@ -141,7 +141,36 @@ export async function fetchJSON(url, opts = {}) {
         throw err;
       }
     }
-    return await res.json();
+    // Decompressed-size gate. maxBytes above measures the content-length
+    // header, which reflects GZIP size — a "1MB" capped response can still
+    // decompress to 15MB, and JSON.parse of that blows the free-tier CPU
+    // budget (exceededCpu kills the invocation uncatchably, so the same
+    // oversized block is retried forever — the poison-pill stall). Streaming
+    // the body and counting RAW bytes enforces the real limit cheaply.
+    let text;
+    if (maxRawBytes > 0) {
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      const chunks = [];
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        if (received > maxRawBytes) {
+          try { await reader.cancel(); } catch { /* already closing */ }
+          const err = new Error(`payload too large: >${maxRawBytes} raw bytes for ${url}`);
+          err.tooLarge = true;
+          throw err;
+        }
+        chunks.push(dec.decode(value, { stream: true }));
+      }
+      chunks.push(dec.decode());
+      text = chunks.join("");
+    } else {
+      text = await res.text();
+    }
+    return JSON.parse(text);
   } finally {
     clearTimeout(tid);
   }

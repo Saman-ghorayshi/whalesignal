@@ -543,12 +543,12 @@ export async function fetchBlock(chain, blockNum, env) {
     // its verbose block is normalized into the blockchain.info shape so
     // extractCandidatesBTC stays untouched.
     try {
-      const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`, { maxBytes: 1_500_000 });
+      const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`, { maxRawBytes: 700_000 });
       return j;
     } catch (e) {
       console.warn(`btc block ${blockNum} via blockchain.info failed, falling back to publicnode:`, e.message);
       const hash = await btcRpc("getblockhash", [blockNum]);
-      const blk = await btcRpc("getblock", [hash, 2], { maxBytes: 4_000_000 });
+      const blk = await btcRpc("getblock", [hash, 2], { maxRawBytes: 800_000 });
       return normalizeRpcBtcBlock(blockNum, blk);
     }
   }
@@ -557,7 +557,7 @@ export async function fetchBlock(chain, blockNum, env) {
     const hex = "0x" + Number(blockNum).toString(16);
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`,
-      { maxBytes: 3_000_000 }
+      { maxRawBytes: 600_000 }
     );
     return j.result;
   }
@@ -626,7 +626,11 @@ export async function fetchERC20Logs(blockNum, env) {
       `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
       `&address=${contract}&topic0=${TRANSFER_TOPIC}${key}`;
     try {
-      const j = await fetchJSON(url, { timeoutMs: 12000 });
+      // maxRawBytes: a hot USDT/USDC block returns up to 1000 logs (~1MB
+      // JSON each) — uncapped parses blew the 10ms free-tier CPU budget
+      // (exceededCpu kills the invocation uncatchably). Oversized log
+      // batches are skipped for that block; native-ETH scanning continues.
+      const j = await fetchJSON(url, { timeoutMs: 12000, maxRawBytes: 120_000 });
       if (Array.isArray(j.result)) out.push(...j.result);
     } catch (e) {
       // degrade gracefully — skip this token for this block
@@ -835,9 +839,13 @@ export async function scanChain(env, chain, market) {
 
       lastProcessed = cursor;
     } catch (e) {
-      // one bad block (API hiccup, malformed body) must not sink the batch;
-      // skip it — a whale in that block is lost, the state is not.
-      console.error(`[scanner:${chain}] block ${cursor} failed:`, e.message);
+      // One bad block (oversized for free-tier CPU, API hiccup, malformed
+      // body) must not sink the batch — and must not be retried forever:
+      // oversized blocks can NEVER parse here, so retrying stalls the
+      // scanner permanently (the exact death we just dug out of). Skip
+      // permanently; the log line records what was lost.
+      console.error(`[scanner:${chain}] block ${cursor} skipped:`, e.message);
+      lastProcessed = cursor;
     }
     // persist after every block: if the CPU cap kills the invocation
     // mid-catch-up, everything before this line is already safe.
