@@ -254,3 +254,30 @@ test("cachedPayload: when compute throws, stale cache is served instead of faili
   assert.equal(stale.good, true, "stale payload must be served during an outage");
   await assert.rejects(() => cachedPayload(env, "k4", async () => { throw new Error("boom"); }, 1000));
 });
+
+// ─── cap-guard hardening: quantized params + pause merge ─────────────
+import { quantizeWindow, quantizeGraphParams } from "../src/bot.js";
+import { autoPauseState } from "../src/scanner.js";
+
+test("quantizeWindow: arbitrary values snap to fixed tiers so cache keys can't explode", () => {
+  assert.equal(quantizeWindow(24), 24);
+  assert.equal(quantizeWindow(25), 24);
+  assert.equal(quantizeWindow(60), 72);
+  assert.equal(quantizeWindow(1), 24);
+  assert.equal(quantizeWindow(9999), 720);
+  assert.equal(quantizeWindow("garbage"), 24);
+});
+
+test("quantizeGraphParams: min_usd and limit snap to tiers", () => {
+  assert.deepEqual(quantizeGraphParams(2_500_000, 37), { minUsd: 1_000_000, limit: 30 });
+  assert.deepEqual(quantizeGraphParams(0, 99999), { minUsd: 0, limit: 150 });
+  assert.deepEqual(quantizeGraphParams("x", "y"), { minUsd: 0, limit: 10 });
+});
+
+test("autoPauseState: guard pause active until until-passes, then expired", () => {
+  const now = 10_000;
+  assert.deepEqual(autoPauseState({ until: 20_000, reason: "d1_read_cap" }, now), { active: true, expired: false });
+  assert.deepEqual(autoPauseState({ until: 5_000, reason: "d1_read_cap" }, now), { active: false, expired: true });
+  assert.deepEqual(autoPauseState(null, now), { active: false, expired: false });
+  assert.deepEqual(autoPauseState({}, now), { active: false, expired: false });
+});

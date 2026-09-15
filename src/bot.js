@@ -220,6 +220,32 @@ const TX_TYPE_LABEL = {
 // still served (stale) instead of 500ing the dashboard.
 const CACHE_TTL_MS = 180_000; // 3 min → ≤480 cache writes/day, well under caps
 
+// Cache-key explosion guard: the cache key includes the query params, so a
+// scripted client could request window=1,2,3…720 and force a fresh full scan
+// per value. Quantize params to fixed tiers — the key space stays tiny and
+// every "weird" request simply snaps to the nearest tier we already serve.
+const NETFLOW_WINDOWS = [24, 72, 168, 720];
+export function quantizeWindow(h) {
+  const n = Math.max(1, Math.min(720, Math.trunc(Number(h) || 24)));
+  let best = NETFLOW_WINDOWS[0];
+  for (const w of NETFLOW_WINDOWS) {
+    if (Math.abs(w - n) < Math.abs(best - n)) best = w;
+  }
+  return best;
+}
+
+const MIN_USD_TIERS = [0, 1_000_000, 5_000_000, 10_000_000, 50_000_000];
+const LIMIT_TIERS = [10, 30, 50, 100, 150];
+function nearestTier(v, tiers) {
+  const n = Math.max(tiers[0], Math.min(tiers[tiers.length - 1], Math.trunc(Number(v) || 0)));
+  let best = tiers[0];
+  for (const t of tiers) if (Math.abs(t - n) < Math.abs(best - n)) best = t;
+  return best;
+}
+export function quantizeGraphParams(minUsd, limit) {
+  return { minUsd: nearestTier(minUsd, MIN_USD_TIERS), limit: nearestTier(limit, LIMIT_TIERS) };
+}
+
 export async function cachedPayload(env, key, compute, ttlMs = CACHE_TTL_MS) {
   let cachedRow = null;
   try {
@@ -333,7 +359,7 @@ export async function fetchHandler(request, env, ctx) {
   // side supply) minus OUT (self-custody accumulation) over a window.
   if (request.method === "GET" && path === "/netflow") {
     try {
-      const windowHours = Math.max(1, Math.min(720, Math.trunc(Number(url.searchParams.get("window")) || 24)));
+      const windowHours = quantizeWindow(url.searchParams.get("window"));
       const chainParam = url.searchParams.get("chain");
       const chain = chainParam ? String(chainParam).toLowerCase() : null;
       const payload = await cachedPayload(env, `netflow:v1:${windowHours}:${chain || "all"}`, async () => {
@@ -359,11 +385,12 @@ export async function fetchHandler(request, env, ctx) {
   // Aggregated whale flow edges for the dashboard's network view.
   if (request.method === "GET" && path === "/graph") {
     try {
-      const windowHours = Math.max(1, Math.min(720, Math.trunc(Number(url.searchParams.get("window")) || 24)));
+      const windowHours = quantizeWindow(url.searchParams.get("window"));
       const chainParam = url.searchParams.get("chain");
       const chain = chainParam ? String(chainParam).toLowerCase() : null;
-      const minUsd = Math.max(0, Number(url.searchParams.get("min_usd")) || 0);
-      const limit = Math.max(5, Math.min(150, Math.trunc(Number(url.searchParams.get("limit")) || 50)));
+      const q = quantizeGraphParams(url.searchParams.get("min_usd"), url.searchParams.get("limit"));
+      const minUsd = q.minUsd;
+      const limit = q.limit;
       const payload = await cachedPayload(env, `graph:v1:${windowHours}:${chain || "all"}:${minUsd}:${limit}`, async () => {
         const since = Date.now() - windowHours * 3600_000;
         const edges = await graphEdges(env, { since, chain, minUsd, limit });

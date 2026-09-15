@@ -182,6 +182,21 @@ export function filterWhales(candidates, minUsd) {
   return candidates.filter((c) => Number.isFinite(c.usd_value) && c.usd_value >= minUsd);
 }
 
+// ─── cap-guard pause helpers (pure, tested) ──────────────────────────
+
+/**
+ * The D1 read-cap guard writes config:auto_paused — a SEPARATE key from the
+ * admin's config:paused, so the two never clobber each other and expiry is
+ * unambiguous (a guard pause is exactly {until, reason}; an admin pause has
+ * no `until`).
+ * Returns {active, expired} — expired=true means the caller should delete
+ * the key and resume.
+ */
+export function autoPauseState(autoPaused, now) {
+  if (!autoPaused || !autoPaused.until) return { active: false, expired: false };
+  return { active: now < autoPaused.until, expired: now >= autoPaused.until };
+}
+
 // ─── interestingness score ──────────────────────────────────────────
 //
 // Pure 0-100 heuristic. Gates the AI queue: >= SCORE_THRESHOLD → Gemini,
@@ -870,17 +885,20 @@ export default {
 
     const results = [];
     // kill switches (admin panel writes config:paused) — checked per chain.
-    // An auto-pause (cap guard) carries an `until` timestamp: once passed,
-    // clear it here and resume scanning — no manual un-pause needed.
+    // The D1 read-cap guard writes config:auto_paused (separate key — the two
+    // never clobber each other); it expires itself once `until` has passed.
     let paused = {};
     try { paused = JSON.parse(await env.KV.get("config:paused") || "{}"); } catch {}
-    if (paused.until && Date.now() >= paused.until) {
-      try { await env.KV.delete("config:paused"); } catch {}
-      console.log("[scanner] auto-pause expired — resuming");
-      paused = {};
+    let autoPaused = null;
+    try { autoPaused = JSON.parse(await env.KV.get("config:auto_paused") || "null"); } catch {}
+    const guard = autoPauseState(autoPaused, Date.now());
+    if (guard.expired) {
+      try { await env.KV.delete("config:auto_paused"); } catch { /* next tick retries */ }
+      console.log("[scanner] cap auto-pause expired — resuming");
     }
+    const globallyPaused = paused.global === true || guard.active;
     for (const chain of ["eth", "btc"]) {
-      if (paused.global || paused[chain]) {
+      if (globallyPaused || paused[chain]) {
         console.log(`[scanner:${chain}] paused via admin — skipping tick`);
         results.push({ chain, skipped: "paused" });
         continue;
@@ -897,7 +915,7 @@ export default {
         if (/row read limit/i.test(String(e.message))) {
           const until = Date.now() + 30 * 60_000;
           try {
-            await env.KV.put("config:paused", JSON.stringify({ global: true, until, reason: "d1_read_cap" }));
+            await env.KV.put("config:auto_paused", JSON.stringify({ until, reason: "d1_read_cap" }));
             console.warn(`[scanner] D1 read cap hit — auto-paused until ${new Date(until).toISOString()}`);
           } catch { /* KV hiccup — next tick retries the guard */ }
           results.push({ chain, auto_paused_until: until });
