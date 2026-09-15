@@ -1,0 +1,342 @@
+// tests/sprint1.test.js — Sprint 1: interestingness, templates, evidence prompt
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { computeInterestingness, SCORE_THRESHOLD } from "../src/scanner.js";
+import { templateAnalysis, marketRegime, walletBehavior, buildPrompt } from "../src/analyst.js";
+
+// ─── computeInterestingness ───────────────────────────────────────────
+
+const NOW = 1_700_000_000_000;
+const ONE_DAY = 86_400_000;
+
+test("computeInterestingness: $100M BTC exchange inflow from known whale = high score", () => {
+  const w = { usd_value: 120_000_000, tx_type: "exchange_inflow", symbol: "BTC", detected_at: NOW };
+  const walletInfo = { tx_count: 15, first_seen: NOW - 3 * 365 * ONE_DAY, last_seen: NOW - 2 * ONE_DAY };
+  const score = computeInterestingness(w, walletInfo, []);
+  assert.ok(score >= 80, `score should be high, got ${score}`);
+});
+
+test("computeInterestingness: $600K USDT wallet-to-wallet from unknown wallet = low score", () => {
+  const w = { usd_value: 600_000, tx_type: "wallet_to_wallet", symbol: "USDT", detected_at: NOW };
+  const score = computeInterestingness(w, null, []);
+  // size=15 + wallet_to_wallet=3 + stablecoin penalty=-10 = 8
+  assert.ok(score < SCORE_THRESHOLD, `score should be below threshold, got ${score}`);
+  assert.equal(score, 8);
+});
+
+test("computeInterestingness: dormant wallet reactivation gets dormancy bonus", () => {
+  const w = { usd_value: 5_000_000, tx_type: "exchange_inflow", symbol: "ETH", detected_at: NOW };
+  const walletInfo = { tx_count: 2, first_seen: NOW - 2 * 365 * ONE_DAY, last_seen: NOW - 400 * ONE_DAY };
+  const score = computeInterestingness(w, walletInfo, []);
+  // size=45 + exchange=12 + tx_count>=1=5 + dormancy>1yr=20 + age>3yr(2yr...no, only 2yr)=0
+  // 45+12+5+20 = 82
+  assert.ok(score >= 70, `dormant wallet should score high, got ${score}`);
+});
+
+test("computeInterestingness: spam penalty for many txs from same wallet in 24h", () => {
+  const w = { usd_value: 1_000_000, tx_type: "exchange_inflow", symbol: "BTC", detected_at: NOW };
+  const recent = Array.from({ length: 10 }, (_, i) => ({ detected_at: NOW - i * 3600_000 }));
+  const scoreNoSpam = computeInterestingness(w, null, []);
+  const scoreSpam = computeInterestingness(w, null, recent);
+  assert.ok(scoreSpam < scoreNoSpam, `spam should reduce score: ${scoreSpam} < ${scoreNoSpam}`);
+  assert.ok(scoreSpam <= scoreNoSpam - 20, `should be at least 20pts lower`);
+});
+
+test("computeInterestingness: clamps to 0-100", () => {
+  const w = { usd_value: 1_000_000_000, tx_type: "exchange_inflow", symbol: "BTC", detected_at: NOW };
+  const walletInfo = { tx_count: 50, first_seen: NOW - 5 * 365 * ONE_DAY, last_seen: NOW - 400 * ONE_DAY };
+  const score = computeInterestingness(w, walletInfo, []);
+  assert.ok(score <= 100, `score should not exceed 100, got ${score}`);
+});
+
+test("computeInterestingness: stablecoin penalty only applies under $50M", () => {
+  const wSmall = { usd_value: 5_000_000, tx_type: "exchange_inflow", symbol: "USDT", detected_at: NOW };
+  const wHuge = { usd_value: 60_000_000, tx_type: "exchange_inflow", symbol: "USDT", detected_at: NOW };
+  const scoreSmall = computeInterestingness(wSmall, null, []);
+  const scoreHuge = computeInterestingness(wHuge, null, []);
+  // The $50M+ stablecoin should lose the -10 penalty relative to the small one
+  // (both are exchange_inflow, but the size bands differ, so we just verify the
+  // huge one scores significantly higher)
+  assert.ok(scoreHuge > scoreSmall, `large stablecoin should outscore small: ${scoreHuge} > ${scoreSmall}`);
+});
+
+// ─── marketRegime ─────────────────────────────────────────────────────
+
+test("marketRegime classifies Fear & Greed correctly", () => {
+  assert.equal(marketRegime({ fear_greed: 10 }), "fear");
+  assert.equal(marketRegime({ fear_greed: 25 }), "fear");
+  assert.equal(marketRegime({ fear_greed: 50 }), "neutral");
+  assert.equal(marketRegime({ fear_greed: 75 }), "greed");
+  assert.equal(marketRegime({ fear_greed: 90 }), "greed");
+  assert.equal(marketRegime(null), "unknown");
+  assert.equal(marketRegime({}), "unknown");
+});
+
+// ─── walletBehavior ───────────────────────────────────────────────────
+
+test("walletBehavior detects distribution pattern", () => {
+  const hist = [
+    { tx_type: "exchange_inflow" },
+    { tx_type: "exchange_inflow" },
+    { tx_type: "exchange_inflow" },
+  ];
+  assert.equal(walletBehavior(hist), "distribution");
+});
+
+test("walletBehavior detects accumulation pattern", () => {
+  const hist = [
+    { tx_type: "exchange_outflow" },
+    { tx_type: "exchange_outflow" },
+    { tx_type: "wallet_to_wallet" },
+  ];
+  assert.equal(walletBehavior(hist), "accumulation");
+});
+
+test("walletBehavior returns unknown for no/empty history", () => {
+  assert.equal(walletBehavior([]), "unknown");
+  assert.equal(walletBehavior(null), "unknown");
+});
+
+test("walletBehavior returns mixed for balanced inflow/outflow", () => {
+  const hist = [
+    { tx_type: "exchange_inflow" },
+    { tx_type: "exchange_outflow" },
+  ];
+  assert.equal(walletBehavior(hist), "mixed");
+});
+
+// ─── templateAnalysis ─────────────────────────────────────────────────
+
+const MARKET_FEAR = { fear_greed: 20, fear_greed_label: "Fear", btc: { price: 60_000, change_24h: -3 }, eth: { price: 3000, change_24h: -2 } };
+const MARKET_GREED = { fear_greed: 80, fear_greed_label: "Greed", btc: { price: 80_000, change_24h: 5 }, eth: { price: 5000, change_24h: 4 } };
+
+test("templateAnalysis: exchange_inflow during fear → bearish", () => {
+  const w = { tx_type: "exchange_inflow", usd_value: 10_000_000, symbol: "BTC" };
+  const result = templateAnalysis(w, MARKET_FEAR, []);
+  assert.ok(result, "should return a template result");
+  assert.equal(result.signal, "bearish");
+  assert.ok(result.confidence >= 0.70, `confidence should be >= 0.7, got ${result.confidence}`);
+  assert.match(result.headline, /deposited to exchange/i);
+  assert.match(result.related_factor, /exchange inflow/i);
+});
+
+test("templateAnalysis: exchange_outflow during greed → bullish", () => {
+  const w = { tx_type: "exchange_outflow", usd_value: 5_000_000, symbol: "ETH" };
+  const result = templateAnalysis(w, MARKET_GREED, []);
+  assert.ok(result);
+  assert.equal(result.signal, "bullish");
+  assert.match(result.headline, /withdrawn from exchange/i);
+});
+
+test("templateAnalysis: exchange_internal → neutral, high confidence", () => {
+  const w = { tx_type: "exchange_internal", usd_value: 50_000_000, symbol: "USDT" };
+  const result = templateAnalysis(w, MARKET_FEAR, []);
+  assert.ok(result);
+  assert.equal(result.signal, "neutral");
+  assert.ok(result.confidence >= 0.85, `internal should have high confidence, got ${result.confidence}`);
+});
+
+test("templateAnalysis: small stablecoin wallet-to-wallet → neutral", () => {
+  const w = { tx_type: "wallet_to_wallet", usd_value: 2_000_000, symbol: "USDC" };
+  const result = templateAnalysis(w, MARKET_FEAR, []);
+  assert.ok(result);
+  assert.equal(result.signal, "neutral");
+  assert.equal(result.confidence, 0.50);
+});
+
+test("templateAnalysis: ambiguous wallet-to-wwallet BTC → null (needs Gemini)", () => {
+  const w = { tx_type: "wallet_to_wallet", usd_value: 8_000_000, symbol: "BTC" };
+  const result = templateAnalysis(w, MARKET_FEAR, []);
+  assert.equal(result, null, "ambiguous cases should return null for Gemini");
+});
+
+test("templateAnalysis: inflow in neutral market with unknown wallet → bearish (direction is the evidence)", () => {
+  const w = { tx_type: "exchange_inflow", usd_value: 3_000_000, symbol: "ETH" };
+  const result = templateAnalysis(w, { fear_greed: 50, fear_greed_label: "Neutral" }, []);
+  // Since Sprint 4, flow direction alone is enough for a directional signal —
+  // regime/history only modulate confidence. Otherwise first-sight whales in
+  // a neutral market produce 100% neutral output (3 weeks of live data
+  // proved exactly that).
+  assert.ok(result, "directional template should fire without fear/history");
+  assert.equal(result.signal, "bearish");
+  assert.equal(result.confidence, 0.60);
+});
+
+test("templateAnalysis: conflicting context dampens confidence without flipping signal", () => {
+  // inflow (sell-side) while market is greedy and wallet is an accumulator
+  const w = { tx_type: "exchange_inflow", usd_value: 3_000_000, symbol: "ETH" };
+  const accHistory = [
+    { tx_type: "exchange_outflow" }, { tx_type: "exchange_outflow" }, { tx_type: "exchange_outflow" },
+  ];
+  const r = templateAnalysis(w, { fear_greed: 85, fear_greed_label: "Greed" }, accHistory);
+  assert.equal(r.signal, "bearish");
+  assert.equal(r.confidence, 0.55, "greed + accumulation should dampen to 0.55");
+
+  // outflow (accumulation) while market is fearful and wallet is a distributor
+  const w2 = { tx_type: "exchange_outflow", usd_value: 3_000_000, symbol: "ETH" };
+  const distHistory = [
+    { tx_type: "exchange_inflow" }, { tx_type: "exchange_inflow" }, { tx_type: "exchange_inflow" },
+  ];
+  const r2 = templateAnalysis(w2, { fear_greed: 15, fear_greed_label: "Fear" }, distHistory);
+  assert.equal(r2.signal, "bullish");
+  assert.equal(r2.confidence, 0.55, "fear + distribution should dampen to 0.55");
+});
+
+test("templateAnalysis: inflow with prior distribution history → bearish even in neutral market", () => {
+  const w = { tx_type: "exchange_inflow", usd_value: 3_000_000, symbol: "ETH" };
+  const distHistory = [
+    { tx_type: "exchange_inflow" }, { tx_type: "exchange_inflow" }, { tx_type: "exchange_inflow" },
+  ];
+  const result = templateAnalysis(w, { fear_greed: 50, fear_greed_label: "Neutral" }, distHistory);
+  assert.ok(result, "distribution history should trigger template even in neutral market");
+  assert.equal(result.signal, "bearish");
+  assert.ok(result.confidence < 0.75, `should have lower confidence without fear, got ${result.confidence}`);
+});
+
+// ─── buildPrompt (evidence-based) ─────────────────────────────────────
+
+const WHALE = {
+  chain: "eth",
+  from_address: "0x28C6c06298d514De13C02684fa65b7c0c1F723e4",
+  to_address: "0x21a31Ee1AfC5e7A728a5F2C3d6c2F3a8f9d93Da3",
+  amount: 250,
+  symbol: "BTC",
+  usd_value: 16_750_000,
+  tx_type: "exchange_inflow",
+  detected_at: 1_700_000_000_000,
+};
+
+const MARKET = {
+  btc: { price: 67_000, change_24h: -2.3 },
+  eth: { price: 3_200, change_24h: -1.8 },
+  usdt: { price: 1 }, usdc: { price: 1 }, dai: { price: 1 }, wbtc: { price: 67_000 },
+  fear_greed: 28,
+  fear_greed_label: "Fear",
+};
+
+test("buildPrompt includes STRUCTURED FACTS section", () => {
+  const p = buildPrompt(WHALE, MARKET, [], null);
+  assert.match(p, /STRUCTURED FACTS/i);
+  assert.match(p, /Destination: exchange wallet/i);
+  assert.match(p, /Source: private wallet/i);
+  assert.match(p, /Wallet historical behavior:/i);
+  assert.match(p, /Market sentiment: Fear/i);
+  assert.match(p, /Exchange involvement: yes/i);
+});
+
+test("buildPrompt includes anti-speculation rules", () => {
+  const p = buildPrompt(WHALE, MARKET, [], null);
+  assert.match(p, /Do not speculate/i);
+  assert.match(p, /STRUCTURED FACTS/i);
+  assert.match(p, /insufficient data/i);
+  assert.match(p, /not predicting prices/i);
+});
+
+test("buildPrompt includes confidence guard rule (3+ facts for >0.7)", () => {
+  const p = buildPrompt(WHALE, MARKET, [], null);
+  assert.match(p, /only above 0\.7 if 3\+ supporting facts/i);
+});
+
+test("buildPrompt handles missing market + history gracefully", () => {
+  const p = buildPrompt(WHALE, null, [], null);
+  assert.match(p, /no prior history/i);
+  assert.match(p, /no recent headlines cached/i);
+  assert.match(p, /Market sentiment: unknown/i);
+  assert.match(p, /Wallet historical behavior: unknown/i);
+});
+
+test("buildPrompt counts prior events from history length", () => {
+  const hist = [
+    { detected_at: 1_699_900_000_000, tx_type: "exchange_inflow", amount: 5, symbol: "BTC", usd_value: 300_000, from_address: "0x1", to_address: "0x2" },
+    { detected_at: 1_699_800_000_000, tx_type: "exchange_outflow", amount: 3, symbol: "ETH", usd_value: 9000, from_address: "0x1", to_address: "0x3" },
+  ];
+  const p = buildPrompt(WHALE, MARKET, hist, null);
+  assert.match(p, /Prior similar events in wallet history: 2 transactions/i);
+});
+
+// ─── alpha: supply-op + infrastructure templates ────────────────────────
+import { templateAnalysis as _ta } from "../src/analyst.js";
+// (templateAnalysis already imported at top; alias kept for the new block)
+
+test("templateAnalysis: mint states supply fact, stays neutral", () => {
+  const w = { tx_type: "mint", usd_value: 60_000_000, symbol: "USDT", interesting_score: 80 };
+  const r = templateAnalysis(w, null, []);
+  assert.equal(r.signal, "neutral");
+  assert.match(r.headline, /newly minted/);
+  assert.match(r.related_factor, /mint/i);
+});
+
+test("templateAnalysis: burn and bridge and miner branches", () => {
+  const burn = templateAnalysis({ tx_type: "burn", usd_value: 2_000_000, symbol: "ETH" }, null, []);
+  assert.match(burn.related_factor, /burn/i);
+  const bridge = templateAnalysis({ tx_type: "bridge_flow", usd_value: 3_000_000, symbol: "USDC" }, null, []);
+  assert.equal(bridge.signal, "neutral");
+  assert.match(bridge.related_factor, /bridge/i);
+  const miner = templateAnalysis({ tx_type: "miner_flow", usd_value: 1_200_000, symbol: "BTC" }, null, []);
+  assert.match(miner.related_factor, /miner/i);
+});
+
+// ─── alpha ladder B: wallet behavioral patterns ─────────────────────────
+import { patternFor, parseAnalysis } from "../src/analyst.js";
+
+const TS_NOW = Date.now();
+const d = (days) => TS_NOW - days * 86_400_000;
+const dep = (at) => ({ tx_type: "exchange_inflow", detected_at: at });
+const wd = (at) => ({ tx_type: "exchange_outflow", detected_at: at });
+
+test("patternFor: fresh_stealth — first-day wallet deposits to exchange", () => {
+  const p = patternFor([], { tx_type: "exchange_inflow" }, TS_NOW - 3600_000);
+  assert.equal(p, "fresh_stealth");
+});
+
+test("patternFor: frequent_depositor — 2 prior deposits + current deposit", () => {
+  const p = patternFor([dep(d(1)), dep(d(5))], { tx_type: "exchange_inflow" }, d(40));
+  assert.equal(p, "frequent_depositor");
+});
+
+test("patternFor: accumulator — 3 withdrawals in 30d regardless of current", () => {
+  const p = patternFor([wd(d(1)), wd(d(3)), wd(d(9))], { tx_type: "wallet_to_wallet" }, d(90));
+  assert.equal(p, "accumulator");
+});
+
+test("patternFor: stale history outside 30d does not count", () => {
+  const p = patternFor([wd(d(45)), wd(d(50)), wd(d(60))], { tx_type: "wallet_to_wallet" }, d(90));
+  assert.equal(p, "unknown");
+});
+
+test("patternFor: dumper — long history landing on exchanges again", () => {
+  const hist = [dep(d(1)), dep(d(2)), dep(d(3)), dep(d(4)), dep(d(5))];
+  const p = patternFor(hist, { tx_type: "exchange_inflow" }, d(400));
+  assert.equal(p, "frequent_depositor"); // precedence: depositor beats dumper
+  // long lifetime but only old/withdrawal activity recently → dumper
+  const coldHistory = [wd(d(1)), wd(d(2)), wd(d(35)), wd(d(40)), dep(d(400))];
+  assert.equal(patternFor(coldHistory, { tx_type: "exchange_inflow" }, d(400)), "dumper");
+});
+
+test("buildPrompt embeds the behavioral tag when given", () => {
+  const w = { chain: "eth", amount: 10, symbol: "ETH", usd_value: 32000, tx_type: "exchange_inflow", from_address: "0xa", to_address: "0xb" };
+  const out = buildPrompt(w, null, [], null, "frequent_depositor");
+  assert.match(out, /Wallet behavioral tag: frequent_depositor/);
+});
+
+// ─── alpha ladder C: relevance tiers ────────────────────────────────────
+import { formatAlert } from "../src/bot.js";
+
+test("parseAnalysis: missing or garbage context_relevance defaults to medium", () => {
+  const legacy = parseAnalysis('{"headline":"h","interpretation":"i","signal":"neutral","confidence":0.5,"related_factor":"f"}');
+  assert.equal(legacy.context_relevance, "medium");
+  const garbage = parseAnalysis('{"headline":"h","interpretation":"i","signal":"neutral","confidence":0.5,"related_factor":"f","context_relevance":"EXTREME"}');
+  assert.equal(garbage.context_relevance, "medium");
+  const good = parseAnalysis('{"headline":"h","interpretation":"i","signal":"bullish","confidence":0.8,"related_factor":"f","context_relevance":"high"}');
+  assert.equal(good.context_relevance, "high");
+});
+
+test("formatAlert: high relevance promotes with fire, low gets muted", () => {
+  const WHALE2 = { chain: "btc", tx_hash: "0xk", from_address: "0xaaa", to_address: "0xbbb", amount: 5, symbol: "BTC", usd_value: 500_000, tx_type: "exchange_inflow", block_number: 100, detected_at: 1 };
+const mkA = (rel) => ({ headline: "h", interpretation: "i", signal: "bearish", confidence: 0.7, related_factor: "rf", context_relevance: rel });
+  const high = formatAlert(WHALE2, mkA("high"), null);
+  assert.match(high, /🔥 🔮 Signal:/);
+  const low = formatAlert(WHALE2, mkA("low"), null);
+  assert.match(low, /💤$/m);
+  assert.doesNotMatch(low, /🔥/);
+});
