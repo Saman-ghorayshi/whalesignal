@@ -1,0 +1,40 @@
+# secrets & local config
+config.json
+secrets.json
+PLAN_ALPHA.md
+PLAN_trading_loop.md
+plan_*.md
+RESEARCH_*.md
+.wrangler/
+.dev.vars
+.env
+*.local
+
+# node
+node_modules/
+package-lock.json
+package.json.bak
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# editor
+.vscode/
+.idea/
+*.swp
+
+# logs
+*.log
+
+# local data artifacts
+trades.db
+*.sqlite
+seed_backfill.tmp.sql

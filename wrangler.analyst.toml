@@ -1,0 +1,38 @@
+# wrangler.analyst.toml
+# Worker #2: queue consumer. Slow path — does the Gemini call, 3-5s.
+# Deploy with:  npx wrangler deploy -c wrangler.analyst.toml
+#
+# Bindings:
+#   DB      D1
+#   KV      KV (market_cache, news_cache)
+#   BOTQ    Queue producer -> bot worker (for delivery)
+
+name = "whalesignal-analyst"
+main = "src/analyst.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Consumes messages from the queue populated by the scanner
+[[queues.consumers]]
+queue = "whalesignal-q"
+max_batch_size = 5
+max_batch_timeout = 2
+max_retries = 3
+
+# Produces "send this alert" messages to the BOTQ queue (different queue)
+[[queues.producers]]
+binding = "BOTQ"
+queue = "whalesignal-bot-q"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+# placeholder — replaced by deploy_all.py
+database_id = "c8e9d8a9-fc2f-4fce-98d4-86f5ab99100a"
+
+[[kv_namespaces]]
+binding = "KV"
+# placeholder — replaced by deploy_all.py
+id = "786f5d23d25d46d58558341c6029d89b"
+
+# Secret: wrangler secret put GEMINI_KEY  (set once, with a Gemini API key)
