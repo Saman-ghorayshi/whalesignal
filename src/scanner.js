@@ -21,7 +21,7 @@
 //   MIN_USD  — string, overrides default 500000
 //   MAX_BLOCKS — string, overrides default 10
 
-import { fetchJSON, fetchText, classifyTx, usdValue, buildWalletMap, labelFor, ZERO_ADDRESS, isBurnSink } from "./worker-utils.js";
+import { fetchJSON, fetchText, classifyTx, usdValue, buildWalletMap, labelFor, ZERO_ADDRESS, isBurnSink, fmtUSD } from "./worker-utils.js";
 
 // consts (also overrideable via env)
 const DEFAULT_MIN_USD = 500_000;
@@ -1059,15 +1059,70 @@ export function parseBinanceOIChange(j) {
   return Math.round(((last - first) / first) * 100 * 100) / 100;
 }
 
+/** Pure: premiumIndex → spot-perp basis in percent (mark vs index). */
+export function parseBinanceBasis(j) {
+  const mark = parseFloat(j?.markPrice);
+  const index = parseFloat(j?.indexPrice);
+  if (!(mark > 0) || !(index > 0)) return null;
+  return Math.round(((mark - index) / index) * 100 * 100) / 100;
+}
+
+/** Pure: globalLongShortAccountRatio → latest small/large account ratio. */
+export function parseBinanceLSR(j) {
+  const n = parseFloat(j?.[j.length - 1]?.longShortRatio);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Pure: takerlongshortRatio → latest taker buy/sell volume ratio. */
+export function parseBinanceTaker(j) {
+  const n = parseFloat(j?.[j.length - 1]?.buySellRatio);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Pure: Bybit v5 tickers → { funding, oi_usd } (fallback when fapi blocked). */
+export function parseBybitTickers(j) {
+  const r = j?.result?.list?.[0];
+  const funding = parseFloat(r?.fundingRate);
+  const oi = parseFloat(r?.openInterest);
+  return {
+    funding: Number.isFinite(funding) ? funding : null,
+    oi_usd: Number.isFinite(oi) ? oi : null,
+  };
+}
+
+/**
+ * Derivatives panel per coin. Binance fapi primary (funding + basis + OI
+ * change + LSR + taker), Bybit v5 fallback (funding + OI level only — no
+ * history in one call). All keyless; every leg degrades independently.
+ */
 export async function fetchDerivatives(coin, fetcher = fetchJSON) {
   const sym = coin.toUpperCase() + "USDT";
-  const out = { funding: null, oi_change_24h_pct: null };
+  const out = { funding: null, oi_change_24h_pct: null, basis_pct: null, lsr: null, taker_ratio: null, source: null };
+  let binanceTouched = false;
   try {
-    out.funding = parseBinanceFunding(await fetcher("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=" + sym, { timeoutMs: 6000 }));
-  } catch { /* geo-block / outage — feature degrades */ }
+    const j = await fetcher("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=" + sym, { timeoutMs: 6000 });
+    out.funding = parseBinanceFunding(j);
+    out.basis_pct = parseBinanceBasis(j);
+    binanceTouched = true;
+  } catch { /* geo-block / outage */ }
   try {
     out.oi_change_24h_pct = parseBinanceOIChange(await fetcher("https://fapi.binance.com/futures/data/openInterestHist?symbol=" + sym + "&period=1h&limit=25", { timeoutMs: 8000 }));
+    binanceTouched = true;
   } catch { /* same */ }
+  try {
+    out.lsr = parseBinanceLSR(await fetcher("https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=" + sym + "&period=1h&limit=2", { timeoutMs: 8000 }));
+  } catch { /* same */ }
+  try {
+    out.taker_ratio = parseBinanceTaker(await fetcher("https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=" + sym + "&period=1h&limit=2", { timeoutMs: 8000 }));
+  } catch { /* same */ }
+  if (binanceTouched) { out.source = "binance"; return out; }
+  // Bybit fallback: one call carries funding + open interest (level only)
+  try {
+    const by = parseBybitTickers(await fetcher("https://api.bybit.com/v5/market/tickers?category=linear&symbol=" + sym, { timeoutMs: 8000 }));
+    out.funding = by.funding;
+    out.bybit_oi_usd = by.oi_usd;
+    out.source = "bybit";
+  } catch { /* both dead — panel empty, feature degrades */ }
   return out;
 }
 

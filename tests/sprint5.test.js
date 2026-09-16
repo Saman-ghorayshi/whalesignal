@@ -369,3 +369,18 @@ test("directional bonus: $1M native exchange flow reaches the ledger, stables do
   const below = { usd_value: 900_000, tx_type: "exchange_inflow", symbol: "BTC", detected_at: Date.now() };
   assert.ok(computeInterestingness(below, null, []) < 50, "sub-$1M stays out");
 });
+
+// ─── derivatives panel parsers (sprint 5g) ───────────────────────────
+import { parseBinanceBasis, parseBinanceLSR, parseBinanceTaker, parseBybitTickers, parseBinanceOIChange } from "../src/scanner.js";
+
+test("derivatives parsers: basis, LSR, taker, Bybit fallback", () => {
+  assert.equal(parseBinanceBasis({ markPrice: "100010", indexPrice: "100000" }), 0.01);
+  assert.equal(parseBinanceBasis({ markPrice: "0", indexPrice: "100000" }), null);
+  assert.equal(parseBinanceLSR([{ longShortRatio: "1.2" }, { longShortRatio: "2.5" }]), 2.5);
+  assert.equal(parseBinanceTaker([{ buySellRatio: "0.9" }, { buySellRatio: "1.4" }]), 1.4);
+  assert.equal(parseBinanceOIChange([{ sumOpenInterest: "100" }, { sumOpenInterest: "110" }]), 10);
+  const by = parseBybitTickers({ result: { list: [{ fundingRate: "0.0002", openInterest: "12345.6" }] } });
+  assert.equal(by.funding, 0.0002);
+  assert.equal(by.oi_usd, 12345.6);
+  assert.equal(parseBybitTickers({ result: { list: [] } }).funding, null);
+});

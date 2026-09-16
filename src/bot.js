@@ -1623,12 +1623,15 @@ export async function gradePending(env, opts = {}) {
 
   const now0 = Date.now();
   // rows past the honest window are closed as 'expired' so they never get
-  // graded against a price that isn't the 24h mark
+  // graded against a price that isn't the 24h mark. minAgeMs is already in
+  // ms — the old Math.max(minAgeMs, 36) * 3_600_000 multiplied a ms value by
+  // 3.6M and NEVER matched anything (found by audit).
+  const maxAgeHours = Math.max(Number(opts.minAgeHours) || 24, 24) + 12;
   await env.DB.prepare(
     `UPDATE analysis SET prediction_outcome = 'expired', evaluated_at = ?
      WHERE prediction_outcome IS NULL AND signal IN ('bullish','bearish')
        AND whale_id IN (SELECT id FROM whales WHERE detected_at < ?)`
-  ).bind(now0, now0 - Math.max(minAgeMs, 36) * 3_600_000).run();
+  ).bind(now0, now0 - maxAgeHours * 3_600_000).run();
   const { results } = await env.DB.prepare(
     `SELECT w.id, w.chain, w.symbol, w.usd_value, w.detected_at, w.price_at_detect, w.from_address,
             a.signal, a.confidence

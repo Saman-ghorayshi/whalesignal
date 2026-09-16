@@ -118,6 +118,16 @@ function makeFetches() {
         ethereum: { usd: 3500, usd_24h_change: -0.5 },
       } }) },
 
+    // derivatives panel (sprint 5g): binance fapi premiumIndex + OI hist
+    { match: "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT",
+      handler: () => ({ json: { lastFundingRate: "0.0001", markPrice: "100010", indexPrice: "100000" } }) },
+    { match: "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=ETHUSDT",
+      handler: () => ({ json: { lastFundingRate: "0.0001", markPrice: "3501", indexPrice: "3500" } }) },
+    { match: "https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT",
+      handler: () => ({ json: [ { sumOpenInterest: "100" }, { sumOpenInterest: "105" } ] }) },
+    { match: "https://fapi.binance.com/futures/data/openInterestHist?symbol=ETHUSDT",
+      handler: () => ({ json: [ { sumOpenInterest: "200" }, { sumOpenInterest: "204" } ] }) },
+
     // fear & greed
     { match: "https://api.alternative.me/fng/",
       handler: () => ({ json: { data: [{ value: "50", value_classification: "Neutral" }] } }) },
