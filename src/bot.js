@@ -456,19 +456,23 @@ export async function fetchHandler(request, env, ctx) {
   if (request.method === "GET" && path === "/news") {
     try {
       const limit = Math.max(1, Math.min(100, Math.trunc(Number(url.searchParams.get("limit")) || 20)));
-      const rows = await env.DB.prepare(
-        "SELECT title, source, symbols, first_seen FROM news ORDER BY first_seen DESC LIMIT ?"
-      ).bind(limit).all();
-      return jsonResponse({
-        ok: true,
-        count: rows?.results?.length || 0,
-        news: (rows?.results || []).map((r) => ({
-          title: r.title,
-          source: r.source || null,
-          symbols: r.symbols ? r.symbols.split(",") : [],
-          first_seen: r.first_seen,
-        })),
+      const payload = await cachedPayload(env, `news:v1:${limit}`, async () => {
+        const rows = await env.DB.prepare(
+          "SELECT title, source, symbols, sentiment, first_seen FROM news ORDER BY first_seen DESC LIMIT ?"
+        ).bind(limit).all();
+        return {
+          ok: true,
+          count: rows?.results?.length || 0,
+          news: (rows?.results || []).map((r) => ({
+            title: r.title,
+            source: r.source || null,
+            symbols: r.symbols ? r.symbols.split(",") : [],
+            sentiment: r.sentiment ?? 0,
+            first_seen: r.first_seen,
+          })),
+        };
       });
+      return jsonResponse(payload);
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
@@ -480,23 +484,14 @@ export async function fetchHandler(request, env, ctx) {
   if (request.method === "GET" && path === "/alerts/export") {
     try {
       const limit = Math.max(1, Math.min(500, Math.trunc(Number(url.searchParams.get("limit")) || 200)));
-      const rows = await env.DB.prepare(
-        `SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol,
-                w.usd_value, w.tx_type, w.detected_at,
-                a.headline, a.interpretation, a.signal, a.confidence,
-                wf.label AS from_label, wt.label AS to_label
-         FROM whales w
-         LEFT JOIN analysis a ON a.whale_id = w.id
-         LEFT JOIN wallets wf ON wf.address = w.from_address AND wf.chain = w.chain
-         LEFT JOIN wallets wt ON wt.address = w.to_address AND wt.chain = w.chain
-         WHERE w.analysis_status = 'done'
-         ORDER BY w.detected_at DESC LIMIT ?`
-      ).bind(limit).all();
-      let market = null;
-      try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
-      const lines = (rows?.results || []).map((w) =>
-        JSON.stringify(buildAlertJSON(w, market))
-      );
+      // since_id lets the trading loop poll cheaply (only rows newer than the
+      // last one it processed); without it the latest window is cached 60s.
+      const sinceId = Math.max(0, Math.trunc(Number(url.searchParams.get("since_id")) || 0));
+      const cacheKey = sinceId > 0 ? null : `alerts-export:v1:${limit}`;
+      const payload = await (cacheKey
+        ? cachedPayload(env, cacheKey, () => exportRows(env, { limit, sinceId }))
+        : exportRows(env, { limit, sinceId }));
+      const lines = payload.map((row) => JSON.stringify(row));
       return new Response(lines.join("\n") + (lines.length ? "\n" : ""), {
         status: 200,
         headers: {
@@ -544,6 +539,25 @@ export async function fetchHandler(request, env, ctx) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
   }
+
+// alert-export query shared by the route (cached or since_id polled)
+async function exportRows(env, { limit, sinceId }) {
+  const rows = await env.DB.prepare(
+    `SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol,
+            w.usd_value, w.tx_type, w.detected_at,
+            a.headline, a.interpretation, a.signal, a.confidence,
+            wf.label AS from_label, wt.label AS to_label
+     FROM whales w
+     LEFT JOIN analysis a ON a.whale_id = w.id
+     LEFT JOIN wallets wf ON wf.address = w.from_address AND wf.chain = w.chain
+     LEFT JOIN wallets wt ON wt.address = w.to_address AND wt.chain = w.chain
+     WHERE w.analysis_status = 'done' AND w.id > ?
+     ORDER BY w.detected_at DESC LIMIT ?`
+  ).bind(sinceId, limit).all();
+  let market = null;
+  try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+  return (rows?.results || []).map((w) => buildAlertJSON(w, market)).filter(Boolean);
+}
 
   const expected = `/tg/${env.BOT_TOKEN || ""}`;
   if (path !== expected) {

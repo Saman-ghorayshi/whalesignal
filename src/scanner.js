@@ -759,9 +759,16 @@ export async function fetchBlock(chain, blockNum, env) {
         return normalizeRpcBtcBlock(blockNum, blk);
       } catch (e2) {
         console.warn(`btc block ${blockNum} via publicnode failed, falling back to mempool.space:`, e2.message);
-        const hash = (await fetchText(`https://mempool.space/api/block-height/${blockNum}`, { timeoutMs: 8000 })).trim();
-        const txs = await fetchJSON(`https://mempool.space/api/block/${hash}/txs`, { maxBytes: 3_000_000 });
-        return normalizeMempoolBlock(blockNum, txs);
+        try {
+          const hash = (await fetchText(`https://mempool.space/api/block-height/${blockNum}`, { timeoutMs: 8000 })).trim();
+          const txs = await fetchJSON(`https://mempool.space/api/block/${hash}/txs`, { maxBytes: 3_000_000 });
+          return normalizeMempoolBlock(blockNum, txs);
+        } catch (e3) {
+          console.warn(`btc block ${blockNum} via mempool.space failed, falling back to blockstream:`, e3.message);
+          const hash = (await fetchText(`https://blockstream.info/api/block-height/${blockNum}`, { timeoutMs: 8000 })).trim();
+          const txs = await fetchJSON(`https://blockstream.info/api/block/${hash}/txs`, { maxBytes: 3_000_000 });
+          return normalizeMempoolBlock(blockNum, txs);
+        }
       }
     }
   }
@@ -925,6 +932,16 @@ export const SPOT_SOURCES = [
     parse: (j) => { const n = parseFloat(j?.last); return Number.isFinite(n) ? n : null; },
   },
   {
+    name: "coinpaprika",
+    url: (c) => "https://api.coinpaprika.com/v1/tickers/" + (c === "btc" ? "btc-bitcoin" : "eth-ethereum"),
+    parse: (j) => { const n = parseFloat(j?.quotes?.USD?.price); return Number.isFinite(n) ? n : null; },
+  },
+  {
+    name: "binance",
+    url: (c) => "https://api.binance.com/api/v3/ticker/price?symbol=" + c.toUpperCase() + "USDT",
+    parse: (j) => { const n = parseFloat(j?.price); return Number.isFinite(n) ? n : null; },
+  },
+  {
     name: "okx",
     url: (c) => "https://www.okx.com/api/v5/market/ticker?instId=" + c.toUpperCase() + "-USDT",
     parse: (j) => { const n = parseFloat(j?.data?.[0]?.last); return Number.isFinite(n) ? n : null; },
@@ -1082,6 +1099,8 @@ const NEWS_RSS_FEEDS = [
   "https://decrypt.co/feed",
   "https://www.newsbtc.com/feed/",
   "https://cryptoslate.com/feed/",
+  "https://bitcoinmagazine.com/feed",
+  "https://www.theblock.co/rss.xml",
 ];
 
 /** Pure: which known assets does a headline mention? Comma list or "". */
