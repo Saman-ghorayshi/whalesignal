@@ -164,7 +164,7 @@ test("buildMarketCache: coingecko data wins, coinbase fills gaps, nulls never cl
 });
 
 // ─── news context: RSS extraction + related-headline matching ────────
-import { extractRssTitles } from "../src/scanner.js";
+import { extractRssTitles, matchSymbols, headlineHash } from "../src/scanner.js";
 import { relatedHeadlines, formatAlert } from "../src/bot.js";
 import { templateAnalysis } from "../src/analyst.js";
 
@@ -222,4 +222,49 @@ test("templateAnalysis: huge unlabeled-source flows get capped confidence + cave
   // ordinary $10M inflow during fear keeps its 0.75
   const r3 = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 10_000_000, symbol: "BTC" }, { fear_greed: 20, fear_greed_label: "Fear" }, []);
   assert.equal(r3.confidence, 0.75);
+});
+
+// ─── backtester engine + news storage helpers ────────────────────────
+import { priceAt, gradeEvent, summarize } from "../tools/backtest.mjs";
+
+const DAY = 86_400_000;
+const SERIES = [{ ts: 0, price: 100 }, { ts: DAY, price: 102 }, { ts: 2 * DAY, price: 99 }, { ts: 3 * DAY, price: 99.5 }];
+
+test("backtest: priceAt picks nearest-before; gradeEvent mirrors the worker semantics", () => {
+  assert.equal(priceAt(SERIES, 5 * 3600_000).price, 100);
+  assert.equal(priceAt(SERIES, DAY + 3600_000).price, 102);
+  assert.equal(priceAt(null, 0), null);
+  // bullish, +4% over 24h → correct
+  assert.equal(gradeEvent({ chain: "btc", signal: "bullish", detected_at: 0 }, { btc: SERIES }).outcome, "correct");
+  // bearish, +4% → wrong
+  assert.equal(gradeEvent({ chain: "btc", signal: "bearish", detected_at: 0 }, { btc: SERIES }).outcome, "wrong");
+  // under threshold (99 → 99.5 = +0.5%) → no_move
+  assert.equal(gradeEvent({ chain: "btc", signal: "bullish", detected_at: 2 * DAY }, { btc: SERIES }).outcome, "no_move");
+  // out of series coverage → skipped (counted, not hidden)
+  assert.equal(gradeEvent({ chain: "btc", signal: "bullish", detected_at: 90 * DAY }, { btc: SERIES }).outcome, "skipped");
+});
+
+test("backtest: summarize buckets by confidence/signal/symbol and flags small samples", () => {
+  const rows = [
+    { signal: "bullish", symbol: "BTC", bucket: "high", outcome: "correct", movePct: 2.0 },
+    { signal: "bullish", symbol: "BTC", bucket: "high", outcome: "wrong", movePct: -1.5 },
+    { signal: "bearish", symbol: "ETH", bucket: "low", outcome: "correct", movePct: -3.0 },
+    { signal: "bearish", symbol: "ETH", bucket: "low", outcome: "no_move", movePct: 0.2 },
+  ];
+  const s = summarize(rows);
+  assert.equal(s.overall.directional, 3);
+  assert.equal(s.overall.correct, 2);
+  assert.equal(s.by_confidence.high.rate, 50);
+  assert.equal(s.by_confidence.low.rate, 100);
+  assert.equal(s.by_signal.bullish.avgMovePct, 0.25);
+  assert.match(s.note, /fewer than 30/);
+});
+
+test("news helpers: symbol matcher + stable headline hash", () => {
+  assert.equal(matchSymbols("Bitcoin ETF inflows while ETH staking grows"), "BTC,ETH");
+  assert.equal(matchSymbols("Recipe of the week: avocado toast"), "");
+  const h1 = headlineHash("Bitcoin ETF Inflows!");
+  const h2 = headlineHash("  bitcoin   etf inflows! ");
+  assert.equal(h1, h2, "normalizes case/spacing");
+  assert.notEqual(headlineHash("a"), headlineHash("b"));
 });

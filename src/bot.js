@@ -449,6 +449,65 @@ export async function fetchHandler(request, env, ctx) {
     }
   }
 
+  // ─── public GET /news?limit=20 — recent keyword-matching headlines ────
+  // The "why did whales move" history: what the news cache saw, deduped.
+  if (request.method === "GET" && path === "/news") {
+    try {
+      const limit = Math.max(1, Math.min(100, Math.trunc(Number(url.searchParams.get("limit")) || 20)));
+      const rows = await env.DB.prepare(
+        "SELECT title, source, symbols, first_seen FROM news ORDER BY first_seen DESC LIMIT ?"
+      ).bind(limit).all();
+      return jsonResponse({
+        ok: true,
+        count: rows?.results?.length || 0,
+        news: (rows?.results || []).map((r) => ({
+          title: r.title,
+          source: r.source || null,
+          symbols: r.symbols ? r.symbols.split(",") : [],
+          first_seen: r.first_seen,
+        })),
+      });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /alerts/export?limit=200 — NDJSON alert stream ────────
+  // The paper-trading loop's data source (plain GET + line-delimited JSON —
+  // the same contract the R2 export had, without needing R2).
+  if (request.method === "GET" && path === "/alerts/export") {
+    try {
+      const limit = Math.max(1, Math.min(500, Math.trunc(Number(url.searchParams.get("limit")) || 200)));
+      const rows = await env.DB.prepare(
+        `SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol,
+                w.usd_value, w.tx_type, w.detected_at,
+                a.headline, a.interpretation, a.signal, a.confidence,
+                wf.label AS from_label, wt.label AS to_label
+         FROM whales w
+         LEFT JOIN analysis a ON a.whale_id = w.id
+         LEFT JOIN wallets wf ON wf.address = w.from_address AND wf.chain = w.chain
+         LEFT JOIN wallets wt ON wt.address = w.to_address AND wt.chain = w.chain
+         WHERE w.analysis_status = 'done'
+         ORDER BY w.detected_at DESC LIMIT ?`
+      ).bind(limit).all();
+      let market = null;
+      try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+      const lines = (rows?.results || []).map((w) =>
+        JSON.stringify(buildAlertJSON(w, market))
+      );
+      return new Response(lines.join("\n") + (lines.length ? "\n" : ""), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/x-ndjson",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-cache",
+        },
+      });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
   const expected = `/tg/${env.BOT_TOKEN || ""}`;
   if (path !== expected) {
     return errJson("not found", 404);

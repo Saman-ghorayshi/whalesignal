@@ -232,3 +232,17 @@ CREATE TABLE IF NOT EXISTS wallet_stats (
   correct INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (address, chain)
 );
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5c — news history. The scanner stores keyword-matching headlines
+-- (deduped by title hash) so the dashboard can show WHY whales moved and
+-- correlations accumulate over time. ≤5 rows per 5-min refresh after dedupe.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS news (
+  id         TEXT PRIMARY KEY,
+  title      TEXT    NOT NULL,
+  source     TEXT,
+  symbols    TEXT,
+  first_seen INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_news_seen ON news(first_seen);

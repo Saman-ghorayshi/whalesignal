@@ -929,11 +929,35 @@ const NEWS_RSS_FEEDS = [
   "https://cointelegraph.com/rss",
 ];
 
+/** Pure: which known assets does a headline mention? Comma list or "". */
+const ASSET_PATTERNS = [
+  ["BTC", /\b(bitcoin|btc)\b/i],
+  ["ETH", /\b(ethereum|ether|eth)\b/i],
+  ["USDT", /\b(tether|usdt)\b/i],
+  ["USDC", /\b(usdc|circle)\b/i],
+  ["SOL", /\b(solana|sol)\b/i],
+  ["XRP", /\b(xrp|ripple)\b/i],
+];
+export function matchSymbols(title) {
+  return ASSET_PATTERNS.filter(([, re]) => re.test(String(title || "")))
+    .map(([s]) => s).join(",");
+}
+
+/** Pure: cheap deterministic hash (djb2 + length) for headline dedupe. */
+export function headlineHash(title) {
+  const s = String(title || "").toLowerCase().replace(/\s+/g, " ").trim();
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return `${h.toString(16)}-${s.length}`;
+}
+
 /**
  * Refresh the news_cache key in KV. Order: CryptoPanic (only if a token is
  * configured — it 403s without one), then keyless RSS feeds. Stores
  * {headlines:Array<{title}>, updated_at:ms, source} so the analyst and the
- * alert formatter can show WHY a whale might have moved.
+ * alert formatter can show WHY a whale might have moved. Keyword-matching
+ * headlines are ALSO persisted into the `news` table (deduped by hash) so
+ * history accumulates and /news can serve it.
  */
 export async function refreshNewsCache(env) {
   let token = env.NEWS_TOKEN;
@@ -964,6 +988,20 @@ export async function refreshNewsCache(env) {
       } catch (e) {
         console.warn(`rss news fetch failed for ${feed}:`, e.message);
       }
+    }
+  }
+
+  // persist keyword-matching headlines for history (dedupe by hash; ≤5 rows)
+  if (headlines.length) {
+    try {
+      const now = Date.now();
+      await env.DB.batch(headlines.map((h) =>
+        env.DB.prepare(
+          "INSERT OR IGNORE INTO news (id, title, source, symbols, first_seen) VALUES (?, ?, ?, ?, ?)"
+        ).bind(headlineHash(h.title), h.title, source, matchSymbols(h.title), now)
+      ));
+    } catch (e) {
+      console.warn(`news persistence failed (cache still written): ${e.message}`);
     }
   }
 
