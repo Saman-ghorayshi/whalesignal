@@ -631,9 +631,20 @@ export function statTargets(fromAddr, toAddr, fromType, toType) {
  * in-memory per scan. Includes tx_count/first_seen/last_seen for
  * interestingness scoring and auto-labeling.
  */
+// Isolate-level cache: the map changes rarely (labels/patterns) and the
+// scanner reads it EVERY tick. Without this, 2,880 full-table scans/day
+// against a growing wallets table was the biggest hidden read burner
+// left in the pipeline. 60s staleness is fine for stats bumping.
+let walletMapCache = { map: null, ts: 0 };
+const WALLET_MAP_TTL_MS = 60_000;
+
 async function loadWalletMap(env) {
+  if (walletMapCache.map && Date.now() - walletMapCache.ts < WALLET_MAP_TTL_MS) {
+    return walletMapCache.map;
+  }
   const { results } = await env.DB.prepare(
-    "SELECT address, chain, label, type, tx_count, first_seen, last_seen FROM wallets"
+    "SELECT address, chain, label, type, tx_count, first_seen, last_seen FROM wallets " +
+    "WHERE label IS NOT NULL OR type IS NOT NULL OR pattern IS NOT NULL"
   ).all();
   const m = new Map();
   if (!results) return m;
@@ -646,6 +657,7 @@ async function loadWalletMap(env) {
     m.set(String(r.address).toLowerCase(), entry);
     m.set(String(r.address), entry);
   }
+  walletMapCache = { map: m, ts: Date.now() };
   return m;
 }
 
@@ -691,20 +703,37 @@ export async function fetchLatestBlockHeight(env, chain) {
       const j = await fetchJSON("https://blockchain.info/latestblock");
       return j.height;
     } catch (e) {
-      // blockchain.info throttles/blocks shared Workers egress IPs — fall
-      // through to PublicNode's plain bitcoind RPC rather than stalling.
+      // blockchain.info throttles/blocks shared Workers egress IPs — two
+      // keyless failovers: PublicNode bitcoind RPC, then mempool.space.
       console.warn("btc tip via blockchain.info failed, falling back to publicnode:", e.message);
-      return await btcRpc("getblockcount", []);
+      try {
+        return await btcRpc("getblockcount", []);
+      } catch (e2) {
+        console.warn("btc tip via publicnode failed, falling back to mempool.space:", e2.message);
+        const tip = await fetchText("https://mempool.space/api/blocks/tip/height", { timeoutMs: 8000 });
+        return parseInt(String(tip).trim(), 10);
+      }
     }
   }
   if (chain === "eth") {
     // etherscan V2 (V1 was deprecated — returns "switch to V2 migration").
     // V2 requires a key even for free tier; ETHSCAN_KEY env var is mandatory.
     const key = await etherscanKeyParam(env);
-    const j = await fetchJSON(
-      `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
-    );
-    return parseInt(j.result, 16);
+    try {
+      const j = await fetchJSON(
+        `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
+      );
+      return parseInt(j.result, 16);
+    } catch (e) {
+      console.warn("eth tip via etherscan failed, falling back to publicnode:", e.message);
+      const j = await fetchJSON("https://ethereum-rpc.publicnode.com", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+        timeoutMs: 8000,
+      });
+      return parseInt(j.result, 16);
+    }
   }
   throw new Error(`unsupported chain: ${chain}`);
 }
@@ -724,9 +753,16 @@ export async function fetchBlock(chain, blockNum, env) {
       return j;
     } catch (e) {
       console.warn(`btc block ${blockNum} via blockchain.info failed, falling back to publicnode:`, e.message);
-      const hash = await btcRpc("getblockhash", [blockNum]);
-      const blk = await btcRpc("getblock", [hash, 2]);
-      return normalizeRpcBtcBlock(blockNum, blk);
+      try {
+        const hash = await btcRpc("getblockhash", [blockNum]);
+        const blk = await btcRpc("getblock", [hash, 2]);
+        return normalizeRpcBtcBlock(blockNum, blk);
+      } catch (e2) {
+        console.warn(`btc block ${blockNum} via publicnode failed, falling back to mempool.space:`, e2.message);
+        const hash = (await fetchText(`https://mempool.space/api/block-height/${blockNum}`, { timeoutMs: 8000 })).trim();
+        const txs = await fetchJSON(`https://mempool.space/api/block/${hash}/txs`, { maxBytes: 3_000_000 });
+        return normalizeMempoolBlock(blockNum, txs);
+      }
     }
   }
   if (chain === "eth") {
@@ -773,6 +809,22 @@ export function normalizeRpcBtcBlock(height, blk) {
         addr: v.scriptPubKey?.address || "",
         value: Math.round((v.value || 0) * 1e8),
       })),
+    })),
+  };
+}
+
+/**
+ * Pure: map a mempool.space block tx list into the blockchain.info rawblock
+ * shape. mempool values are already satoshis (unlike bitcoind decimals).
+ */
+export function normalizeMempoolBlock(height, txs) {
+  return {
+    height,
+    time: null,
+    tx: (txs || []).map((t) => ({
+      hash: t.txid,
+      inputs: [{ prev_out: { addr: t.vin?.[0]?.prevout?.scriptpubkey_address || "" } }],
+      out: (t.vout || []).map((v) => ({ addr: v.scriptpubkey_address || "", value: Math.round(v.value || 0) })),
     })),
   };
 }
@@ -844,6 +896,77 @@ async function coinbaseSpot(pair) {
   } catch { return null; }
 }
 
+
+// ─── multi-source spot prices (free, keyless, cross-validated) ────────
+//
+// CoinGecko is primary but rate-limits shared IPs (429s observed live);
+// Coinbase/Kraken/Bitstamp/OKX/CryptoCompare are fallbacks. When more
+// than one source answers we take the MEDIAN and require 2% agreement —
+// a single stale or glitched feed can no longer poison usd_value.
+export const SPOT_SOURCES = [
+  {
+    name: "coinbase",
+    url: (c) => "https://api.coinbase.com/v2/prices/" + c.toUpperCase() + "-USD/spot",
+    parse: (j) => { const n = parseFloat(j?.data?.amount); return Number.isFinite(n) ? n : null; },
+  },
+  {
+    name: "kraken",
+    url: (c) => "https://api.kraken.com/0/public/Ticker?pair=" + (c === "btc" ? "XBTUSD" : "ETHUSD"),
+    parse: (j) => {
+      const k = j?.result;
+      const key = k ? Object.keys(k)[0] : null;
+      const n = key ? parseFloat(k[key]?.c?.[0]) : NaN;
+      return Number.isFinite(n) ? n : null;
+    },
+  },
+  {
+    name: "bitstamp",
+    url: (c) => "https://www.bitstamp.net/api/v2/ticker/" + c + "usd/",
+    parse: (j) => { const n = parseFloat(j?.last); return Number.isFinite(n) ? n : null; },
+  },
+  {
+    name: "okx",
+    url: (c) => "https://www.okx.com/api/v5/market/ticker?instId=" + c.toUpperCase() + "-USDT",
+    parse: (j) => { const n = parseFloat(j?.data?.[0]?.last); return Number.isFinite(n) ? n : null; },
+  },
+];
+
+/**
+ * Pure: median of the answering sources. agreed=true when every source is
+ * within 2% of the median — a disagreement flags upstream weirdness
+ * (stale feed, regional split) instead of silently trusting one number.
+ */
+export function pickConsensusPrice(values) {
+  const v = (values || []).filter((x) => Number.isFinite(x) && x > 0);
+  if (!v.length) return { price: null, sources: 0, agreed: false };
+  const sorted = [...v].sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)];
+  const agreed = v.length >= 2 && v.every((x) => Math.abs(x - med) / med < 0.02);
+  return { price: Math.round(med * 100) / 100, sources: v.length, agreed };
+}
+
+/** Query fallback sources until 3 answer; returns consensus + provenance. */
+export async function fetchSpotPrice(coin, fetcher = fetchJSON) {
+  const results = [];
+  const from = [];
+  for (const src of SPOT_SOURCES) {
+    if (results.length >= 3) break;
+    try {
+      const p = src.parse(await fetcher(src.url(coin), { timeoutMs: 6000 }));
+      if (p != null) { results.push(p); from.push(src.name); }
+    } catch { /* next source */ }
+  }
+  const c = pickConsensusPrice(results);
+  return { ...c, from };
+}
+
+/** Pure: rotate the RSS start feed each refresh (5-min slots cycle the
+ *  list — all sources get used without any extra KV state). */
+export function rssStartIndex(nowMs, n) {
+  if (!n) return 0;
+  return Math.floor(nowMs / 300_000) % n;
+}
+
 /** Refresh the market_cache key in KV. CoinGecko primary, Coinbase fallback. */
 export async function refreshMarketCache(env) {
   const cgid = Math.floor(Date.now() / 1000);
@@ -853,10 +976,20 @@ export async function refreshMarketCache(env) {
   try {
     cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
   } catch (e) {
-    console.warn("coingecko price fetch failed, trying coinbase:", e.message);
+    console.warn("coingecko price fetch failed, falling back to the source chain:", e.message);
   }
-  const btcSpot = cg?.bitcoin?.usd == null ? await coinbaseSpot("BTC-USD") : null;
-  const ethSpot = cg?.ethereum?.usd == null ? await coinbaseSpot("ETH-USD") : null;
+  // per-coin consensus from the keyless source chain when CoinGecko missed
+  let btcFill = null, ethFill = null, pricesFrom = {};
+  if (cg?.bitcoin?.usd == null) {
+    btcFill = await fetchSpotPrice("btc");
+    pricesFrom.btc = btcFill.agreed ? btcFill.from.join("+") : "DISAGREED:" + btcFill.from.join("+");
+  }
+  if (cg?.ethereum?.usd == null) {
+    ethFill = await fetchSpotPrice("eth");
+    pricesFrom.eth = ethFill.agreed ? ethFill.from.join("+") : "DISAGREED:" + ethFill.from.join("+");
+  }
+  const btcSpot = btcFill?.price ?? null;
+  const ethSpot = ethFill?.price ?? null;
 
   let fg = null;
   try {
@@ -870,6 +1003,7 @@ export async function refreshMarketCache(env) {
     // both sources failed — keep the previous cache rather than writing nulls
     throw new Error("no price source available; keeping previous market_cache");
   }
+  cache.prices_from = pricesFrom;
   await env.KV.put("market_cache", JSON.stringify(cache));
 
   // hourly price snapshots for the TA regime engine (INSERT OR IGNORE dedupes
@@ -945,6 +1079,9 @@ export function extractRssTitles(xml) {
 const NEWS_RSS_FEEDS = [
   "https://www.coindesk.com/arc/outboundfeeds/rss/",
   "https://cointelegraph.com/rss",
+  "https://decrypt.co/feed",
+  "https://www.newsbtc.com/feed/",
+  "https://cryptoslate.com/feed/",
 ];
 
 /** Pure: which known assets does a headline mention? Comma list or "". */
@@ -1015,12 +1152,13 @@ export async function refreshNewsCache(env) {
   }
 
   if (!headlines.length) {
-    for (const feed of NEWS_RSS_FEEDS) {
+    const start = rssStartIndex(Date.now(), NEWS_RSS_FEEDS.length);
+    for (let i = 0; i < NEWS_RSS_FEEDS.length && headlines.length < 5; i++) {
+      const feed = NEWS_RSS_FEEDS[(start + i) % NEWS_RSS_FEEDS.length];
       try {
         const xml = await fetchText(feed, { timeoutMs: 8000, maxBytes: 400_000 });
-        const titles = extractRssTitles(xml).map((t) => ({ title: t }));
-        headlines = filterNewsKeywords(titles);
-        if (headlines.length) { source = new URL(feed).hostname; break; }
+        headlines = filterNewsKeywords(extractRssTitles(xml).map((t) => ({ title: t })));
+        if (headlines.length) source = new URL(feed).hostname;
       } catch (e) {
         console.warn(`rss news fetch failed for ${feed}:`, e.message);
       }

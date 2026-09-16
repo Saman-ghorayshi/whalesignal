@@ -528,6 +528,7 @@ export async function fetchHandler(request, env, ctx) {
           const m = JSON.parse(await env.KV.get("market_cache") || "null");
           out.fear_greed = m?.fear_greed ?? null;
           out.fear_greed_label = m?.fear_greed_label ?? null;
+          out.prices_from = m?.prices_from ?? null;
         } catch {}
         return out;
       });
