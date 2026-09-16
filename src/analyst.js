@@ -56,30 +56,35 @@ export function walletBehavior(history) {
 }
 
 /**
+ * Pure: how does this transfer size compare to the wallet's recent history?
+ * Returns the ratio (current / avg prior size) or null without ≥2 rows.
+ * A $5M deposit from a wallet that usually moves $200K is a different story
+ * than the same deposit from a wallet that moves $50M routinely.
+ */
+export function sizeVsHistory(usd, history) {
+  const rows = (history || []).filter((h) => Number(h?.usd_value) > 0);
+  if (rows.length < 2) return null;
+  const avg = rows.reduce((s, h) => s + Number(h.usd_value), 0) / rows.length;
+  if (!(avg > 0)) return null;
+  return (Number(usd) || 0) / avg;
+}
+
+/**
  * Try to analyze a whale without calling Gemini. Returns a normalized
  * analysis object if the case is obvious enough, or null if ambiguous.
  * Pure (no I/O, no API calls).
  *
- * This saves 80% of Gemini calls by handling the predictable patterns:
- *  - exchange_inflow → bearish (a deposit IS sell-side supply; market fear
- *    and a distribution history only raise confidence)
- *  - exchange_outflow → bullish (self-custody withdrawal; greed and an
- *    accumulation history only raise confidence)
- *  - exchange_internal → neutral (exchange plumbing)
- *  - wallet_to_wallet small → neutral
+ * Direction semantics (research-grounded, per CryptoQuant/Nansen):
+ *  - BTC/ETH inflow → bearish (native-asset deposits = sell-side supply)
+ *  - BTC/ETH outflow → bullish (self-custody withdrawal = accumulation)
+ *  - STABLECOIN INVERTS: USDT/USDC/DAI inflow → bullish ("dry powder"
+ *    staging on exchanges), outflow → bearish (buying power leaving).
+ *    Caveat: stables arriving from DeFi exits can be risk-off, not
+ *    fresh capital — the interpretation text says so.
+ *  - exchange_internal → neutral; wallet_to_wallet small → neutral
  *
- * Regime/history used to GATE directionality (neutral market + unknown
- * wallet → null → Gemini). That dead-ended the whole product: 3 weeks of
- * live data produced 0 bullish / 0 bearish / 100% neutral, because first-
- * sight whales have no history and F&G sits between 50-74 most of the time.
- * Flow direction is now the primary evidence; context modulates confidence.
- *
- * Anything else ambiguous → falls through to Gemini.
- *
- * @param {object} whale — { tx_type, usd_value, symbol, interesting_score }
- * @param {object|null} market — KV market_cache
- * @param {Array} history — last 5 txs for this wallet
- * @returns {object|null} normalized analysis or null (need Gemini)
+ * Flow direction is the primary evidence; market regime, wallet history
+ * and size-vs-history modulate confidence (0.5-0.85).
  */
 export function templateAnalysis(whale, market, history) {
   if (!whale) return null;
@@ -101,63 +106,56 @@ export function templateAnalysis(whale, market, history) {
     };
   }
 
-  // Exchange inflow = bearish (deposit to exchange = potential sell supply).
-  // Confidence rises with confirming context: fear regime, prior distribution.
-  // Conflicting context (greed + accumulator) dampens it instead of flipping it.
-  // HUGE transfers from an unlabeled source get a hard confidence cap: with
-  // sparse exchange labels these are often treasury migrations between an
-  // exchange's own (unlabeled) wallets, not fresh selling — our first $425M
-  // "bearish call" graded no_move, which is exactly this failure mode.
-  if (whale.tx_type === "exchange_inflow") {
+  // Directional exchange flows. Native assets and stablecoins read OPPOSITE:
+  //   BTC/ETH  inflow → bearish (sell-side supply) · outflow → bullish (accumulation)
+  //   USDT/DC  inflow → bullish (dry powder staging) · outflow → bearish (powder leaving)
+  // Context shifts confidence ±; conflicting context dampens, never flips.
+  if (whale.tx_type === "exchange_inflow" || whale.tx_type === "exchange_outflow") {
+    const isIn = whale.tx_type === "exchange_inflow";
+    const bullish = isStable ? isIn : !isIn;
     const fear = regime === "fear";
-    const dist = behavior === "distribution";
-    const conflict = regime === "greed" && behavior === "accumulation";
-    let confidence = fear && dist ? 0.82
-      : fear ? 0.75
-      : dist ? 0.65
-      : conflict ? 0.55
+    const greed = regime === "greed";
+    const confirming = bullish ? greed : fear;
+    const conflicting = bullish ? (fear && behavior === "distribution") : (greed && behavior === "accumulation");
+    const supportingHistory = bullish ? behavior === "accumulation" : behavior === "distribution";
+
+    let confidence = confirming && supportingHistory ? 0.82
+      : confirming ? 0.75
+      : supportingHistory ? 0.65
+      : conflicting ? 0.55
       : 0.60;
+
+    // size vs this wallet's own history: unusually large = stronger signal
+    const sizeRatio = sizeVsHistory(usd, history);
+    if (sizeRatio != null && sizeRatio >= 5) confidence = Math.min(0.85, confidence + 0.05);
+    else if (sizeRatio != null && sizeRatio <= 0.25) confidence = Math.max(0.50, confidence - 0.05);
+    confidence = Math.round(confidence * 100) / 100;
+
+    // huge flows from unlabeled counterparties are often treasury migrations
     const hugeUnlabeled = usd >= 100_000_000;
     if (hugeUnlabeled) confidence = Math.min(confidence, 0.55);
-    const factor = fear && dist ? "Exchange inflow during market fear with prior distribution history"
-      : fear ? "Exchange inflow during market fear"
-      : dist ? "Wallet has prior distribution pattern"
-      : conflict ? "Exchange inflow despite greedy market and accumulation history"
-      : hugeUnlabeled ? "Very large exchange inflow (unlabeled source)"
-      : "Large exchange inflow";
-    return {
-      headline: `${fmtUSD(usd)} ${sym} deposited to exchange`,
-      interpretation: `Whale deposited ${fmtUSD(usd)} ${sym} to an exchange. ${fear ? "Market is in fear territory (F&G " + market?.fear_greed + "). " : ""}Exchange inflows often precede selling, especially when the wallet has shown prior distribution behavior.${hugeUnlabeled ? " Caveat: very large transfers from unlabeled sources are frequently exchange treasury migrations, not fresh selling." : ""}`,
-      signal: "bearish",
-      confidence,
-      related_factor: factor,
-    };
-  }
 
-  // Exchange outflow = bullish (self-custody withdrawal = accumulation signal).
-  // Same huge-unlabeled-source caveat as inflows.
-  if (whale.tx_type === "exchange_outflow") {
-    const greed = regime === "greed";
-    const acc = behavior === "accumulation";
-    const conflict = regime === "fear" && behavior === "distribution";
-    let confidence = greed && acc ? 0.78
-      : greed ? 0.70
-      : acc ? 0.62
-      : conflict ? 0.55
-      : 0.60;
-    if (usd >= 100_000_000) confidence = Math.min(confidence, 0.55);
-    const factor = greed && acc ? "Exchange outflow with prior accumulation history"
-      : greed ? "Exchange outflow during market greed"
-      : acc ? "Wallet has prior accumulation pattern"
-      : conflict ? "Exchange outflow despite fearful market and distribution history"
-      : usd >= 100_000_000 ? "Very large exchange outflow (unlabeled destination)"
-      : "Large exchange outflow";
+    const ctx = confirming && supportingHistory ? (bullish ? "during market greed with prior accumulation history" : "during market fear with prior distribution history")
+      : confirming ? (bullish ? "during market greed" : "during market fear")
+      : supportingHistory ? (bullish ? "with prior accumulation history" : "with prior distribution history")
+      : conflicting ? "despite conflicting market context"
+      : "";
+    const stableNote = isStable
+      ? (isIn ? " Stablecoins arriving on exchanges are typically deployable buying power (dry powder), the inverse of native-asset deposits. Caveat: stables exiting DeFi can signal risk-off instead of fresh capital."
+             : " Stablecoins leaving exchanges drain deployable buying power — the inverse of native-asset withdrawals.")
+      : (isIn ? "Exchange inflows often precede selling, especially when the wallet has shown prior distribution behavior."
+              : "Exchange outflows often signal self-custody and accumulation, especially when the wallet has shown this pattern before.");
+    const caveat = hugeUnlabeled ? " Caveat: very large transfers with unlabeled counterparties are frequently exchange treasury migrations, not genuine directional flow." : "";
+    const sizeNote = sizeRatio != null && sizeRatio >= 5 ? ` Transfer is ${sizeRatio.toFixed(1)}× this wallet's recent average — unusually large for it.` : "";
+
     return {
-      headline: `${fmtUSD(usd)} ${sym} withdrawn from exchange`,
-      interpretation: `Whale withdrew ${fmtUSD(usd)} ${sym} from an exchange. ${greed ? "Market sentiment is greedy (F&G " + market?.fear_greed + "). " : ""}Exchange outflows often signal self-custody and accumulation, especially when the wallet has shown this pattern before.${usd >= 100_000_000 ? " Caveat: very large transfers to unlabeled destinations are frequently exchange treasury migrations, not genuine accumulation." : ""}`,
-      signal: "bullish",
+      headline: bullish
+        ? `${fmtUSD(usd)} ${sym} ${isIn ? "staged on exchange" : "withdrawn from exchange"}`
+        : `${fmtUSD(usd)} ${sym} ${isIn ? "deposited to exchange" : "withdrawn from exchange"}`,
+      interpretation: `Whale ${isIn ? "deposited" : "withdrew"} ${fmtUSD(usd)} ${sym} ${isIn ? "to" : "from"} an exchange.${fear ? " Market is in fear territory (F&G " + market?.fear_greed + ")." : greed ? " Market sentiment is greedy (F&G " + market?.fear_greed + ")." : ""}${stableNote}${sizeNote}${caveat}`,
+      signal: bullish ? "bullish" : "bearish",
       confidence,
-      related_factor: factor,
+      related_factor: `${isStable ? "Stablecoin" : sym} exchange ${isIn ? "inflow" : "outflow"}${ctx ? " " + ctx : ""}${hugeUnlabeled ? " (unlabeled counterparty)" : ""}`,
     };
   }
 

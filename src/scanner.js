@@ -951,6 +951,24 @@ export function headlineHash(title) {
   return `${h.toString(16)}-${s.length}`;
 }
 
+// Tiny lexicon — not ML, just a stable prior for ranking news context.
+// Overlapping words: bearish list wins (conservative by design).
+const BEARISH_WORDS = /\b(crash|plunge|dump|hack|exploit|breach|drain|stolen|lawsuit|sues?|sued|charges|ban(?:s|ned)?|halt(?:s|ed)?|freeze|liquidat\w*|outflow\w*|delist\w*|fraud|ponzi|insolvency|bankrupt\w*|fear|capitulat\w*|selloff|sell-off|plummets?|tumbles?|slumps?|bearish|decline|drops?)\b/i;
+const BULLISH_WORDS = /\b(surge|soars?|rally|rallies|record high|all-time high|ath|inflow\w*|accumulate\w*|adoption|approv\w*|launch\w*|partnership|upgrade\w*|buy\w*|bullish|rebound|recovers?|jumps?|spikes?|milestone|institutional|treasury adds?)\b/i;
+
+/**
+ * Pure: lexicon sentiment for a headline. +1 bullish, −1 bearish, 0 neutral.
+ * Deliberately conservative: bearish wins ties (false alarm > missed risk).
+ */
+export function headlineSentiment(title) {
+  const s = String(title || "");
+  const bear = BEARISH_WORDS.test(s);
+  const bull = BULLISH_WORDS.test(s);
+  if (bear) return -1;
+  if (bull) return 1;
+  return 0;
+}
+
 /**
  * Refresh the news_cache key in KV. Order: CryptoPanic (only if a token is
  * configured — it 403s without one), then keyless RSS feeds. Stores
@@ -997,8 +1015,8 @@ export async function refreshNewsCache(env) {
       const now = Date.now();
       await env.DB.batch(headlines.map((h) =>
         env.DB.prepare(
-          "INSERT OR IGNORE INTO news (id, title, source, symbols, first_seen) VALUES (?, ?, ?, ?, ?)"
-        ).bind(headlineHash(h.title), h.title, source, matchSymbols(h.title), now)
+          "INSERT OR IGNORE INTO news (id, title, source, symbols, sentiment, first_seen) VALUES (?, ?, ?, ?, ?, ?)"
+        ).bind(headlineHash(h.title), h.title, source, matchSymbols(h.title), headlineSentiment(h.title), now)
       ));
     } catch (e) {
       console.warn(`news persistence failed (cache still written): ${e.message}`);

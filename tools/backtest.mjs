@@ -31,7 +31,9 @@ const DAY_MS = 86_400_000;
 // ─── prices ───────────────────────────────────────────────────────────
 
 async function fetchPriceSeries(coin, days = 90) {
-  const url = `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=${days}&interval=daily`;
+  // no interval param → CoinGecko auto-granularity: HOURLY for ≤90 days.
+  // Daily candles were too coarse to grade 24h calls fairly.
+  const url = `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=${days}`;
   const res = await fetch(url, { headers: { "User-Agent": "whalesignal-backtest/1.0" } });
   if (!res.ok) throw new Error(`coingecko ${coin}: HTTP ${res.status}`);
   const j = await res.json();
@@ -41,12 +43,12 @@ async function fetchPriceSeries(coin, days = 90) {
 export async function loadPrices({ refresh = false } = {}) {
   if (!refresh && existsSync(PRICE_CACHE)) {
     const cached = JSON.parse(readFileSync(PRICE_CACHE, "utf8"));
-    const ageDays = (Date.now() - cached.fetched_at) / DAY_MS;
-    if (ageDays < 2) return cached;
-    console.error(`[backtest] price cache is ${ageDays.toFixed(1)}d old — refreshing`);
+    const ageH = (Date.now() - cached.fetched_at) / 3_600_000;
+    if (ageH < 12 && cached.granularity === "hourly") return cached;
+    console.error(`[backtest] price cache stale/wrong-granularity — refreshing`);
   }
   const [btc, eth] = await Promise.all([fetchPriceSeries("bitcoin"), fetchPriceSeries("ethereum")]);
-  const out = { fetched_at: Date.now(), btc, eth };
+  const out = { fetched_at: Date.now(), granularity: "hourly", btc, eth };
   mkdirSync(dirname(PRICE_CACHE), { recursive: true });
   writeFileSync(PRICE_CACHE, JSON.stringify(out));
   return out;
@@ -128,6 +130,43 @@ function avg(arr) {
   return arr.length ? Math.round((arr.reduce((s, n) => s + n, 0) / arr.length) * 100) / 100 : null;
 }
 
+/**
+ * Market baseline: over the price series, what fraction of non-overlapping
+ * 24h windows moved ≥+1% (up), ≤−1% (down), or flat? In a pure uptrend ALL
+ * bullish calls "look" right without any skill — the edge metric compares
+ * call accuracy against these base rates.
+ */
+export function baselineStats(series, thresholdPct = THRESHOLD_PCT) {
+  if (!series?.length) return null;
+  let up = 0, down = 0, flat = 0, n = 0;
+  for (let i = 0; i + 24 < series.length; i += 24) {
+    const p1 = series[i].price, p2 = series[i + 24].price;
+    if (!(p1 > 0)) continue;
+    const move = ((p2 - p1) / p1) * 100;
+    n++;
+    if (move >= thresholdPct) up++;
+    else if (move <= -thresholdPct) down++;
+    else flat++;
+  }
+  if (!n) return null;
+  return { windows: n, up_pct: Math.round((up / n) * 100), down_pct: Math.round((down / n) * 100), flat_pct: Math.round((flat / n) * 100) };
+}
+
+/**
+ * Pure: attach market-baseline edges to a summary. bullish edge = bullish
+ * accuracy − market up-rate; bearish edge = bearish accuracy − market
+ * down-rate. Positive edge = actual skill beyond just riding the trend.
+ */
+export function withBaseline(summary, baseline) {
+  if (!baseline) return { ...summary, market_baseline: null, edge: null };
+  const b = summary.by_signal || {};
+  const edge = {
+    bullish: b.bullish?.rate != null ? b.bullish.rate - baseline.up_pct : null,
+    bearish: b.bearish?.rate != null ? b.bearish.rate - baseline.down_pct : null,
+  };
+  return { ...summary, market_baseline: baseline, edge };
+}
+
 // ─── event fetching (public API only) ─────────────────────────────────
 
 export async function fetchDirectionalEvents(api = DEFAULT_API, maxPages = 20) {
@@ -152,6 +191,14 @@ function renderReport(summary) {
   const o = summary.overall;
   L.push("═══ WhaleSignal backtest — directional calls vs. real prices ═══");
   L.push(`events: ${summary.total_events}   directional: ${o.directional}   accuracy: ${o.rate == null ? "n/a" : o.rate + "%"} (${o.correct}/${o.directional})`);
+  if (summary.market_baseline) {
+    const b = summary.market_baseline;
+    L.push(`market baseline (24h windows): +1% up ${b.up_pct}% · −1% down ${b.down_pct}% · flat ${b.flat_pct}%`);
+    if (summary.edge) {
+      const e = summary.edge;
+      L.push(`EDGE vs baseline: bullish ${e.bullish == null ? "—" : (e.bullish > 0 ? "+" : "") + e.bullish + "pp"} · bearish ${e.bearish == null ? "—" : (e.bearish > 0 ? "+" : "") + e.bearish + "pp"}   (positive = skill beyond riding the trend)`);
+    }
+  }
   if (summary.note) L.push(`⚠ ${summary.note}`);
   L.push("");
   L.push("by confidence:");
@@ -184,7 +231,9 @@ if (import.meta.url === `file://${process.argv[1]}` || args.includes("--run")) {
     const g = gradeEvent(e, prices);
     return { signal: e.signal, symbol: e.symbol, confidence: e.confidence, detected_at: e.detected_at, ...g, bucket: confidenceBucket(e.confidence) };
   });
-  const summary = summarize(graded);
+  const summary0 = summarize(graded);
+  const baseline = baselineStats(prices.btc);
+  const summary = withBaseline(summary0, baseline);
   console.log(renderReport(summary));
   if (jsonOut) {
     writeFileSync(jsonOut, JSON.stringify({ generated_at: Date.now(), summary, graded }, null, 2));

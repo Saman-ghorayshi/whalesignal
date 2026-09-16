@@ -164,9 +164,8 @@ test("buildMarketCache: coingecko data wins, coinbase fills gaps, nulls never cl
 });
 
 // ─── news context: RSS extraction + related-headline matching ────────
-import { extractRssTitles, matchSymbols, headlineHash } from "../src/scanner.js";
+import { extractRssTitles, matchSymbols, headlineHash, headlineSentiment } from "../src/scanner.js";
 import { relatedHeadlines, formatAlert } from "../src/bot.js";
-import { templateAnalysis } from "../src/analyst.js";
 
 test("extractRssTitles: items, CDATA, entities, atom entries", () => {
   const xml = `<?xml version="1.0"?><rss><channel>
@@ -267,4 +266,60 @@ test("news helpers: symbol matcher + stable headline hash", () => {
   const h2 = headlineHash("  bitcoin   etf inflows! ");
   assert.equal(h1, h2, "normalizes case/spacing");
   assert.notEqual(headlineHash("a"), headlineHash("b"));
+});
+
+// ─── research round: sentiment lexicon, stablecoin inversion, size ratio ──
+import { renderNetflowJSON, renderGraphJSON, flowDirection } from "../src/bot.js";
+import { templateAnalysis, sizeVsHistory } from "../src/analyst.js";
+test("headlineSentiment: lexicon, conservative on overlap", () => {
+  assert.equal(headlineSentiment("Bitcoin surges to record high as ETF inflows accelerate"), 1);
+  assert.equal(headlineSentiment("Exchange halts withdrawals after exploit drains funds"), -1);
+  assert.equal(headlineSentiment("Bitcoin ETF inflows surge but market fears crash"), -1, "bearish wins ties");
+  assert.equal(headlineSentiment("Weekly recap: everything was quiet"), 0);
+});
+
+test("sizeVsHistory: ratio vs wallet's own recent average", () => {
+  const hist = [{ usd_value: 1_000_000 }, { usd_value: 3_000_000 }];
+  assert.equal(sizeVsHistory(20_000_000, hist), 10);
+  assert.equal(sizeVsHistory(20_000_000, []), null);
+  assert.equal(sizeVsHistory(20_000_000, [{ usd_value: 0 }]), null);
+});
+
+test("STABLECOIN INVERSION: USDT inflow is bullish (dry powder), outflow bearish", () => {
+  const inflow = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 15_000_000, symbol: "USDT" }, null, []);
+  assert.equal(inflow.signal, "bullish", "stablecoin inflow = buying power staging");
+  assert.match(inflow.interpretation, /dry powder/i);
+  const outflow = templateAnalysis({ tx_type: "exchange_outflow", usd_value: 15_000_000, symbol: "USDC" }, null, []);
+  assert.equal(outflow.signal, "bearish", "stablecoin outflow = powder leaving");
+  // native asset unchanged
+  const btc = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 15_000_000, symbol: "BTC" }, null, []);
+  assert.equal(btc.signal, "bearish");
+  // stables arriving from DeFi carry the risk-off caveat
+  assert.match(inflow.interpretation, /DeFi/);
+});
+
+test("size-vs-history modulation: unusual size moves confidence", () => {
+  const hist = [{ tx_type: "exchange_inflow", usd_value: 1_000_000, detected_at: 1 }, { tx_type: "exchange_inflow", usd_value: 1_000_000, detected_at: 2 }];
+  const unusual = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 15_000_000, symbol: "BTC" }, null, hist);
+  assert.equal(unusual.confidence, 0.70, "0.65 (distribution history) + 0.05 for 15× average size");
+  const usual = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 15_000_000, symbol: "BTC" }, null, []);
+  assert.equal(usual.confidence, 0.60);
+  assert.match(unusual.related_factor, /distribution history/);
+  assert.match(unusual.interpretation, /15.0×/);
+});
+
+test("netflow baseline: bias requires loud-vs-history when baseline exists", () => {
+  // $20M net inflow, balanced gross — but baseline is tiny → still directional
+  const r1 = renderNetflowJSON(
+    [{ chain: "btc", inflow_usd: 60_000_000, outflow_usd: 40_000_000, inflow_count: 5, outflow_count: 5 }],
+    [], 24, null, { avg_abs_net_daily: 5_000_000 }
+  );
+  assert.equal(r1.totals.bias, "bearish_pressure");
+  assert.equal(r1.totals.net_vs_7d_daily_avg, 4);
+  // same numbers but baseline is huge → noise, balanced
+  const r2 = renderNetflowJSON(
+    [{ chain: "btc", inflow_usd: 60_000_000, outflow_usd: 40_000_000, inflow_count: 5, outflow_count: 5 }],
+    [], 24, null, { avg_abs_net_daily: 500_000_000 }
+  );
+  assert.equal(r2.totals.bias, "balanced");
 });

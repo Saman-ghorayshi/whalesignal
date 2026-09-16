@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS news (
   title      TEXT    NOT NULL,
   source     TEXT,
   symbols    TEXT,
+  sentiment  INTEGER,
   first_seen INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_news_seen ON news(first_seen);

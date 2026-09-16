@@ -403,7 +403,8 @@ export async function fetchHandler(request, env, ctx) {
         const since = Date.now() - windowHours * 3600_000;
         const totals = await netflowTotals(env, since, chain);
         const perExchange = await netflowByExchange(env, since, chain);
-        return renderNetflowJSON(totals, perExchange, windowHours, chain);
+        const baseline = await netflowBaseline(env, chain);
+        return renderNetflowJSON(totals, perExchange, windowHours, chain, baseline);
       });
       return new Response(JSON.stringify(payload), {
         status: 200,
@@ -1057,14 +1058,37 @@ export async function netflowByExchange(env, since, chain = null, limit = 12) {
 }
 
 /**
+ * Trailing baseline: average ABSOLUTE daily netflow over the 7 days before
+ * yesterday. Raw $ netflow is meaningless without context — $214M onto
+ * exchanges is noise on a $60B-volume day and a roar on a quiet one.
+ * Pure SQL over hourly_stats; null when there's no history yet.
+ */
+export async function netflowBaseline(env, chain = null) {
+  const until = Date.now() - 86_400_000; // up to yesterday
+  const since = until - 7 * 86_400_000;
+  let sql = `SELECT AVG(ABS(day_net)) AS avg_abs_net_daily FROM (
+    SELECT (hour_bucket / 86400000) * 86400000 AS day,
+           SUM(inflow_usd - outflow_usd) AS day_net
+    FROM hourly_stats
+    WHERE hour_bucket > ? AND hour_bucket <= ? AND (inflow_count > 0 OR outflow_count > 0)`;
+  const binds = [since, until];
+  if (chain) { sql += " AND chain = ?"; binds.push(chain); }
+  sql += " GROUP BY day)";
+  const row = await env.DB.prepare(sql).bind(...binds).first();
+  return { avg_abs_net_daily: row?.avg_abs_net_daily ?? null };
+}
+
+/**
  * Pure. Build the /netflow JSON payload. Sign convention: net_inflow_usd =
  * inflow − outflow, so POSITIVE means coins moved ONTO exchanges (potential
  * sell-side supply, bearish pressure) and NEGATIVE means coins left
- * exchanges (self-custody accumulation, bullish pressure). bias is a plain
- * label over that number: |net| must be ≥5% of gross volume to count as
- * directional, otherwise "balanced".
+ * exchanges (self-custody accumulation, bullish pressure). bias is
+ * directional only when BOTH hold:
+ *   1. |net| ≥ 5% of gross volume in the window, AND
+ *   2. |net| ≥ 1.5× the trailing 7-day daily average (when a baseline
+ *      exists) — a raw number without history context is not a signal.
  */
-export function renderNetflowJSON(totals, perExchange, windowHours, chain = null) {
+export function renderNetflowJSON(totals, perExchange, windowHours, chain = null, baseline = null) {
   let inflow = 0, outflow = 0, inflowCount = 0, outflowCount = 0;
   const byChain = new Map();
   for (const r of totals || []) {
@@ -1081,15 +1105,21 @@ export function renderNetflowJSON(totals, perExchange, windowHours, chain = null
   }
   const net = inflow - outflow;
   const gross = inflow + outflow;
-  const bias = gross === 0 || Math.abs(net) < gross * 0.05 ? "balanced"
-    : net > 0 ? "bearish_pressure" : "bullish_pressure";
+  const baselineAvg = baseline?.avg_abs_net_daily ?? null;
+  const vsAvg = baselineAvg ? Math.round((net / baselineAvg) * 100) / 100 : null;
+  const bigEnough = gross > 0 && Math.abs(net) >= gross * 0.05;
+  const loud = baselineAvg == null || Math.abs(net) >= 1.5 * baselineAvg;
+  const bias = !bigEnough || !loud ? "balanced" : net > 0 ? "bearish_pressure" : "bullish_pressure";
+  const contextNote = baselineAvg != null && gross > 0
+    ? ` That is ${vsAvg}× the trailing 7-day daily average netflow.`
+    : "";
   const interpretation = gross === 0
     ? "No directional exchange flows detected in this window yet."
     : bias === "balanced"
-      ? "Exchange inflows and outflows are roughly balanced — no strong whale-side bias in this window."
+      ? `Exchange inflows and outflows are roughly balanced — no strong whale-side bias in this window.${contextNote}`
       : bias === "bearish_pressure"
-        ? `Whales moved ${fmtUSD(net)} more ONTO exchanges than they withdrew — rising sell-side supply, historically read as bearish pressure.`
-        : `Whales withdrew ${fmtUSD(-net)} more FROM exchanges than they deposited — coins moving to self-custody, historically read as accumulation.`;
+        ? `Whales moved ${fmtUSD(net)} more ONTO exchanges than they withdrew — rising sell-side supply, historically read as bearish pressure.${contextNote}`
+        : `Whales withdrew ${fmtUSD(-net)} more FROM exchanges than they deposited — coins moving to self-custody, historically read as accumulation.${contextNote}`;
   return {
     ok: true,
     window_hours: windowHours,
@@ -1101,6 +1131,8 @@ export function renderNetflowJSON(totals, perExchange, windowHours, chain = null
       net_inflow_usd: net,
       inflow_count: inflowCount,
       outflow_count: outflowCount,
+      baseline_avg_abs_net_daily: baselineAvg,
+      net_vs_7d_daily_avg: vsAvg,
       bias,
       interpretation,
     },
