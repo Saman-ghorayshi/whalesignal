@@ -112,6 +112,9 @@ async function fetchWallet(){
       {l:'Withdrawn ← Exchanges',v:data.flow?fmt(data.flow.withdrawn_from_exchange):'—'},
     ];
     stats.forEach(s=>{html+='<div class="wstat"><div class="wstat-l">'+s.l+'</div><div class="wstat-v">'+s.v+'</div></div>';});
+    if(data.track_record){
+      html+='<div class="wstat" style="border-color:rgba(34,197,94,0.25)"><div class="wstat-l">Track Record</div><div class="wstat-v" style="color:'+(data.track_record.rate>=60?'var(--green)':data.track_record.rate>=45?'var(--amber)':'var(--red)')+'">'+data.track_record.rate+'%</div><div class="wstat-sub">'+data.track_record.correct+'/'+data.track_record.graded+' calls correct, graded vs 24h price</div></div>';
+    }
     html+='</div></div>';
     const txs=data.recent_txs||[];
     html+='<div class="sec-hd"><h2 class="sec-title">Recent Transactions</h2><span style="font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace">'+txs.length+' events</span></div>';

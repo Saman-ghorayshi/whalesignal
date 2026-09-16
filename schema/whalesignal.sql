@@ -117,6 +117,9 @@ CREATE INDEX IF NOT EXISTS idx_analysis_whale     ON analysis(whale_id);
 -- single biggest D1 row-read burner in the pipeline.
 CREATE INDEX IF NOT EXISTS idx_whales_from_time   ON whales(chain, from_address, detected_at);
 CREATE INDEX IF NOT EXISTS idx_whales_to_time     ON whales(chain, to_address, detected_at);
+-- Sprint 5b: the grading engine's "ungraded directional calls" working set.
+-- Without this, the 15-min grade tick scans the whole analysis table.
+CREATE INDEX IF NOT EXISTS idx_analysis_outcome   ON analysis(prediction_outcome, signal);
 
 -- ─────────────────────────────────────────────────────────────────────
 -- Sprint 5 — free-forever rollups. Principle: every expensive read becomes
@@ -215,4 +218,17 @@ CREATE TABLE IF NOT EXISTS stats_cache (
   k          TEXT PRIMARY KEY,
   payload    TEXT NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5b — accountability ledger rollups. The grading worker writes one
+-- row here per graded directional signal, giving every wallet a public
+-- track record (graded / correct) without ever scanning the analysis table.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wallet_stats (
+  address TEXT    NOT NULL,
+  chain   TEXT    NOT NULL,
+  graded  INTEGER NOT NULL DEFAULT 0,
+  correct INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (address, chain)
 );

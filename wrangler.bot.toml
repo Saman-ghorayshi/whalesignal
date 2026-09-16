@@ -54,3 +54,8 @@ id = "786f5d23d25d46d58558341c6029d89b"
 # Deploy script will print the workers.dev URL after deploy; you use that
 # to set the Telegram webhook:
 #   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://whalesignal-bot.<acct>.workers.dev/tg/<TOKEN>"
+
+# Scheduled: grading runs every 15 min; the channel scoreboard posts daily
+# at 18:00 UTC. Both handled by `scheduled()` in src/bot.js.
+[triggers]
+crons = ["*/15 * * * *", "0 18 * * *"]

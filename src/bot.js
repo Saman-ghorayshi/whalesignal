@@ -346,8 +346,8 @@ export async function fetchHandler(request, env, ctx) {
     try {
       const addr = decodeURIComponent(path.slice("/wallet/".length));
       const chain = url.searchParams.get("chain");
-      const { profile, txs, flow, counterparties } = await walletProfile(env, addr, chain);
-      const payload = renderWalletJSON(profile, txs, flow, counterparties);
+      const { profile, txs, flow, counterparties, track } = await walletProfile(env, addr, chain);
+      const payload = renderWalletJSON(profile, txs, flow, counterparties, track);
       return jsonResponse(payload, profile ? 200 : 404);
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
@@ -839,15 +839,11 @@ export async function statsRows(env) {
          SUM(events) AS events
        FROM hourly_stats GROUP BY chain`
     ).bind(now - 86_400_000, now - 7 * 86_400_000).all())?.results || [];
-  const accQ = async () =>
-    // outcome rows stay rare until the evaluator scales; cached upstream
-    await env.DB.prepare(
-      `SELECT SUM(CASE WHEN prediction_outcome IS NOT NULL THEN 1 ELSE 0 END) AS accuracy_total,
-              SUM(CASE WHEN prediction_outcome = 'correct' THEN 1 ELSE 0 END) AS accuracy_correct
-       FROM analysis`
-    ).first();
-  const [counters, rows, acc] = await Promise.all([readCounters(env), windowsQ(), accQ()]);
+  const [counters, rows] = await Promise.all([readCounters(env), windowsQ()]);
   const sum = (key) => rows.reduce((s, r) => s + (r[key] || 0), 0);
+  // accuracy from grading counters: rate excludes "no_move" results
+  const correct = counters.get("outcome:correct") || 0;
+  const wrong = counters.get("outcome:wrong") || 0;
   return {
     total_whales: counters.get("total_whales") || 0,
     total_volume: counters.get("total_volume") || 0,
@@ -857,8 +853,8 @@ export async function statsRows(env) {
     neutral: counters.get("signal:neutral") || 0,
     count_24h: sum("c24"),
     count_7d: sum("c7d"),
-    accuracy_total: acc?.accuracy_total || 0,
-    accuracy_correct: acc?.accuracy_correct || 0,
+    accuracy_total: correct + wrong,
+    accuracy_correct: correct,
   };
 }
 
@@ -1261,16 +1257,28 @@ export async function walletProfile(env, address, chain = null) {
 
   const flow = await walletFlowStats(env, addr, chain);
   const counterparties = await walletCounterparties(env, addr, chain);
+  // track record: graded vs correct directional calls involving this wallet
+  let track = null;
+  if (profile) {
+    track = await env.DB.prepare(
+      "SELECT graded, correct FROM wallet_stats WHERE address = ? AND chain = ?"
+    ).bind(profile.address, profile.chain).first().catch(() => null);
+  }
 
-  return { profile, txs: txs?.results || [], flow, counterparties };
+  return { profile, txs: txs?.results || [], flow, counterparties, track };
 }
 
 /** Pure. Build the /wallet/:addr JSON payload. */
-export function renderWalletJSON(profile, txs, flow = null, counterparties = []) {
+export function renderWalletJSON(profile, txs, flow = null, counterparties = [], track = null) {
   if (!profile) {
     return { ok: false, reason: "wallet not in database", address: null, txs: [] };
   }
   const dir = flowDirection(flow);
+  const trackRecord = track && track.graded > 0 ? {
+    graded: track.graded,
+    correct: track.correct,
+    rate: Math.round((track.correct / track.graded) * 100),
+  } : null;
   return {
     ok: true,
     address: profile.address,
@@ -1288,6 +1296,7 @@ export function renderWalletJSON(profile, txs, flow = null, counterparties = [])
       net_exchange_usd: dir?.net_exchange_usd ?? 0,
       direction: dir?.direction ?? "unknown",
     } : null,
+    track_record: trackRecord,
     top_counterparties: (counterparties || []).map((c) => ({
       address: c.counterparty,
       volume_usd: c.volume || 0,
@@ -1313,6 +1322,175 @@ export function renderWalletJSON(profile, txs, flow = null, counterparties = [])
   };
 }
 
+// ─── accountability engine — grade every directional call ─────────────
+//
+// Each bullish/bearish analysis is a verifiable prediction. 24h after
+// detection we compare price_at_detect against the current cached price and
+// write prediction_outcome ('correct' | 'wrong' | 'no_move' | 'no_data'),
+// plus rollups: outcome counters (lifetime + per-confidence-bucket) and
+// per-wallet graded/correct in wallet_stats. The ledger is complete — every
+// directional call gets graded, right or wrong, nothing is cherry-picked.
+
+export function gradeSignal(signal, priceAtDetect, priceNow, thresholdPct = 1.0) {
+  if (signal !== "bullish" && signal !== "bearish") return "no_data";
+  if (priceAtDetect == null || priceNow == null || !(priceAtDetect > 0)) return "no_data";
+  const movePct = ((priceNow - priceAtDetect) / priceAtDetect) * 100;
+  if (Math.abs(movePct) < thresholdPct) return "no_move";
+  if (signal === "bullish") return movePct > 0 ? "correct" : "wrong";
+  return movePct < 0 ? "correct" : "wrong";
+}
+
+/** Confidence bands for calibration stats: high ≥0.75, mid ≥0.60, low below. */
+export function confidenceBucket(conf) {
+  const c = Number(conf) || 0;
+  if (c >= 0.75) return "high";
+  if (c >= 0.6) return "mid";
+  return "low";
+}
+
+/** Price for a symbol from the market cache; stablecoins sit at ~1.0 so
+ *  stablecoin flows grade as no_move — honest, they don't move. */
+function priceForSymbol(market, symbol) {
+  if (!market || !symbol) return null;
+  const sym = String(symbol).toLowerCase();
+  if (market[sym]?.price != null) return market[sym].price;
+  // BTC-pegged aliases fall back to BTC
+  if (sym === "wbtc") return market.btc?.price ?? null;
+  return null;
+}
+
+/**
+ * Grade all directional analyses older than minAgeHours (default 24).
+ * Bounded to 50 rows per run; each row is graded exactly once (the UPDATE
+ * only fires while prediction_outcome IS NULL, and rollups only run when
+ * that UPDATE actually changed a row).
+ */
+export async function gradePending(env, opts = {}) {
+  const now = Date.now();
+  const minAgeHours = Number(opts.minAgeHours ?? 24);
+  const minAgeMs = (Number.isFinite(minAgeHours) && minAgeHours >= 0 ? minAgeHours : 24) * 3600_000;
+  let market = null;
+  try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch { /* null */ }
+  if (!market) return { graded: 0, skipped: "no_market_cache" };
+
+  const { results } = await env.DB.prepare(
+    `SELECT w.id, w.chain, w.symbol, w.usd_value, w.detected_at, w.price_at_detect, w.from_address,
+            a.signal, a.confidence
+     FROM whales w JOIN analysis a ON a.whale_id = w.id
+     WHERE a.signal IN ('bullish','bearish') AND a.prediction_outcome IS NULL
+       AND w.detected_at < ?
+     ORDER BY w.detected_at ASC LIMIT 50`
+  ).bind(now - minAgeMs).all();
+
+  let graded = 0;
+  for (const row of results || []) {
+    const priceNow = priceForSymbol(market, row.symbol);
+    const outcome = gradeSignal(row.signal, row.price_at_detect, priceNow);
+    // CAS-style: only grade if still ungraded (guards against overlapping runs)
+    const upd = await env.DB.prepare(
+      `UPDATE analysis SET prediction_outcome = ?, price_at_eval = ?, evaluated_at = ?
+       WHERE whale_id = ? AND prediction_outcome IS NULL`
+    ).bind(outcome, priceNow, now, row.id).run();
+    if (!upd.meta || upd.meta.changes === 0) continue; // someone else graded it
+
+    const bucket = confidenceBucket(row.confidence);
+    const stmts = [
+      env.DB.prepare("INSERT INTO counters (k, v) VALUES (?, 1) ON CONFLICT(k) DO UPDATE SET v = v + 1")
+        .bind(`outcome:${outcome}`),
+      env.DB.prepare("INSERT INTO counters (k, v) VALUES (?, 1) ON CONFLICT(k) DO UPDATE SET v = v + 1")
+        .bind(`outcome:${bucket}:${outcome}`),
+      env.DB.prepare(
+        `INSERT INTO wallet_stats (address, chain, graded, correct) VALUES (?, ?, 1, ?)
+         ON CONFLICT(address, chain) DO UPDATE SET graded = graded + 1, correct = correct + excluded.correct`
+      ).bind(row.from_address, row.chain, outcome === "correct" ? 1 : 0),
+    ];
+    try { await env.DB.batch(stmts); } catch (e) {
+      console.warn(`[bot] grade rollups failed for whale ${row.id}: ${e.message}`);
+    }
+    graded++;
+  }
+  return { graded, considered: (results || []).length };
+}
+
+// ─── event clustering ─────────────────────────────────────────────────
+
+/** Pure. Build the daily scoreboard text. Plain text, no markdown. */
+export function renderScoreboard({ accuracy, graded24, correct24, wrong24, nomove24, topCalls }) {
+  const lines = [];
+  lines.push("📊 WhaleSignal scoreboard — every call gets graded");
+  lines.push("");
+  lines.push(`Graded last 24h: ${graded24} → ✅ ${correct24} correct · ❌ ${wrong24} wrong · ➖ ${nomove24} no-move`);
+  if (accuracy && accuracy.total > 0) {
+    const rate = Math.round((accuracy.correct / accuracy.total) * 100);
+    lines.push(`Running accuracy: ${rate}% (${accuracy.correct}/${accuracy.total} directional calls)`);
+  } else {
+    lines.push("Running accuracy: building — first grades land 24h after each call.");
+  }
+  if (topCalls && topCalls.length) {
+    lines.push("");
+    lines.push("Biggest closed calls:");
+    for (const c of topCalls) {
+      const emoji = c.signal === "bullish" ? "🟢" : "🔴";
+      const conf = c.confidence != null ? Number(c.confidence).toFixed(2) : "—";
+      let move = "—";
+      if (c.price_at_detect > 0 && c.price_at_eval != null) {
+        const pct = ((c.price_at_eval - c.price_at_detect) / c.price_at_detect) * 100;
+        move = `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`;
+      }
+      const mark = c.prediction_outcome === "correct" ? "✅ CORRECT" : "❌ WRONG";
+      const sym = c.symbol || "?";
+      lines.push(`${emoji} ${fmtUSD(c.usd_value)} ${sym} (${c.signal}, conf ${conf}) → ${sym} ${move} in 24h → ${mark}`);
+    }
+  }
+  lines.push("");
+  lines.push("No cherry-picking: every bullish/bearish call is graded 24h later against real prices, right or wrong. \"No-move\" results count as graded but not toward accuracy.");
+  return lines.join("\n");
+}
+
+/**
+ * Post the daily scoreboard to the public channel. Idempotent per day via a
+ * KV marker (auto-expires). Skips silently when nothing was graded in 24h.
+ */
+export async function postScoreboard(env) {
+  const day = new Date().toISOString().slice(0, 10);
+  const marker = `scoreboard:${day}`;
+  try {
+    if (await env.KV.get(marker)) return { skipped: "already_posted" };
+  } catch { /* KV hiccup — posting twice is better than never */ }
+
+  const since = Date.now() - 86_400_000;
+  const [outcomes24, counters, topCallsQ] = await Promise.all([
+    // one scan of analysis per day is fine (bounded by evaluated_at rows)
+    env.DB.prepare(
+      "SELECT prediction_outcome, COUNT(*) AS n FROM analysis WHERE evaluated_at > ? AND prediction_outcome IS NOT NULL GROUP BY prediction_outcome"
+    ).bind(since).all(),
+    readCounters(env),
+    env.DB.prepare(
+      `SELECT w.usd_value, w.symbol, a.signal, a.confidence, a.prediction_outcome, a.price_at_detect, a.price_at_eval
+       FROM whales w JOIN analysis a ON a.whale_id = w.id
+       WHERE a.evaluated_at > ? AND a.prediction_outcome IN ('correct','wrong')
+       ORDER BY w.usd_value DESC LIMIT 3`
+    ).bind(since).all(),
+  ]);
+  const byOutcome = new Map((outcomes24?.results || []).map((r) => [r.prediction_outcome, r.n]));
+  const graded24 = [...byOutcome.values()].reduce((s, n) => s + n, 0);
+  if (graded24 === 0) return { skipped: "nothing_graded_yet" };
+
+  const correct = counters.get("outcome:correct") || 0;
+  const wrong = counters.get("outcome:wrong") || 0;
+  const payload = {
+    graded24,
+    correct24: byOutcome.get("correct") || 0,
+    wrong24: byOutcome.get("wrong") || 0,
+    nomove24: byOutcome.get("no_move") || 0,
+    accuracy: correct + wrong > 0 ? { total: correct + wrong, correct } : null,
+    topCalls: topCallsQ?.results || [],
+  };
+  const text = renderScoreboard(payload);
+  await tgSendMessage(env.BOT_TOKEN, env.PUBLIC_CHANNEL, text, { parse_mode: "" });
+  try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch { /* best effort */ }
+  return { posted: true, graded24 };
+}
 // ─── event clustering ─────────────────────────────────────────────────
 
 /**
@@ -1455,6 +1633,23 @@ export default {
     } catch (e) {
       console.error("[bot] queue uncaught:", e.message);
       return;
+    }
+  },
+  async scheduled(event, env, ctx) {
+    try {
+      // grade pending directional calls every 15 min (config:eval_min_age_h
+      // overrides the 24h window — ops valve for demos/testing, delete when done)
+      let minAge = 24;
+      try { minAge = Number(await env.KV.get("config:eval_min_age_h") ?? 24); } catch {}
+      const g = await gradePending(env, { minAgeHours: Number.isFinite(minAge) && minAge >= 0 ? minAge : 24 });
+      console.log(`[bot] graded ${g.graded}/${g.considered} predictions (min age ${Number.isFinite(minAge) ? minAge : 24}h)`);
+      // daily scoreboard to the public channel at 18:00 UTC
+      if (event.cron === "0 18 * * *") {
+        const s = await postScoreboard(env);
+        console.log(`[bot] scoreboard: ${JSON.stringify(s)}`);
+      }
+    } catch (e) {
+      console.error("[bot] scheduled failed:", e.message);
     }
   },
 };

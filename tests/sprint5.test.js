@@ -83,3 +83,56 @@ test("autoPauseState: guard pause active until until-passes, then expired", () =
   assert.deepEqual(autoPauseState(null, now), { active: false, expired: false });
   assert.deepEqual(autoPauseState({}, now), { active: false, expired: false });
 });
+
+// ─── accountability engine: grading, buckets, scoreboard ─────────────
+import { gradeSignal, confidenceBucket, renderScoreboard, renderWalletJSON } from "../src/bot.js";
+
+test("gradeSignal: bullish/bearish × move direction matrix", () => {
+  assert.equal(gradeSignal("bullish", 100, 102), "correct");   // +2%
+  assert.equal(gradeSignal("bullish", 100, 98), "wrong");      // −2%
+  assert.equal(gradeSignal("bearish", 100, 98), "correct");
+  assert.equal(gradeSignal("bearish", 100, 102), "wrong");
+  assert.equal(gradeSignal("bullish", 100, 100.5), "no_move"); // <1%
+  assert.equal(gradeSignal("bearish", 100, 100.9), "no_move");
+  assert.equal(gradeSignal("bullish", null, 102), "no_data");
+  assert.equal(gradeSignal("bullish", 100, null), "no_data");
+  assert.equal(gradeSignal("bullish", 0, 102), "no_data");
+  assert.equal(gradeSignal("neutral", 100, 102), "no_data");
+  // threshold is configurable
+  assert.equal(gradeSignal("bullish", 100, 100.5, 0.3), "correct");
+});
+
+test("confidenceBucket: high ≥0.75, mid ≥0.60, low below", () => {
+  assert.equal(confidenceBucket(0.82), "high");
+  assert.equal(confidenceBucket(0.75), "high");
+  assert.equal(confidenceBucket(0.7), "mid");
+  assert.equal(confidenceBucket(0.6), "mid");
+  assert.equal(confidenceBucket(0.55), "low");
+  assert.equal(confidenceBucket(null), "low");
+});
+
+test("renderScoreboard: rates, calls, and the honesty footer", () => {
+  const text = renderScoreboard({
+    graded24: 14, correct24: 9, wrong24: 3, nomove24: 2,
+    accuracy: { total: 48, correct: 31 },
+    topCalls: [{
+      usd_value: 425_289_098, symbol: "BTC", signal: "bearish", confidence: 0.6,
+      prediction_outcome: "correct", price_at_detect: 75_000, price_at_eval: 73_650,
+    }],
+  });
+  assert.match(text, /Graded last 24h: 14/);
+  assert.match(text, /Running accuracy: 65%/);
+  assert.match(text, /✅ CORRECT/);
+  assert.match(text, /-1.8% in 24h/);
+  assert.match(text, /No cherry-picking/);
+  const empty = renderScoreboard({ graded24: 0, correct24: 0, wrong24: 0, nomove24: 0, accuracy: null, topCalls: [] });
+  assert.match(empty, /first grades land/);
+});
+
+test("renderWalletJSON: track_record appears once graded, absent at 0", () => {
+  const profile = { address: "0xw", chain: "eth", label: "W", type: "whale", reputation: null, tx_count: 4, total_volume: 1, first_seen: 1, last_seen: 2 };
+  const withTrack = renderWalletJSON(profile, [], null, [], { graded: 8, correct: 5 });
+  assert.deepEqual(withTrack.track_record, { graded: 8, correct: 5, rate: 63 });
+  const ungraded = renderWalletJSON(profile, [], null, [], { graded: 0, correct: 0 });
+  assert.equal(ungraded.track_record, null);
+});
