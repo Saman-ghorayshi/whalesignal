@@ -115,7 +115,7 @@ test("templateAnalysis: exchange_inflow during fear → bearish", () => {
   const result = templateAnalysis(w, MARKET_FEAR, []);
   assert.ok(result, "should return a template result");
   assert.equal(result.signal, "bearish");
-  assert.ok(result.confidence >= 0.70, `confidence should be >= 0.7, got ${result.confidence}`);
+  assert.equal(result.confidence, 0.65, "confluence: base 0.60 + F&G agrees 0.05");
   assert.match(result.headline, /deposited to exchange/i);
   assert.match(result.related_factor, /exchange inflow/i);
 });
@@ -170,7 +170,7 @@ test("templateAnalysis: conflicting context dampens confidence without flipping 
   ];
   const r = templateAnalysis(w, { fear_greed: 85, fear_greed_label: "Greed" }, accHistory);
   assert.equal(r.signal, "bearish");
-  assert.equal(r.confidence, 0.55, "greed + accumulation should dampen to 0.55");
+  assert.equal(r.confidence, 0.50, "confluence: F&G and history both conflict, -0.05 each");
 
   // outflow (accumulation) while market is fearful and wallet is a distributor
   const w2 = { tx_type: "exchange_outflow", usd_value: 3_000_000, symbol: "ETH" };
@@ -179,7 +179,7 @@ test("templateAnalysis: conflicting context dampens confidence without flipping 
   ];
   const r2 = templateAnalysis(w2, { fear_greed: 15, fear_greed_label: "Fear" }, distHistory);
   assert.equal(r2.signal, "bullish");
-  assert.equal(r2.confidence, 0.55, "fear + distribution should dampen to 0.55");
+  assert.equal(r2.confidence, 0.50, "confluence: F&G and history both conflict, -0.05 each");
 });
 
 test("templateAnalysis: inflow with prior distribution history → bearish even in neutral market", () => {

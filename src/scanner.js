@@ -871,6 +871,24 @@ export async function refreshMarketCache(env) {
     throw new Error("no price source available; keeping previous market_cache");
   }
   await env.KV.put("market_cache", JSON.stringify(cache));
+
+  // hourly price snapshots for the TA regime engine (INSERT OR IGNORE dedupes
+  // by hour bucket — 2 writes/hour whatever the refresh cadence)
+  try {
+    const hourBucket = Math.floor(Date.now() / 3600000) * 3600000;
+    const rows = [];
+    for (const coin of ["btc", "eth"]) {
+      const p = cache[coin]?.price;
+      if (p != null) {
+        rows.push(env.DB.prepare(
+          "INSERT OR IGNORE INTO price_history (coin, hour_bucket, price) VALUES (?, ?, ?)"
+        ).bind(coin, hourBucket, p));
+      }
+    }
+    if (rows.length) await env.DB.batch(rows);
+  } catch (e) {
+    console.warn("price_history write failed (TA regimes will lag): " + e.message);
+  }
   return cache;
 }
 

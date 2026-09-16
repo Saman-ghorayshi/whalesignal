@@ -20,6 +20,84 @@
 // failures we'll add gpt-3.5-turbo as a fallback in Phase 3.
 
 import { fetchJSON, fmtUSD, shortAddr } from "./worker-utils.js";
+import { taSnapshot, regimeAlignment } from "./ta.js";
+
+// ─── confluence model (docs/SIGNAL_MODEL.md) ──────────────────────────
+
+/**
+ * Chart + news context for the confluence model. Two small D1 reads.
+ * All optional — missing context just means fewer features in the composite.
+ */
+export async function getMarketContext(env, chain, symbol) {
+  const coin = String(chain || "").toLowerCase() === "eth" ? "eth" : "btc";
+  let ta = null;
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT ts, price FROM price_history WHERE coin = ? ORDER BY ts DESC LIMIT 400"
+    ).bind(coin).all();
+    if (results && results.length >= 51) {
+      ta = taSnapshot(results.slice().reverse());
+    }
+  } catch { /* no price history yet */ }
+  let newsSent = null;
+  try {
+    const sym = String(symbol || "").toUpperCase();
+    if (sym) {
+      const row = await env.DB.prepare(
+        "SELECT SUM(sentiment) AS s, COUNT(*) AS n FROM news WHERE first_seen > ? AND symbols LIKE ?"
+      ).bind(Date.now() - 6 * 3600_000, "%" + sym + "%").first();
+      if (row && row.n > 0 && row.s != null) newsSent = { sum: row.s, n: row.n };
+    }
+  } catch { /* no news yet */ }
+  return { ta, newsSent };
+}
+
+/**
+ * The WhaleSignal confluence model (weights documented in
+ * docs/SIGNAL_MODEL.md). Additive, explainable adjustments over a 0.60 base
+ * — one term per research-backed signal category:
+ *   on-chain flow      (primary evidence, the direction itself)
+ *   on-chain behavior  (wallet history supporting/conflicting)
+ *   on-chain sizing    (transfer vs this wallet's own average)
+ *   technical regime   (tape agrees/conflicts — RSI/EMA from src/ta.js)
+ *   sentiment          (F&G regime + asset news sentiment)
+ * Hard bounds [0.50, 0.85]; huge unlabeled flows cap at 0.55 (treasury-
+ * migration risk). Pure. Returns { confidence, features[] } so every alert
+ * can show its own reasoning.
+ */
+export function flowConfidence({
+  bullish, fgRegime = null, behavior = null, sizeRatio = null,
+  taRegime = null, newsSent = null, hugeUnlabeled = false,
+}) {
+  const adj = [];
+  let c = 0.60;
+
+  if (fgRegime === (bullish ? "greed" : "fear")) { c += 0.05; adj.push("F&G agrees +0.05"); }
+  else if (fgRegime === (bullish ? "fear" : "greed")) { c -= 0.05; adj.push("F&G conflicts −0.05"); }
+
+  if (bullish && behavior === "accumulation") { c += 0.05; adj.push("wallet history agrees +0.05"); }
+  else if (!bullish && behavior === "distribution") { c += 0.05; adj.push("wallet history agrees +0.05"); }
+  else if ((bullish && behavior === "distribution") || (!bullish && behavior === "accumulation")) {
+    c -= 0.05; adj.push("wallet history conflicts −0.05");
+  }
+
+  const align = regimeAlignment(taRegime, bullish);
+  if (align === 1) { c += 0.08; adj.push("tape agrees +0.08"); }
+  else if (align === -1) { c -= 0.08; adj.push("tape conflicts −0.08"); }
+
+  if (sizeRatio != null && sizeRatio >= 5) { c += 0.05; adj.push(`size ${sizeRatio.toFixed(1)}× usual +0.05`); }
+  else if (sizeRatio != null && sizeRatio <= 0.25) { c -= 0.05; adj.push(`size ${sizeRatio.toFixed(1)}× usual −0.05`); }
+
+  if (newsSent && newsSent.n >= 2) {
+    const s = Math.sign(newsSent.sum);
+    if ((bullish && s > 0) || (!bullish && s < 0)) { c += 0.05; adj.push("news agrees +0.05"); }
+    else if ((bullish && s < 0) || (!bullish && s > 0)) { c -= 0.05; adj.push("news conflicts −0.05"); }
+  }
+
+  c = Math.max(0.50, Math.min(0.85, c));
+  if (hugeUnlabeled) c = Math.min(c, 0.55);
+  return { confidence: Math.round(c * 100) / 100, features: adj };
+}
 
 // ─── prompt building (pure, testable) ─────────────────────────────────
 
@@ -86,7 +164,7 @@ export function sizeVsHistory(usd, history) {
  * Flow direction is the primary evidence; market regime, wallet history
  * and size-vs-history modulate confidence (0.5-0.85).
  */
-export function templateAnalysis(whale, market, history) {
+export function templateAnalysis(whale, market, history, ctx = null) {
   if (!whale) return null;
   const regime = marketRegime(market);
   const behavior = walletBehavior(history);
@@ -106,40 +184,26 @@ export function templateAnalysis(whale, market, history) {
     };
   }
 
-  // Directional exchange flows. Native assets and stablecoins read OPPOSITE:
+  // Directional exchange flows — scored by the confluence model
+  // (flowConfidence below; docs/SIGNAL_MODEL.md). Native assets and
+  // stablecoins read OPPOSITE:
   //   BTC/ETH  inflow → bearish (sell-side supply) · outflow → bullish (accumulation)
   //   USDT/DC  inflow → bullish (dry powder staging) · outflow → bearish (powder leaving)
-  // Context shifts confidence ±; conflicting context dampens, never flips.
   if (whale.tx_type === "exchange_inflow" || whale.tx_type === "exchange_outflow") {
     const isIn = whale.tx_type === "exchange_inflow";
     const bullish = isStable ? isIn : !isIn;
-    const fear = regime === "fear";
-    const greed = regime === "greed";
-    const confirming = bullish ? greed : fear;
-    const conflicting = bullish ? (fear && behavior === "distribution") : (greed && behavior === "accumulation");
-    const supportingHistory = bullish ? behavior === "accumulation" : behavior === "distribution";
-
-    let confidence = confirming && supportingHistory ? 0.82
-      : confirming ? 0.75
-      : supportingHistory ? 0.65
-      : conflicting ? 0.55
-      : 0.60;
-
-    // size vs this wallet's own history: unusually large = stronger signal
     const sizeRatio = sizeVsHistory(usd, history);
-    if (sizeRatio != null && sizeRatio >= 5) confidence = Math.min(0.85, confidence + 0.05);
-    else if (sizeRatio != null && sizeRatio <= 0.25) confidence = Math.max(0.50, confidence - 0.05);
-    confidence = Math.round(confidence * 100) / 100;
-
-    // huge flows from unlabeled counterparties are often treasury migrations
     const hugeUnlabeled = usd >= 100_000_000;
-    if (hugeUnlabeled) confidence = Math.min(confidence, 0.55);
+    const { confidence, features } = flowConfidence({
+      bullish,
+      fgRegime: regime,
+      behavior,
+      sizeRatio,
+      taRegime: ctx?.ta?.regime ?? null,
+      newsSent: ctx?.newsSent ?? null,
+      hugeUnlabeled,
+    });
 
-    const ctx = confirming && supportingHistory ? (bullish ? "during market greed with prior accumulation history" : "during market fear with prior distribution history")
-      : confirming ? (bullish ? "during market greed" : "during market fear")
-      : supportingHistory ? (bullish ? "with prior accumulation history" : "with prior distribution history")
-      : conflicting ? "despite conflicting market context"
-      : "";
     const stableNote = isStable
       ? (isIn ? " Stablecoins arriving on exchanges are typically deployable buying power (dry powder), the inverse of native-asset deposits. Caveat: stables exiting DeFi can signal risk-off instead of fresh capital."
              : " Stablecoins leaving exchanges drain deployable buying power — the inverse of native-asset withdrawals.")
@@ -147,15 +211,18 @@ export function templateAnalysis(whale, market, history) {
               : "Exchange outflows often signal self-custody and accumulation, especially when the wallet has shown this pattern before.");
     const caveat = hugeUnlabeled ? " Caveat: very large transfers with unlabeled counterparties are frequently exchange treasury migrations, not genuine directional flow." : "";
     const sizeNote = sizeRatio != null && sizeRatio >= 5 ? ` Transfer is ${sizeRatio.toFixed(1)}× this wallet's recent average — unusually large for it.` : "";
+    const tapeNote = ctx?.ta?.regime && ctx.ta.regime !== "unknown"
+      ? ` Tape: ${ctx.ta.regime} (RSI14 ${ctx.ta.rsi14}).` : "";
+    const confluence = features.length ? ` Confluence: ${features.join("; ")}.` : "";
 
     return {
       headline: bullish
         ? `${fmtUSD(usd)} ${sym} ${isIn ? "staged on exchange" : "withdrawn from exchange"}`
         : `${fmtUSD(usd)} ${sym} ${isIn ? "deposited to exchange" : "withdrawn from exchange"}`,
-      interpretation: `Whale ${isIn ? "deposited" : "withdrew"} ${fmtUSD(usd)} ${sym} ${isIn ? "to" : "from"} an exchange.${fear ? " Market is in fear territory (F&G " + market?.fear_greed + ")." : greed ? " Market sentiment is greedy (F&G " + market?.fear_greed + ")." : ""}${stableNote}${sizeNote}${caveat}`,
+      interpretation: `Whale ${isIn ? "deposited" : "withdrew"} ${fmtUSD(usd)} ${sym} ${isIn ? "to" : "from"} an exchange.${stableNote}${sizeNote}${tapeNote}${caveat}${confluence}`,
       signal: bullish ? "bullish" : "bearish",
       confidence,
-      related_factor: `${isStable ? "Stablecoin" : sym} exchange ${isIn ? "inflow" : "outflow"}${ctx ? " " + ctx : ""}${hugeUnlabeled ? " (unlabeled counterparty)" : ""}`,
+      related_factor: `${isStable ? "Stablecoin" : sym} exchange ${isIn ? "inflow" : "outflow"} — ${features.length ? features[0] : "flow direction"}`,
     };
   }
 
@@ -288,7 +355,7 @@ async function applyWalletPattern(env, whale, history) {
  * @param {Array<{chain,tx_hash,from_address,to_address,amount,symbol,usd_value,tx_type,detected_at}>} history - last 5 txs for this wallet
  * @param {Array<{title}>|null} news — top headlines
  */
-export function buildPrompt(whale, market, history, news, pattern) {
+export function buildPrompt(whale, market, history, news, pattern, ctx = null) {
   const m = market || {};
   const usd = whale.usd_value ?? 0;
   const fgValue = m.fear_greed != null ? m.fear_greed : "unknown";
@@ -342,6 +409,8 @@ STRUCTURED FACTS:
 - Exchange involvement: ${whale.tx_type === "wallet_to_wallet" ? "no" : "yes"}
 - Wallet behavioral tag: ${pattern || "unknown"}
 - Prior similar events in wallet history: ${history?.length || 0} transactions
+- Technical regime: ${ctx?.ta?.regime ?? 'unknown'}${ctx?.ta?.rsi14 != null ? ' (RSI14 ' + ctx.ta.rsi14 + ', EMA20 ' + ctx.ta.ema20 + ' vs EMA50 ' + ctx.ta.ema50 + ')' : ''}
+- Asset news sentiment (6h): ${ctx?.newsSent ? (ctx.newsSent.sum > 0 ? '+' : '') + ctx.newsSent.sum + ' across ' + ctx.newsSent.n + ' headlines' : 'no data'}
 
 RECENT HEADLINES:
 ${newsText}
@@ -644,7 +713,8 @@ export async function analyzeOne(env, msg) {
 
   // Sprint 1: try template analysis first (no Gemini call needed for obvious cases).
   // Saves 80% of AI calls. Falls through to Gemini for ambiguous events.
-  const templateResult = templateAnalysis(whale, market, history);
+  const ctx = await getMarketContext(env, whale.chain, whale.symbol);
+  const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);
     await bumpSignalRollups(env, whale, templateResult.signal);
@@ -653,7 +723,7 @@ export async function analyzeOne(env, msg) {
   }
 
   // Not obvious enough for a template → call Gemini.
-  const prompt = buildPrompt(whale, market, history, news, pattern);
+  const prompt = buildPrompt(whale, market, history, news, pattern, ctx);
 
   let parsed;
   try {

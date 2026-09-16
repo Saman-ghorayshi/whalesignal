@@ -19,6 +19,7 @@
 //   - accuracy on <30 graded calls is noise; the report says so
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { taSnapshot } from "../src/ta.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -108,6 +109,11 @@ export function summarize(graded) {
     const rows = graded.filter((r) => r.signal === s);
     bySignal[s] = { ...acc(rows), avgMovePct: avg(rows.map((r) => r.movePct).filter((m) => m != null)) };
   }
+  const byRegime = {};
+  for (const r of graded) {
+    byRegime[r.regime] = byRegime[r.regime] || [];
+    byRegime[r.regime].push(r);
+  }
   const bySymbol = {};
   for (const r of graded) {
     bySymbol[r.symbol] = bySymbol[r.symbol] || [];
@@ -119,6 +125,7 @@ export function summarize(graded) {
     by_confidence: buckets,
     by_signal: bySignal,
     by_symbol: Object.fromEntries(Object.entries(bySymbol).map(([s, rows]) => [s, acc(rows)])),
+    by_regime: Object.fromEntries(Object.entries(byRegime).map(([s, rows]) => [s, acc(rows)])),
     note: acc(graded).directional < 30
       ? "fewer than 30 graded directional calls — this is noise, not an edge"
       : null,
@@ -209,6 +216,10 @@ function renderReport(summary) {
   for (const [s, v] of Object.entries(summary.by_signal)) {
     L.push(`  ${s.padEnd(8)} directional ${String(v.directional).padStart(4)}  rate ${v.rate == null ? "—" : v.rate + "%"}  avg 24h move after call: ${v.avgMovePct == null ? "—" : v.avgMovePct + "%"}${s === "bullish" ? " (positive is good)" : " (negative is good)"}`);
   }
+  L.push("by market regime at call time:");
+  for (const [s, v] of Object.entries(summary.by_regime || {})) {
+    L.push("  " + s.padEnd(12) + " directional " + String(v.directional).padStart(4) + "  rate " + (v.rate == null ? "—" : v.rate + "%"));
+  }
   L.push("by symbol:");
   for (const [s, v] of Object.entries(summary.by_symbol)) {
     L.push(`  ${s.padEnd(5)} directional ${String(v.directional).padStart(4)}  rate ${v.rate == null ? "—" : v.rate + "%"}`);
@@ -227,9 +238,13 @@ if (import.meta.url === `file://${process.argv[1]}` || args.includes("--run")) {
   const prices = await loadPrices({ refresh });
   console.error("[backtest] fetching directional events from the public API…");
   const events = await fetchDirectionalEvents(api);
+  const seriesFor = (e) => (String(e.chain || '').toLowerCase() === 'eth' ? prices.eth : prices.btc);
   const graded = events.map((e) => {
     const g = gradeEvent(e, prices);
-    return { signal: e.signal, symbol: e.symbol, confidence: e.confidence, detected_at: e.detected_at, ...g, bucket: confidenceBucket(e.confidence) };
+    const s = seriesFor(e);
+    const upto = s ? s.filter((p) => p.ts <= e.detected_at).slice(-400) : [];
+    const regime = upto.length >= 51 ? taSnapshot(upto).regime : 'unknown';
+    return { signal: e.signal, symbol: e.symbol, confidence: e.confidence, detected_at: e.detected_at, regime, ...g, bucket: confidenceBucket(e.confidence) };
   });
   const summary0 = summarize(graded);
   const baseline = baselineStats(prices.btc);

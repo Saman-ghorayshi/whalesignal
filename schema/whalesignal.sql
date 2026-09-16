@@ -247,3 +247,15 @@ CREATE TABLE IF NOT EXISTS news (
   first_seen INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_news_seen ON news(first_seen);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5d — hourly price snapshots for chart-reading (TA regime). The
+-- scanner upserts one row per coin per hour from the market cache refresh;
+-- the analyst computes RSI/EMA regimes from these (48 writes/day, deduped).
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS price_history (
+  coin        TEXT    NOT NULL,
+  hour_bucket INTEGER NOT NULL,
+  price       REAL    NOT NULL,
+  PRIMARY KEY (coin, hour_bucket)
+);

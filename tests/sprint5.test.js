@@ -220,7 +220,7 @@ test("templateAnalysis: huge unlabeled-source flows get capped confidence + cave
   assert.equal(r2.confidence, 0.55);
   // ordinary $10M inflow during fear keeps its 0.75
   const r3 = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 10_000_000, symbol: "BTC" }, { fear_greed: 20, fear_greed_label: "Fear" }, []);
-  assert.equal(r3.confidence, 0.75);
+  assert.equal(r3.confidence, 0.65, "confluence: base 0.60 + F&G agrees 0.05");
 });
 
 // ─── backtester engine + news storage helpers ────────────────────────
@@ -304,7 +304,7 @@ test("size-vs-history modulation: unusual size moves confidence", () => {
   assert.equal(unusual.confidence, 0.70, "0.65 (distribution history) + 0.05 for 15× average size");
   const usual = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 15_000_000, symbol: "BTC" }, null, []);
   assert.equal(usual.confidence, 0.60);
-  assert.match(unusual.related_factor, /distribution history/);
+  assert.match(unusual.related_factor, /wallet history agrees/);
   assert.match(unusual.interpretation, /15.0×/);
 });
 

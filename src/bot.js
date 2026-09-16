@@ -13,6 +13,7 @@
 //   PUBLIC_CHANNEL — string, e.g. "@whalesignalnews"
 
 import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
+import { taSnapshot } from "./ta.js";
 
 /** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
@@ -502,6 +503,40 @@ export async function fetchHandler(request, env, ctx) {
           "Content-Type": "application/x-ndjson",
           "Access-Control-Allow-Origin": "*",
           "Cache-Control": "no-cache",
+        },
+      });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /market — chart-reading snapshot (TA regimes) ─────────
+  // RSI/EMA/regime per coin from the hourly price snapshots, plus F&G.
+  if (request.method === "GET" && path === "/market") {
+    try {
+      const payload = await cachedPayload(env, "market:v1", async () => {
+        const out = { ok: true, generated_at: Date.now(), btc: null, eth: null, fear_greed: null, fear_greed_label: null };
+        for (const coin of ["btc", "eth"]) {
+          try {
+            const { results } = await env.DB.prepare(
+              "SELECT ts, price FROM price_history WHERE coin = ? ORDER BY ts DESC LIMIT 400"
+            ).bind(coin).all();
+            if (results && results.length >= 51) out[coin] = taSnapshot(results.slice().reverse());
+          } catch { /* table empty */ }
+        }
+        try {
+          const m = JSON.parse(await env.KV.get("market_cache") || "null");
+          out.fear_greed = m?.fear_greed ?? null;
+          out.fear_greed_label = m?.fear_greed_label ?? null;
+        } catch {}
+        return out;
+      });
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=60",
         },
       });
     } catch (e) {
