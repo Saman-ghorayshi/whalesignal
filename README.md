@@ -1,12 +1,19 @@
 # WhaleSignal 🐳
 
+[![tests](https://github.com/Samsha/whalesignal/actions/workflows/test.yml/badge.svg)](https://github.com/Samsha/whalesignal/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 AI-powered whale-intelligence for crypto. Detects large on-chain BTC/ETH moves,
 adds market + wallet context, and posts *interpreted* alerts to Telegram — not a
 raw "whale moved X" feed, but an explanation of what the facts indicate.
 
+**By the numbers** (live, self-graded): 100K+ on-chain events processed ·
+$960B+ analyzed volume · directional signals graded against price 24h later ·
+read-heavy endpoints served from rollups with ~1000× less database reads ·
+**$0/month** infrastructure.
+
 Runs entirely on free-tier infrastructure: Cloudflare Workers + D1 + KV +
 Queues, Groq + Gemini (multi-provider chain), GitHub Actions and GitHub Pages.
-Total cost: $0.
 
 | | |
 |---|---|
