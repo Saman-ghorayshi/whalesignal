@@ -67,9 +67,11 @@ we build should feed one of those two.
 ## Roadmap
 
 ### Phase A — make the track record real (next 2–4 weeks)
-- [ ] After UTC reset: verify netflow/graph live, watch first directional
-      alerts hit the channel, confirm `evaluate.yml` grades them.
-- [ ] Accuracy-by-confidence page: bucket graded predictions by confidence
+- [x] Directional alerts live (first: $425M BTC deposit, bearish).
+- [x] Grading engine: worker cron grades every directional call 24h later
+      (outcome + per-bucket + per-wallet counters) and posts a daily channel
+      scoreboard at 18:00 UTC. Dashboard accuracy-by-confidence page still open:
+      bucket graded predictions by confidence
       (0.55–0.6 / 0.6–0.75 / 0.75+) and show hit-rate per bucket on stats.html.
 - [ ] Label expansion #2: mined cluster labels from our own data —
       destinations receiving ≥5 distinct whale senders in 7d are sink

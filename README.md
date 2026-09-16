@@ -73,9 +73,11 @@ retries independently.
    Only genuinely ambiguous events reach the model (~80% savings).
 3. **Evidence-only prompts** — when Gemini runs, it receives structured facts
    and explicit anti-speculation rules. No "this could potentially lead to…"
-4. **Accountability** — BTC/ETH price is snapshotted at detection time; a daily
-   GitHub Action grades every prediction 24h later. Accuracy stats are computed,
-   not claimed.
+4. **Accountability** — BTC/ETH price is snapshotted at detection time; a
+   worker grades every directional call against the real price 24h later
+   (`correct / wrong / no_move`), tracks accuracy per confidence bucket and
+   per wallet, and posts a daily scoreboard to the channel. Accuracy stats
+   are computed, not claimed — and nothing is cherry-picked.
 5. **Event clustering** — five whales depositing to Binance within 15 minutes
    is one story, not five alerts.
 
@@ -203,6 +205,10 @@ dedup, scanner failover). Sprint 4 (full roadmap: [PLAN.md](PLAN.md)):
 - **BTC extraction rewrite** — one whale = one large single transfer
   (largest non-change output); sweeps/consolidations no longer fabricate
   $100M "whale moves"; exchange-internal routing under $5M is never stored
+- **Accountability engine** — every bullish/bearish call is graded 24h later
+  by a worker cron; outcomes roll up into counters (per confidence bucket)
+  and per-wallet track records (`wallet_stats`), and a daily scoreboard
+  posts to the channel. Wallet profiles expose their own hit rate.
 - **Free-tier survival** — `stats_cache` collapses the scan-heavy endpoints
   to 1 row read per request, per-wallet indexes kill the biggest hidden
   full-scan, and the scanner auto-pauses 30 min when the D1 read cap trips

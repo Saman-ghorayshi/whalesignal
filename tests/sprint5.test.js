@@ -136,3 +136,29 @@ test("renderWalletJSON: track_record appears once graded, absent at 0", () => {
   const ungraded = renderWalletJSON(profile, [], null, [], { graded: 0, correct: 0 });
   assert.equal(ungraded.track_record, null);
 });
+
+// ─── market cache fallback (CoinGecko → Coinbase, never clobber good cache) ──
+import { buildMarketCache } from "../src/scanner.js";
+
+test("buildMarketCache: coingecko data wins, coinbase fills gaps, nulls never clobber", () => {
+  const cg = { bitcoin: { usd: 60_000, usd_24h_change: -2.1 }, ethereum: { usd: 3_000, usd_24h_change: 1.0 } };
+  const full = buildMarketCache({ cg, btcSpot: 1, ethSpot: 2, fg: { data: [{ value: "69", value_classification: "Greed" }] } });
+  assert.equal(full.btc.price, 60_000);
+  assert.equal(full.eth.price, 3_000);
+  assert.equal(full.wbtc.price, 60_000);
+  assert.equal(full.fear_greed, 69);
+
+  // coingecko 429 → coinbase spot fills in
+  const fallback = buildMarketCache({ cg: null, btcSpot: 61_000, ethSpot: 3_100 });
+  assert.equal(fallback.btc.price, 61_000);
+  assert.equal(fallback.eth.price, 3_100);
+  assert.equal(fallback.btc.change_24h, null, "no 24h change from spot fallback");
+
+  // both sources dead → null (caller must NOT overwrite the KV cache)
+  assert.equal(buildMarketCache({ cg: null, btcSpot: null, ethSpot: null }), null);
+
+  // partial: only BTC available still yields a usable cache
+  const partial = buildMarketCache({ cg: null, btcSpot: 61_000, ethSpot: null });
+  assert.equal(partial.btc.price, 61_000);
+  assert.equal(partial.eth.price, null);
+});

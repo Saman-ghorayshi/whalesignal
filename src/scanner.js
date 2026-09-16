@@ -809,34 +809,67 @@ export async function fetchERC20Logs(blockNum, env) {
   return out;
 }
 
-/** Refresh the market_cache key in KV from CoinGecko + alternative.me. */
-export async function refreshMarketCache(env) {
-  const cgid = Math.floor(Date.now() / 1000);
-  const cgUrl =
-    "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
-  const cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
-
-  const fg = await fetchJSON("https://api.alternative.me/fng/?limit=1", { timeoutMs: 4000 });
-
-  const cache = {
-    // coingecko simple/price responds as { bitcoin: {usd, usd_24h_change}, ethereum: {...} }
-    btc: {
-      price: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd) ?? null,
-      change_24h: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd_24h_change) ?? null,
-    },
-    eth: {
-      price: (cg && (cg.ethereum || cg.prices?.ethereum)?.usd) ?? null,
-      change_24h: (cg && (cg.ethereum || cg.prices?.ethereum)?.usd_24h_change) ?? null,
-    },
+/**
+ * Pure: assemble the market_cache object from whatever sources answered.
+ * Returns null when NO price source produced a BTC/ETH price — the caller
+ * then skips the KV write so a good stale cache is never clobbered with
+ * nulls (null prices → usdValue NaN → whale detection silently stops).
+ */
+export function buildMarketCache({ cg = null, btcSpot = null, ethSpot = null, fg = null } = {}) {
+  const cgBtc = (cg && ((cg.bitcoin || cg.prices?.bitcoin)?.usd)) ?? null;
+  const cgEth = (cg && ((cg.ethereum || cg.prices?.ethereum)?.usd)) ?? null;
+  const btc = cgBtc ?? btcSpot;
+  const eth = cgEth ?? ethSpot;
+  if (btc == null && eth == null) return null;
+  return {
+    btc: { price: btc, change_24h: (cg?.bitcoin || cg?.prices?.bitcoin)?.usd_24h_change ?? null },
+    eth: { price: eth, change_24h: (cg?.ethereum || cg?.prices?.ethereum)?.usd_24h_change ?? null },
     // stablecoins/WBTC aliases so usdValue() works for ERC20 candidates
     usdt: { price: 1, change_24h: 0 },
     usdc: { price: 1, change_24h: 0 },
-    wbtc: { price: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd) ?? null, change_24h: null },
+    wbtc: { price: btc, change_24h: null },
     dai: { price: 1, change_24h: 0 },
     fear_greed: fg?.data?.[0]?.value ? parseInt(fg.data[0].value, 10) : null,
     fear_greed_label: fg?.data?.[0]?.value_classification ?? null,
     updated_at: Date.now(), // ms
   };
+}
+
+/** Coinbase spot price — keyless fallback when CoinGecko rate-limits us. */
+async function coinbaseSpot(pair) {
+  try {
+    const j = await fetchJSON(`https://api.coinbase.com/v2/prices/${pair}/spot`, { timeoutMs: 6000 });
+    const n = parseFloat(j?.data?.amount);
+    return Number.isFinite(n) ? n : null;
+  } catch { return null; }
+}
+
+/** Refresh the market_cache key in KV. CoinGecko primary, Coinbase fallback. */
+export async function refreshMarketCache(env) {
+  const cgid = Math.floor(Date.now() / 1000);
+  const cgUrl =
+    "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
+  let cg = null;
+  try {
+    cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
+  } catch (e) {
+    console.warn("coingecko price fetch failed, trying coinbase:", e.message);
+  }
+  const btcSpot = cg?.bitcoin?.usd == null ? await coinbaseSpot("BTC-USD") : null;
+  const ethSpot = cg?.ethereum?.usd == null ? await coinbaseSpot("ETH-USD") : null;
+
+  let fg = null;
+  try {
+    fg = await fetchJSON("https://api.alternative.me/fng/?limit=1", { timeoutMs: 4000 });
+  } catch (e) {
+    console.warn("fear&greed fetch failed (kept from previous cache):", e.message);
+  }
+
+  const cache = buildMarketCache({ cg, btcSpot, ethSpot, fg });
+  if (!cache) {
+    // both sources failed — keep the previous cache rather than writing nulls
+    throw new Error("no price source available; keeping previous market_cache");
+  }
   await env.KV.put("market_cache", JSON.stringify(cache));
   return cache;
 }
