@@ -21,7 +21,7 @@
 //   MIN_USD  — string, overrides default 500000
 //   MAX_BLOCKS — string, overrides default 10
 
-import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor, ZERO_ADDRESS, isBurnSink } from "./worker-utils.js";
+import { fetchJSON, fetchText, classifyTx, usdValue, buildWalletMap, labelFor, ZERO_ADDRESS, isBurnSink } from "./worker-utils.js";
 
 // consts (also overrideable via env)
 const DEFAULT_MIN_USD = 500_000;
@@ -901,25 +901,73 @@ export function filterNewsKeywords(items) {
 }
 
 /**
- * Refresh the news_cache key in KV from CryptoPanic. Stores
- * {headlines:Array<{title}>, updated_at:ms}. On any fetch/parse error, writes
- * an empty-headlines object so the analyst prompt slot prints its existing
- * "(no recent headlines cached)" fallback — no special-case code path.
- * Mirror of refreshMarketCache (caller try/catch, not internal).
+ * Pure: pull <item>/<entry> titles out of an RSS/Atom feed body. Handles
+ * CDATA and the common HTML entities. Keyless and free — this is the
+ * fallback (and default) news source since CryptoPanic now 403s without
+ * a paid-ish token.
+ */
+export function extractRssTitles(xml) {
+  const titles = [];
+  const itemRe = /<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi;
+  const titleRe = /<title[^>]*>([\s\S]*?)<\/title>/i;
+  let m;
+  while ((m = itemRe.exec(String(xml || "")))) {
+    const t = titleRe.exec(m[0]);
+    if (!t) continue;
+    let s = t[1].replace(/<!\[CDATA\[|\]\]>/g, "").trim()
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'");
+    if (s) titles.push(s);
+  }
+  return titles;
+}
+
+// Keyless public RSS feeds — one fetch each per refresh, well within the
+// 50-subrequest-per-invocation budget.
+const NEWS_RSS_FEEDS = [
+  "https://www.coindesk.com/arc/outboundfeeds/rss/",
+  "https://cointelegraph.com/rss",
+];
+
+/**
+ * Refresh the news_cache key in KV. Order: CryptoPanic (only if a token is
+ * configured — it 403s without one), then keyless RSS feeds. Stores
+ * {headlines:Array<{title}>, updated_at:ms, source} so the analyst and the
+ * alert formatter can show WHY a whale might have moved.
  */
 export async function refreshNewsCache(env) {
-  // token from env secret first, then KV `key:news` (admin /setkey writable)
   let token = env.NEWS_TOKEN;
   if (!token) {
     try { token = await env.KV.get("key:news"); } catch { /* treat as missing */ }
   }
-  const auth = token ? `&auth_token=${token}` : "";
-  // filter=hot returns the most-tweeted headlines — broader signal than
-  // kind=news alone, and free-tier-permitted.
-  const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot${auth}`;
-  const j = await fetchJSON(url, { timeoutMs: 6000 });
-  const headlines = filterNewsKeywords(j?.results ?? []);
-  const cache = { headlines, updated_at: Date.now() };
+  let headlines = [];
+  let source = "none";
+
+  if (token) {
+    try {
+      const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot&auth_token=${token}`;
+      const j = await fetchJSON(url, { timeoutMs: 6000 });
+      headlines = filterNewsKeywords(j?.results ?? []);
+      if (headlines.length) source = "cryptopanic";
+    } catch (e) {
+      console.warn("cryptopanic fetch failed:", e.message);
+    }
+  }
+
+  if (!headlines.length) {
+    for (const feed of NEWS_RSS_FEEDS) {
+      try {
+        const xml = await fetchText(feed, { timeoutMs: 8000, maxBytes: 400_000 });
+        const titles = extractRssTitles(xml).map((t) => ({ title: t }));
+        headlines = filterNewsKeywords(titles);
+        if (headlines.length) { source = new URL(feed).hostname; break; }
+      } catch (e) {
+        console.warn(`rss news fetch failed for ${feed}:`, e.message);
+      }
+    }
+  }
+
+  const cache = { headlines, updated_at: Date.now(), source };
   await env.KV.put("news_cache", JSON.stringify(cache));
   return cache;
 }

@@ -135,6 +135,21 @@ function makeFetches() {
         { title: "Recipe of the week: avocado toast" },
       ] } }) },
 
+    // Keyless RSS news feeds (sprint 5: news_cache falls back to RSS when no
+    // CryptoPanic token is configured — the fixture env has none, so THIS is
+    // the path the scanner tick exercises). Same four headlines as the old
+    // CryptoPanic payload: two keyword-matching, two noise.
+    { match: 'https://www.coindesk.com/arc/outboundfeeds/rss/',
+      handler: () => ({ text: rssFeed([
+        'Binance resumes ETH withdrawals after brief pause',
+        'Beautiful sunset over the beach — not crypto news',
+      ]) }) },
+    { match: 'https://cointelegraph.com/rss',
+      handler: () => ({ text: rssFeed([
+        'Bitcoin ETF inflows hit 3-month high',
+        'Recipe of the week: avocado toast',
+      ]) }) },
+
     // Gemini — returns a well-formed JSON analysis for any prompt
     { match: "https://generativelanguage.googleapis.com",
       handler: () => ({
@@ -158,6 +173,13 @@ function makeFetches() {
         return { json: { ok: true, result: { message_id: 1, chat: body.chat_id, text: body.text } } };
       } },
   ]);
+}
+
+// minimal RSS wrapper for the fetch mock — enough structure for extractRssTitles
+function rssFeed(titles) {
+  return '<?xml version="1.0"?><rss><channel>' +
+    titles.map((t) => '<item><title><![CDATA[' + t + ']]></title></item>').join('') +
+    '</channel></rss>';
 }
 
 const telegramSent = [];

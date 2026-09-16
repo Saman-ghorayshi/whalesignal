@@ -147,6 +147,40 @@ export async function fetchJSON(url, opts = {}) {
   }
 }
 
+/**
+ * fetch + text with a timeout. Same envelope discipline as fetchJSON —
+ * used for RSS/XML feeds where res.json() would throw.
+ */
+export async function fetchText(url, opts = {}) {
+  const { headers = {}, timeoutMs = 8000, maxBytes = 0, method = "GET", body } = opts;
+  const allHeaders = {
+    "User-Agent": "whalesignal/1.0 (Cloudflare Worker; +https://github.com/Saman-ghorayshi/whalesignal)",
+    ...headers,
+  };
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method, headers: allHeaders, signal: ctl.signal, body });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
+      err.status = res.status;
+      throw err;
+    }
+    if (maxBytes > 0) {
+      const len = parseInt(res.headers.get("content-length") || "0", 10);
+      if (len > maxBytes) {
+        const err = new Error(`payload too large: ${len} bytes > ${maxBytes} for ${url}`);
+        err.tooLarge = true;
+        throw err;
+      }
+    }
+    return await res.text();
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
 /** Standard JSON HTTP responses for the webhook worker. */
 export function okJson(payload, status = 200) {
   return new Response(JSON.stringify(payload), {

@@ -104,23 +104,30 @@ export function templateAnalysis(whale, market, history) {
   // Exchange inflow = bearish (deposit to exchange = potential sell supply).
   // Confidence rises with confirming context: fear regime, prior distribution.
   // Conflicting context (greed + accumulator) dampens it instead of flipping it.
+  // HUGE transfers from an unlabeled source get a hard confidence cap: with
+  // sparse exchange labels these are often treasury migrations between an
+  // exchange's own (unlabeled) wallets, not fresh selling — our first $425M
+  // "bearish call" graded no_move, which is exactly this failure mode.
   if (whale.tx_type === "exchange_inflow") {
     const fear = regime === "fear";
     const dist = behavior === "distribution";
     const conflict = regime === "greed" && behavior === "accumulation";
-    const confidence = fear && dist ? 0.82
+    let confidence = fear && dist ? 0.82
       : fear ? 0.75
       : dist ? 0.65
       : conflict ? 0.55
       : 0.60;
+    const hugeUnlabeled = usd >= 100_000_000;
+    if (hugeUnlabeled) confidence = Math.min(confidence, 0.55);
     const factor = fear && dist ? "Exchange inflow during market fear with prior distribution history"
       : fear ? "Exchange inflow during market fear"
       : dist ? "Wallet has prior distribution pattern"
       : conflict ? "Exchange inflow despite greedy market and accumulation history"
+      : hugeUnlabeled ? "Very large exchange inflow (unlabeled source)"
       : "Large exchange inflow";
     return {
       headline: `${fmtUSD(usd)} ${sym} deposited to exchange`,
-      interpretation: `Whale deposited ${fmtUSD(usd)} ${sym} to an exchange. ${fear ? "Market is in fear territory (F&G " + market?.fear_greed + "). " : ""}Exchange inflows often precede selling, especially when the wallet has shown prior distribution behavior.`,
+      interpretation: `Whale deposited ${fmtUSD(usd)} ${sym} to an exchange. ${fear ? "Market is in fear territory (F&G " + market?.fear_greed + "). " : ""}Exchange inflows often precede selling, especially when the wallet has shown prior distribution behavior.${hugeUnlabeled ? " Caveat: very large transfers from unlabeled sources are frequently exchange treasury migrations, not fresh selling." : ""}`,
       signal: "bearish",
       confidence,
       related_factor: factor,
@@ -128,24 +135,26 @@ export function templateAnalysis(whale, market, history) {
   }
 
   // Exchange outflow = bullish (self-custody withdrawal = accumulation signal).
-  // Confidence rises with confirming context: greed regime, prior accumulation.
+  // Same huge-unlabeled-source caveat as inflows.
   if (whale.tx_type === "exchange_outflow") {
     const greed = regime === "greed";
     const acc = behavior === "accumulation";
     const conflict = regime === "fear" && behavior === "distribution";
-    const confidence = greed && acc ? 0.78
+    let confidence = greed && acc ? 0.78
       : greed ? 0.70
       : acc ? 0.62
       : conflict ? 0.55
       : 0.60;
+    if (usd >= 100_000_000) confidence = Math.min(confidence, 0.55);
     const factor = greed && acc ? "Exchange outflow with prior accumulation history"
       : greed ? "Exchange outflow during market greed"
       : acc ? "Wallet has prior accumulation pattern"
       : conflict ? "Exchange outflow despite fearful market and distribution history"
+      : usd >= 100_000_000 ? "Very large exchange outflow (unlabeled destination)"
       : "Large exchange outflow";
     return {
       headline: `${fmtUSD(usd)} ${sym} withdrawn from exchange`,
-      interpretation: `Whale withdrew ${fmtUSD(usd)} ${sym} from an exchange. ${greed ? "Market sentiment is greedy (F&G " + market?.fear_greed + "). " : ""}Exchange outflows often signal self-custody and accumulation, especially when the wallet has shown this pattern before.`,
+      interpretation: `Whale withdrew ${fmtUSD(usd)} ${sym} from an exchange. ${greed ? "Market sentiment is greedy (F&G " + market?.fear_greed + "). " : ""}Exchange outflows often signal self-custody and accumulation, especially when the wallet has shown this pattern before.${usd >= 100_000_000 ? " Caveat: very large transfers to unlabeled destinations are frequently exchange treasury migrations, not genuine accumulation." : ""}`,
       signal: "bullish",
       confidence,
       related_factor: factor,

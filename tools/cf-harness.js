@@ -47,6 +47,13 @@ export class MockD1 {
     return this;
   }
 
+  /** D1 batch: run each bound statement in order, collect metas. */
+  async batch(stmts) {
+    const metas = [];
+    for (const s of stmts) metas.push(await s.run());
+    return metas;
+  }
+
   // D1-shaped prepared statement. Supports chained .bind(...) and the three
   // terminators: .all(), .first(), .run(). Mirrors the real D1 result shape
   // (meta.changes, meta.last_row_id) so workers that read those keep working.

@@ -162,3 +162,64 @@ test("buildMarketCache: coingecko data wins, coinbase fills gaps, nulls never cl
   assert.equal(partial.btc.price, 61_000);
   assert.equal(partial.eth.price, null);
 });
+
+// ─── news context: RSS extraction + related-headline matching ────────
+import { extractRssTitles } from "../src/scanner.js";
+import { relatedHeadlines, formatAlert } from "../src/bot.js";
+import { templateAnalysis } from "../src/analyst.js";
+
+test("extractRssTitles: items, CDATA, entities, atom entries", () => {
+  const xml = `<?xml version="1.0"?><rss><channel>
+    <title>Feed title — must be skipped</title>
+    <item><title>Bitcoin ETF sees &amp;$1B outflows</title><desc>x</desc></item>
+    <item><title><![CDATA[Exchange halts BTC withdrawals amid "fear"]]></title></item>
+    <entry><title>Ethereum staking &#039;reserves&#039; grow</title></entry>
+    <item><title></title></item>
+  </channel></rss>`;
+  const titles = extractRssTitles(xml);
+  assert.deepEqual(titles, [
+    'Bitcoin ETF sees &$1B outflows',
+    'Exchange halts BTC withdrawals amid "fear"',
+    "Ethereum staking 'reserves' grow",
+  ]);
+});
+
+test("relatedHeadlines: asset + directional match, capped at 2, honest empty", () => {
+  const news = [
+    { title: "Bitcoin ETF sees massive outflows as fear grips markets" },
+    { title: "BTC whales deposit to exchanges before possible sell" },
+    { title: "Ethereum staking reserves reach new high" },
+    { title: "Bitcoin miners capitulate, exchanges see inflow spike" },
+  ];
+  const hits = relatedHeadlines(news, "BTC", "exchange_inflow");
+  assert.equal(hits.length, 2, "max 2 headlines");
+  assert.match(hits[0], /outflows|deposit/);
+  // no asset match → honest empty, never noise
+  assert.deepEqual(relatedHeadlines(news, "SOL", "exchange_inflow"), []);
+  assert.deepEqual(relatedHeadlines(null, "BTC", "exchange_inflow"), []);
+});
+
+test("formatAlert: related headlines block renders between analysis and market footer", () => {
+  const w = { chain: "btc", tx_hash: "0xk", from_address: "0xaaa", to_address: "0xbbb", amount: 5, symbol: "BTC", usd_value: 500_000, tx_type: "exchange_inflow", block_number: 100, detected_at: 1 };
+  const a = { headline: "h", interpretation: "i", signal: "bearish", confidence: 0.7, related_factor: "rf" };
+  const text = formatAlert(w, a, null, { related: ["Bitcoin ETF outflows spike"] });
+  assert.match(text, /📰 Related headlines:\n• Bitcoin ETF outflows spike/);
+  const none = formatAlert(w, a, null, {});
+  assert.doesNotMatch(none, /Related headlines/);
+});
+
+test("templateAnalysis: huge unlabeled-source flows get capped confidence + caveat", () => {
+  const w = { tx_type: "exchange_inflow", usd_value: 425_000_000, symbol: "BTC" };
+  const r = templateAnalysis(w, { fear_greed: 50, fear_greed_label: "Neutral" }, []);
+  assert.equal(r.signal, "bearish");
+  assert.equal(r.confidence, 0.55, "huge inflow capped at 0.55");
+  assert.match(r.interpretation, /treasury migration/);
+  // fear + distribution + huge still capped
+  const r2 = templateAnalysis(w, { fear_greed: 20, fear_greed_label: "Fear" }, [
+    { tx_type: "exchange_inflow" }, { tx_type: "exchange_inflow" }, { tx_type: "exchange_inflow" },
+  ]);
+  assert.equal(r2.confidence, 0.55);
+  // ordinary $10M inflow during fear keeps its 0.75
+  const r3 = templateAnalysis({ tx_type: "exchange_inflow", usd_value: 10_000_000, symbol: "BTC" }, { fear_greed: 20, fear_greed_label: "Fear" }, []);
+  assert.equal(r3.confidence, 0.75);
+});

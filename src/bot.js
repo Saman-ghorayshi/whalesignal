@@ -129,6 +129,37 @@ export async function fireGitHubDispatch(env, alertJSON) {
 // ─── alert formatting (pure, testable) ────────────────────────────────
 
 /**
+ * Pure. Match cached headlines against this whale's asset + flow direction —
+ * the cheap, LLM-free answer to "why did the whale move?". A headline must
+ * mention the asset AND a directionally-relevant keyword; anything else
+ * would be noise dressed up as context.
+ */
+export function relatedHeadlines(news, symbol, txType, max = 2) {
+  if (!Array.isArray(news) || !news.length || !symbol) return [];
+  const sym = String(symbol).toUpperCase();
+  const assetKw = {
+    BTC: /\b(bitcoin|btc|etf|halving|mining|miner)\b/i,
+    ETH: /\b(ethereum|ether|eth|staking)\b/i,
+    USDT: /\b(tether|usdt|stablecoin|depeg)\b/i,
+    USDC: /\b(usdc|circle|stablecoin|depeg)\b/i,
+  }[sym] || new RegExp(`\\b${sym.toLowerCase()}\\b`, "i");
+  // deposits sell, withdrawals accumulate — headlines that plausibly explain
+  // the DIRECTION, not just the asset
+  const flowKw = txType === "exchange_inflow"
+    ? /\b(sell|dump|profit|outflow|deposit|withdrawal halt|hack|exploit|lawsuit|sec|ban|fear|crash|liquidat)/i
+    : txType === "exchange_outflow"
+      ? /\b(buy|accumulate|inflow|custody|self-custody|reserve proof|adoption|treasury|stash|cold wallet)/i
+      : /./;
+  const hits = [];
+  for (const n of news) {
+    const title = n?.title || "";
+    if (assetKw.test(title) && flowKw.test(title)) hits.push(title);
+    if (hits.length >= max) break;
+  }
+  return hits;
+}
+
+/**
  * Format a whale + its analysis into the channel alert text. Pure.
  *
  * @param {object} whale — whales row
@@ -136,7 +167,7 @@ export async function fireGitHubDispatch(env, alertJSON) {
  * @param {object|null} analysis — analysis row
  *   {headline, interpretation, signal, confidence, related_factor}
  * @param {object|null} market — KV market_cache (for the footer)
- * @param {object} opts — { explorerBase: 'https://etherscan.io/tx/' | 'https://blockchain.com/tx/' }
+ * @param {object} opts — { explorerBase, related: string[] — matched headlines }
  */
 export function formatAlert(whale, analysis, market, opts = {}) {
   const chain = whale.chain?.toUpperCase() || "?";
@@ -187,6 +218,12 @@ export function formatAlert(whale, analysis, market, opts = {}) {
     lines.push("");
   } else {
     lines.push("🧠 AI Analysis: (pending)");
+    lines.push("");
+  }
+  // "why did the whale move?" — matched headlines, only when they exist
+  if (Array.isArray(opts.related) && opts.related.length) {
+    lines.push("📰 Related headlines:");
+    for (const t of opts.related) lines.push(`• ${t}`);
     lines.push("");
   }
   lines.push(`📊 Market: BTC ${btcP} (${btcChg}) | ${fg} | ETH ${ethP}`);
@@ -1579,6 +1616,11 @@ async function postPublicAlert(env, whaleId) {
   let market = null;
   try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
 
+  // "why the whale moved": match cached headlines against asset + direction
+  let news = null;
+  try { news = JSON.parse(await env.KV.get("news_cache") || "null"); } catch {}
+  const related = relatedHeadlines(news?.headlines, whale.symbol, whale.tx_type);
+
   // Event clustering: count other whales to the same destination in the last 15 min.
   const clusterCount = await countCluster(env, whale.to_address, whale.chain, whale.detected_at, whaleId);
   const clusterNote = formatClusterNote(clusterCount);
@@ -1589,7 +1631,7 @@ async function postPublicAlert(env, whaleId) {
     signal: whale.signal,
     confidence: whale.confidence,
     related_factor: whale.related_factor,
-  }, market);
+  }, market, { related });
   if (clusterNote) text = clusterNote + "\n" + text;
 
   // Telegram bot pacing: ~1 msg/sec per chat and channels punish bursts
