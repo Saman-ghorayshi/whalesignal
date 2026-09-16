@@ -517,7 +517,7 @@ async function bumpErrors(env, chain) {
  * Score >= SCORE_THRESHOLD → queue to analyst (AI analysis).
  * Below → INSERT with analysis_status='skipped' (no AI cost, no queue msg).
  */
-async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWallet, market) {
+async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWallet, market, walletInfos) {
   const score = computeInterestingness(wh, walletInfo, recentSameWallet);
   const shouldAnalyze = score >= SCORE_THRESHOLD;
 
@@ -565,7 +565,7 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
 
     // Auto-label: if a wallet crosses 3 txs, label it as 'whale'.
     // dormancy reactivate: previously dormant wallet waking up.
-    await autoLabelWallets(env, targets, wh.chain, walletMap, walletInfo);
+    await autoLabelWallets(env, targets, wh.chain, walletInfos, walletInfo);
   }
   return true;
 }
@@ -581,10 +581,10 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
  * Upgrade path: move to a scheduled cron job that recomputes all labels
  * from scratch if the rules get complex.
  */
-async function autoLabelWallets(env, targets, chain, walletMap, walletInfo) {
+async function autoLabelWallets(env, targets, chain, walletInfos, walletInfo) {
   for (const addr of targets) {
     const key = String(addr).toLowerCase();
-    const info = walletMap?.get(key) ?? walletInfo;
+    const info = walletInfos?.get(key) ?? walletInfo;
     if (!info) continue;
 
     const txCount = (info.tx_count ?? 0) + 1; // +1 for the one we just inserted
@@ -633,38 +633,58 @@ export function statTargets(fromAddr, toAddr, fromType, toType) {
 }
 
 /**
- * Load the wallets table into a label-map. Should be small enough to keep
- * in-memory per scan. Includes tx_count/first_seen/last_seen for
- * interestingness scoring and auto-labeling.
+ * Labels map — the ONLY wallet data the tick loop needs on every row.
+ * Exchange/treasury/bridge/miner labels drive tx classification; the map is
+ * tiny (dozens of rows) and cached per isolate. Whale-history attributes
+ * (tx_count/dormancy) are fetched per-candidate in fetchWalletInfos —
+ * full-table scans of the (auto-label grown) wallets table were the last
+ * big read burner in the tick path.
  */
-// Isolate-level cache: the map changes rarely (labels/patterns) and the
-// scanner reads it EVERY tick. Without this, 2,880 full-table scans/day
-// against a growing wallets table was the biggest hidden read burner
-// left in the pipeline. 60s staleness is fine for stats bumping.
-let walletMapCache = { map: null, ts: 0 };
-const WALLET_MAP_TTL_MS = 60_000;
+let labelMapCache = { map: null, ts: 0 };
+const LABEL_MAP_TTL_MS = 60_000;
 
-async function loadWalletMap(env) {
-  if (walletMapCache.map && Date.now() - walletMapCache.ts < WALLET_MAP_TTL_MS) {
-    return walletMapCache.map;
+async function loadLabelMap(env) {
+  if (labelMapCache.map && Date.now() - labelMapCache.ts < LABEL_MAP_TTL_MS) {
+    return labelMapCache.map;
   }
   const { results } = await env.DB.prepare(
-    "SELECT address, chain, label, type, tx_count, first_seen, last_seen FROM wallets " +
-    "WHERE label IS NOT NULL OR type IS NOT NULL OR pattern IS NOT NULL"
+    "SELECT address, chain, label, type FROM wallets " +
+    "WHERE label IS NOT NULL OR type IN ('exchange', 'treasury', 'bridge', 'miner', 'institution')"
   ).all();
   const m = new Map();
-  if (!results) return m;
-  for (const r of results) {
-    if (!r || !r.address) continue;
-    const entry = {
-      label: r.label, type: r.type, chain: r.chain,
-      tx_count: r.tx_count, first_seen: r.first_seen, last_seen: r.last_seen,
-    };
-    m.set(String(r.address).toLowerCase(), entry);
-    m.set(String(r.address), entry);
+  if (results) {
+    for (const r of results) {
+      if (!r || !r.address) continue;
+      const entry = { label: r.label, type: r.type, chain: r.chain, tx_count: 0, first_seen: null, last_seen: null };
+      m.set(String(r.address).toLowerCase(), entry);
+      m.set(String(r.address), entry);
+    }
   }
-  walletMapCache = { map: m, ts: Date.now() };
+  labelMapCache = { map: m, ts: Date.now() };
   return m;
+}
+
+/**
+ * Per-candidate wallet attributes (tx_count, first/last seen) for the
+ * interestingness score + auto-labeling. ONE indexed query over the distinct
+ * addresses in this tick's batch. Returns Map keyed by lowercased address.
+ */
+async function fetchWalletInfos(env, addresses, chain) {
+  const out = new Map();
+  const uniq = [...new Set((addresses || []).filter(Boolean).map((a) => String(a)))];
+  for (let i = 0; i < uniq.length; i += 50) {
+    const chunk = uniq.slice(i, i + 50);
+    try {
+      const { results } = await env.DB.prepare(
+        "SELECT address, chain, type, tx_count, first_seen, last_seen FROM wallets " +
+        "WHERE chain = ? AND lower(address) IN (" + chunk.map(() => "lower(?)").join(",") + ")"
+      ).bind(chain, ...chunk).all();
+      for (const r of results || []) out.set(String(r.address).toLowerCase(), r);
+    } catch (e) {
+      console.warn("wallet infos chunk failed (scoring degrades gracefully):", e.message);
+    }
+  }
+  return out;
 }
 
 /**
@@ -1225,7 +1245,7 @@ export async function scanChain(env, chain, market) {
     return { chain, processed: 0, newWhales: 0, primed: false };
   }
 
-  const walletMap = await loadWalletMap(env);
+  const walletMap = await loadLabelMap(env);
   const acc = newRollupAcc(Math.floor(Date.now() / 3600000) * 3600000);
 
   let cursor = state.last_block + 1;
@@ -1260,12 +1280,16 @@ export async function scanChain(env, chain, market) {
       const internalFloor = parseInt((await env.KV.get("config:internal_floor")) ?? DEFAULT_INTERNAL_FLOOR, 10);
       whales = dropPlumbing(whales, internalFloor);
 
+      // wallet attributes only for THIS tick's candidates (indexed IN query)
+      const candAddrs = whales.flatMap((w) => [w.from_address, w.to_address]).filter(Boolean);
+      const walletInfos = await fetchWalletInfos(env, candAddrs, chain);
+
       for (const w of whales) {
         try {
           const fromKey = String(w.from_address).toLowerCase();
-          const walletInfo = walletMap.get(fromKey) ?? null;
+          const walletInfo = walletInfos.get(fromKey) ?? walletMap.get(fromKey) ?? null;
           const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
-          const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
+          const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market, walletInfos);
           if (inserted) {
             newlyCounted++;
             // fold into the tick's rollups; the exchange side carries its label
@@ -1294,10 +1318,53 @@ export async function scanChain(env, chain, market) {
 
   // one batch of UPSERTs per tick — dashboards read these instead of raw scans
   await flushRollups(env, acc);
-  return { chain, processed, newWhales: newlyCounted, primed: false };
+  return { chain, processed, newWhales: newlyCounted, primed: false, walletInfos: walletInfos.size };
 }
 
 // ─── entry ─────────────────────────────────────────────────────────────
+
+// ─── sink-candidate discovery (free label source) ─────────────────────
+//
+// Destinations receiving transfers from >=5 DISTINCT whale senders over 7d
+// with >=$10M total are almost certainly exchange/custody sinks. Stored as
+// type='exchange_candidate' — shown on the graph/profiles but NOT used for
+// directional classification (only type='exchange' drives tx_type), so a
+// wrong guess can never flip a signal. Runs once per day (KV date marker).
+export async function discoverSinkCandidates(env) {
+  const marker = "sinkscan:" + new Date().toISOString().slice(0, 10);
+  try { if (await env.KV.get(marker)) return { skipped: "already_ran" }; } catch {}
+  const since = Date.now() - 7 * 86_400_000;
+  let rows = [];
+  try {
+    const res = await env.DB.prepare(
+      `SELECT chain, to_address AS addr, COUNT(DISTINCT from_address) AS senders,
+              SUM(usd_value) AS volume
+       FROM whales
+       WHERE detected_at > ? AND tx_type = "wallet_to_wallet" AND to_address != ""
+       GROUP BY chain, to_address
+       HAVING senders >= 5 AND volume >= 10_000_000
+       ORDER BY volume DESC LIMIT 50`
+    ).bind(since).all();
+    rows = res?.results || [];
+  } catch (e) {
+    return { skipped: e.message };
+  }
+  let added = 0;
+  if (rows.length) {
+    try {
+      await env.DB.batch(rows.map((r) =>
+        env.DB.prepare(
+          "INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES (?, ?, ?, 'exchange_candidate')"
+        ).bind(r.addr, r.chain, "auto cluster: " + r.senders + " senders / " + fmtUSD(r.volume))
+      ));
+      added = rows.length;
+    } catch (e) {
+      console.warn("sink candidate insert failed:", e.message);
+    }
+  }
+  try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch {}
+  return { candidates: added };
+}
 
 export default {
   // scheduled (cron) handler. Cloudflare free Workers cron runs AT MOST
