@@ -392,6 +392,16 @@ export function computeInterestingness(w, walletInfo = null, recentFromSameWalle
   else if (usd >= 1_000_000) score += 30;    // $1M+
   else score += 15;                           // $500K-1M (min threshold)
 
+  // ── directional native-asset flow bonus (0-8) ──
+  // M-5M exchange deposits/withdrawals of BTC/ETH are real whale moves
+  // and the template scores them for free (no LLM) — they belong in the
+  // ledger. Stablecoins do NOT get the bonus (weaker, flow-source-dependent).
+  const dirSym = (w.symbol ?? "").toUpperCase();
+  const dirNative = w.tx_type === "exchange_inflow" || w.tx_type === "exchange_outflow";
+  if (dirNative && !(dirSym === "USDT" || dirSym === "USDC" || dirSym === "DAI") && usd >= 1_000_000) {
+    score += 8;
+  }
+
   // ── exchange involvement (0-12) ──
   if (w.tx_type === "exchange_inflow" || w.tx_type === "exchange_outflow") score += 12;
   else if (w.tx_type === "exchange_internal") score += 6;
@@ -556,6 +566,20 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
   const fromType = walletMap?.get(String(wh.from_address).toLowerCase())?.type || null;
   const toType = walletMap?.get(String(wh.to_address).toLowerCase())?.type || null;
   const targets = statTargets(wh.from_address, wh.to_address, fromType, toType);
+  if (targets.length > 0) {
+    // first sighting must CREATE the row — the old UPDATE-only path never
+    // accumulated tx_count for new wallets, so the '3 txs → whale' label
+    // and the interestingness history bonuses almost never fired
+    try {
+      await env.DB.batch(targets.map((addr) =>
+        env.DB.prepare(
+          "INSERT OR IGNORE INTO wallets (address, chain, type, first_seen, last_seen) VALUES (?, ?, 'unknown', ?, ?)"
+        ).bind(addr, wh.chain, Date.now(), Date.now())
+      ));
+    } catch (e) {
+      console.warn("wallet first-sight insert failed (stats bump continues):", e.message);
+    }
+  }
   if (targets.length > 0) {
     await env.DB.prepare(
       "UPDATE wallets SET last_seen = ?, last_tx_hash = ?, " +
@@ -1010,6 +1034,43 @@ export function rssStartIndex(nowMs, n) {
   return Math.floor(nowMs / 300_000) % n;
 }
 
+
+// ─── derivatives context (funding + OI change, keyless Binance fapi) ──
+//
+// The 2026 regime literature (path-signature and HMM papers) treats funding
+// rates and open interest as market-state variables, not sentiment garnish.
+// We cache them per coin; the confluence model uses the crowding signal:
+// extreme positive funding = crowded longs (bearish tilt), extreme negative
+// = crowded shorts (bullish tilt). Binance fapi is keyless; if it is
+// geo-blocked or down the feature degrades to null.
+
+/** Pure: premiumIndex payload → 8h funding rate as a decimal. */
+export function parseBinanceFunding(j) {
+  const n = parseFloat(j?.lastFundingRate);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Pure: openInterestHist (25×1h) → 24h OI change in percent. */
+export function parseBinanceOIChange(j) {
+  if (!Array.isArray(j) || j.length < 2) return null;
+  const first = parseFloat(j[0]?.sumOpenInterestValue || j[0]?.sumOpenInterest);
+  const last = parseFloat(j[j.length - 1]?.sumOpenInterestValue || j[j.length - 1]?.sumOpenInterest);
+  if (!(first > 0) || !Number.isFinite(last)) return null;
+  return Math.round(((last - first) / first) * 100 * 100) / 100;
+}
+
+export async function fetchDerivatives(coin, fetcher = fetchJSON) {
+  const sym = coin.toUpperCase() + "USDT";
+  const out = { funding: null, oi_change_24h_pct: null };
+  try {
+    out.funding = parseBinanceFunding(await fetcher("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=" + sym, { timeoutMs: 6000 }));
+  } catch { /* geo-block / outage — feature degrades */ }
+  try {
+    out.oi_change_24h_pct = parseBinanceOIChange(await fetcher("https://fapi.binance.com/futures/data/openInterestHist?symbol=" + sym + "&period=1h&limit=25", { timeoutMs: 8000 }));
+  } catch { /* same */ }
+  return out;
+}
+
 /** Refresh the market_cache key in KV. CoinGecko primary, Coinbase fallback. */
 export async function refreshMarketCache(env) {
   const cgid = Math.floor(Date.now() / 1000);
@@ -1017,7 +1078,7 @@ export async function refreshMarketCache(env) {
     "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
   let cg = null;
   try {
-    cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
+    cg = await fetchJSON(cgUrl, { timeoutMs: 6000, headers: env.CG_KEY ? { "x-cg-demo-api-key": env.CG_KEY } : {} });
   } catch (e) {
     console.warn("coingecko price fetch failed, falling back to the source chain:", e.message);
   }
@@ -1034,6 +1095,15 @@ export async function refreshMarketCache(env) {
   const btcSpot = btcFill?.price ?? null;
   const ethSpot = ethFill?.price ?? null;
 
+  // derivatives crowding context (funding + 24h OI change) — keyless
+  let derivs = null;
+  try {
+    const [dB, dE] = await Promise.all([fetchDerivatives("btc"), fetchDerivatives("eth")]);
+    derivs = { btc: dB, eth: dE };
+  } catch (e) {
+    console.warn("derivatives fetch failed (feature degrades):", e.message);
+  }
+
   let fg = null;
   try {
     fg = await fetchJSON("https://api.alternative.me/fng/?limit=1", { timeoutMs: 4000 });
@@ -1047,6 +1117,7 @@ export async function refreshMarketCache(env) {
     throw new Error("no price source available; keeping previous market_cache");
   }
   cache.prices_from = pricesFrom;
+  cache.funding = derivs?.btc?.funding != null ? derivs : null;
   await env.KV.put("market_cache", JSON.stringify(cache));
 
   // hourly price snapshots for the TA regime engine (INSERT OR IGNORE dedupes

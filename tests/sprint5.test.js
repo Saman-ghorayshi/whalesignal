@@ -340,3 +340,32 @@ test("netflow stablecoin split: inverted bias, kept out of the native totals", (
   assert.equal(p.totals.stablecoin.bias, "bullish_pressure");
   assert.match(p.totals.stablecoin.note, /INVERSELY/i);
 });
+
+// ─── audit round: grading window, channel gate, directional bonus ─────
+import { gradeWindowCheck, channelAllows } from "../src/bot.js";
+import { computeInterestingness } from "../src/scanner.js";
+
+test("gradeWindowCheck: only 24-36h-old calls are honestly gradeable", () => {
+  const now = 100 * 3_600_000;
+  assert.equal(gradeWindowCheck(now - 25 * 3_600_000, now), "due");
+  assert.equal(gradeWindowCheck(now - 10 * 3_600_000, now), "young");
+  assert.equal(gradeWindowCheck(now - 40 * 3_600_000, now), "expired");
+});
+
+test("channelAllows: all/directional/high gating matrix", () => {
+  assert.equal(channelAllows("all", "neutral", 0.5), true);
+  assert.equal(channelAllows("directional", "neutral", 0.9), false);
+  assert.equal(channelAllows("directional", "bearish", 0.55), true);
+  assert.equal(channelAllows("high", "bearish", 0.55), false);
+  assert.equal(channelAllows("high", "bearish", 0.7), true);
+  assert.equal(channelAllows(undefined, "neutral", 0), true, "default = all");
+});
+
+test("directional bonus: $1M native exchange flow reaches the ledger, stables do not", () => {
+  const w = { usd_value: 1_000_000, tx_type: "exchange_inflow", symbol: "BTC", detected_at: Date.now() };
+  assert.equal(computeInterestingness(w, null, []), 50, "size 30 + exchange 12 + directional 8 = threshold");
+  const usdt = { usd_value: 1_000_000, tx_type: "exchange_inflow", symbol: "USDT", detected_at: Date.now() };
+  assert.ok(computeInterestingness(usdt, null, []) < 50, "stablecoins skip the bonus");
+  const below = { usd_value: 900_000, tx_type: "exchange_inflow", symbol: "BTC", detected_at: Date.now() };
+  assert.ok(computeInterestingness(below, null, []) < 50, "sub-$1M stays out");
+});

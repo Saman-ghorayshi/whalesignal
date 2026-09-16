@@ -85,3 +85,22 @@ test("flowConfidence: base, clamps, and the huge-unlabeled cap", () => {
   const oneHeadline = flowConfidence({ bullish: true, newsSent: { sum: 2, n: 1 } });
   assert.equal(oneHeadline.confidence, 0.60);
 });
+
+test("flowConfidence: derivatives crowding is contrarian", () => {
+  // bullish flow + extreme positive funding (crowded longs) = conflict
+  const r1 = flowConfidence({ bullish: true, derivs: { funding: 0.0005 } });
+  assert.equal(r1.confidence, 0.55);
+  assert.match(r1.features[0], /crowded longs/);
+  // bearish flow + crowded longs = confirmation
+  const r2 = flowConfidence({ bullish: false, derivs: { funding: 0.0005 } });
+  assert.equal(r2.confidence, 0.65);
+  assert.match(r2.features[0], /longs crowded/);
+  // negative funding supports bullish, fights bearish
+  const r3 = flowConfidence({ bullish: true, derivs: { funding: -0.0005 } });
+  assert.equal(r3.confidence, 0.65);
+  assert.match(r3.features[0], /shorts crowded/);
+  // neutral funding → no feature
+  const r4 = flowConfidence({ bullish: true, derivs: { funding: 0.0001 } });
+  assert.equal(r4.confidence, 0.60);
+  assert.deepEqual(r4.features, []);
+});

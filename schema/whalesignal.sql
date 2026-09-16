@@ -273,3 +273,14 @@ CREATE INDEX IF NOT EXISTS idx_whales_done_time ON whales(detected_at DESC) WHER
 -- backfill populates history once.
 ALTER TABLE hourly_stats ADD COLUMN stable_inflow_usd REAL NOT NULL DEFAULT 0;
 ALTER TABLE hourly_stats ADD COLUMN stable_outflow_usd REAL NOT NULL DEFAULT 0;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5f — premium waitlist (the /premium DM command appends here).
+-- One row per chat; the count is the demand signal that decides when the
+-- paid tier ships.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS waitlist (
+  chat_id   TEXT    NOT NULL,
+  joined_at INTEGER NOT NULL,
+  PRIMARY KEY (chat_id)
+);

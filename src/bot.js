@@ -433,10 +433,18 @@ export async function fetchHandler(request, env, ctx) {
       const payload = await cachedPayload(env, `graph:v1:${windowHours}:${chain || "all"}:${minUsd}:${limit}`, async () => {
         const since = Date.now() - windowHours * 3600_000;
         const edges = await graphEdges(env, { since, chain, minUsd, limit });
-        const walletRows = await env.DB.prepare(
-          "SELECT address, chain, label, type FROM wallets"
-        ).all();
-        return renderGraphJSON(edges, walletRows?.results || [], { windowHours, chain, minUsd });
+        // labels only for the addresses actually in the edge set (chunked) —
+        // the old full-table read scaled with wallets table growth
+        const addrs = [...new Set(edges.flatMap((e) => [e.from_address, e.to_address]).filter(Boolean))];
+        const walletRows = [];
+        for (let i = 0; i < addrs.length; i += 80) {
+          const chunk = addrs.slice(i, i + 80);
+          const r = await env.DB.prepare(
+            "SELECT address, chain, label, type FROM wallets WHERE lower(address) IN (" + chunk.map(() => "lower(?)").join(",") + ")"
+          ).bind(...chunk).all();
+          walletRows.push(...(r?.results || []));
+        }
+        return renderGraphJSON(edges, walletRows, { windowHours, chain, minUsd });
       });
       return new Response(JSON.stringify(payload), {
         status: 200,
@@ -642,6 +650,24 @@ async function exportRows(env, { limit, sinceId }) {
         await tgSendMessage(env.BOT_TOKEN, chatId, reply);
         return okJson({ ok: true, handled: "latest" });
       }
+      if (lc === "/premium") {
+        try {
+          await env.DB.prepare(
+            "INSERT OR IGNORE INTO waitlist (chat_id, joined_at) VALUES (?, ?)"
+          ).bind(chatId, Date.now()).run();
+          const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM waitlist").first();
+          await tgSendMessage(env.BOT_TOKEN, chatId, [
+            "⭐ WhaleSignal Premium — waitlist (you are #" + (row?.n ?? 1) + ")",
+            "",
+            "Planned: instant DM alerts before channel clustering, full wallet track records, deeper flow graph windows, and the weekly edge report.",
+            "",
+            "It opens once our public accuracy ledger has enough graded predictions to be worth paying for. Waitlist members get the first month free.",
+          ].join("\n"));
+        } catch (e) {
+          await tgSendMessage(env.BOT_TOKEN, chatId, "Waitlist is unavailable right now — try again later.");
+        }
+        return okJson({ ok: true, handled: "premium" });
+      }
       if (lc === "/id") {
         // diagnostics: shows the numeric ids the bot actually sees, so
         // ADMIN_CHAT_ID mismatches stop being guesswork
@@ -811,14 +837,20 @@ export function parseCfgCommand(text) {
     min_usd:    { kvKey: "config:min_usd",    name: "min_usd",    fn: Number },
     score_cutoff: { kvKey: "config:score_cutoff", name: "score_cutoff", fn: Number },
     max_blocks: { kvKey: "config:max_blocks",  name: "max_blocks",  fn: Number },
+    channel_mode: { kvKey: "config:channel_mode", name: "channel_mode", fn: (v) => v.toLowerCase(),
+                    allowed: ["all", "directional", "high"] },
   };
   const m = /^\/cfg\s+(\S+)\s+(.+)$/.exec(String(text || "").trim());
   if (!m) return null;
   const def = whitelist[m[1].toLowerCase()];
   if (!def) return null;
-  const n = def.fn(m[2].trim());
-  if (!Number.isFinite(n) || n < 0 || n > 1_000_000) return null;
-  return { kvKey: def.kvKey, name: def.name, value: n };
+  const v = def.fn(m[2].trim());
+  if (def.allowed) {
+    if (!def.allowed.includes(v)) return null;
+    return { kvKey: def.kvKey, name: def.name, value: v };
+  }
+  if (!Number.isFinite(v) || v < 0 || v > 1_000_000) return null;
+  return { kvKey: def.kvKey, name: def.name, value: v };
 }
 
 /**
@@ -877,6 +909,7 @@ Phase 1 (MVP). Commands:
   /ping    — health check
   /help    — this message
   /latest  — recently posted whale moves
+  /premium — join the premium waitlist
 
 We post AI-enhanced whale alerts to our channel. Real-time DMs come in Phase 2.
 Got a suggestion? Reply to this message.`;
@@ -1562,6 +1595,19 @@ function priceForSymbol(market, symbol) {
  * only fires while prediction_outcome IS NULL, and rollups only run when
  * that UPDATE actually changed a row).
  */
+/**
+ * Pure: is this event due for grading? Returns 'due' (24-36h old — the
+ * honest window), 'young' (not yet 24h), or 'expired' (missed the window;
+ * graded as 'expired' so the ledger never pretends a late price read was
+ * the 24h mark).
+ */
+export function gradeWindowCheck(detectedAt, now, minHours = 24, maxHours = 36) {
+  const ageH = (now - detectedAt) / 3_600_000;
+  if (ageH < minHours) return "young";
+  if (ageH > maxHours) return "expired";
+  return "due";
+}
+
 export async function gradePending(env, opts = {}) {
   const now = Date.now();
   const minAgeHours = Number(opts.minAgeHours ?? 24);
@@ -1569,7 +1615,20 @@ export async function gradePending(env, opts = {}) {
   let market = null;
   try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch { /* null */ }
   if (!market) return { graded: 0, skipped: "no_market_cache" };
+  // stale prices would write wrong outcomes into the permanent ledger —
+  // skip this tick and grade when a fresh price lands (15 min later)
+  if (market.updated_at && Date.now() - market.updated_at > 30 * 60_000) {
+    return { graded: 0, skipped: "stale_market_cache" };
+  }
 
+  const now0 = Date.now();
+  // rows past the honest window are closed as 'expired' so they never get
+  // graded against a price that isn't the 24h mark
+  await env.DB.prepare(
+    `UPDATE analysis SET prediction_outcome = 'expired', evaluated_at = ?
+     WHERE prediction_outcome IS NULL AND signal IN ('bullish','bearish')
+       AND whale_id IN (SELECT id FROM whales WHERE detected_at < ?)`
+  ).bind(now0, now0 - Math.max(minAgeMs, 36) * 3_600_000).run();
   const { results } = await env.DB.prepare(
     `SELECT w.id, w.chain, w.symbol, w.usd_value, w.detected_at, w.price_at_detect, w.from_address,
             a.signal, a.confidence
@@ -1751,6 +1810,21 @@ export async function queueHandler(batch, env) {
   }
 }
 
+/**
+ * Pure: does this alert clear the channel mode gate? Modes:
+ *   all          — everything (current behavior, default)
+ *   directional  — only bullish/bearish calls
+ *   high         — directional with confidence >= 0.65
+ * Set via /cfg channel_mode <mode>. Neutral events are still analyzed,
+ * graded and shown on the dashboard — this only gates channel spam.
+ */
+export function channelAllows(mode, signal, confidence) {
+  const m = String(mode || "all").toLowerCase();
+  if (m === "directional") return signal === "bullish" || signal === "bearish";
+  if (m === "high") return (signal === "bullish" || signal === "bearish") && (Number(confidence) || 0) >= 0.65;
+  return true;
+}
+
 async function postPublicAlert(env, whaleId) {
   // Load whale + analysis
   const whale = await env.DB.prepare(
@@ -1761,6 +1835,15 @@ async function postPublicAlert(env, whaleId) {
   if (!whale) throw new Error(`whale ${whaleId} not found`);
   if (!whale.analysis_status || whale.analysis_status === "failed") {
     throw new Error(`whale ${whaleId} analysis not done (status=${whale.analysis_status})`);
+  }
+
+  // channel mode gate (flooding control): skipped alerts stay analyzed,
+  // graded and on the dashboard — only channel posting is gated
+  let channelMode = "all";
+  try { channelMode = await env.KV.get("config:channel_mode") || "all"; } catch {}
+  if (!channelAllows(channelMode, whale.signal, whale.confidence)) {
+    console.log(`[bot] whale ${whaleId} held by channel_mode=${channelMode} (signal ${whale.signal}, conf ${whale.confidence})`);
+    return;
   }
 
   // dedupe per channel — Queues guarantee at-least-once, so re-delivery happens

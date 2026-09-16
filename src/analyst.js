@@ -76,7 +76,7 @@ export async function getMarketContext(env, chain, symbol) {
  */
 export function flowConfidence({
   bullish, fgRegime = null, behavior = null, sizeRatio = null,
-  taRegime = null, newsSent = null, hugeUnlabeled = false,
+  taRegime = null, newsSent = null, derivs = null, hugeUnlabeled = false,
 }) {
   const adj = [];
   let c = 0.60;
@@ -101,6 +101,20 @@ export function flowConfidence({
     const s = Math.sign(newsSent.sum);
     if ((bullish && s > 0) || (!bullish && s < 0)) { c += 0.05; adj.push("news agrees +0.05"); }
     else if ((bullish && s < 0) || (!bullish && s > 0)) { c -= 0.05; adj.push("news conflicts −0.05"); }
+  }
+
+  // derivatives crowding (contrarian — the 2026 regime papers treat funding
+  // as a state variable): |funding| > 0.03%/8h means a crowded side, which a
+  // flow in the SAME direction fights, and a flow against it confirms.
+  if (derivs && derivs.funding != null) {
+    const f = Number(derivs.funding);
+    if (f > 0.0003) {
+      if (bullish) { c -= 0.05; adj.push("crowded longs \u22120.05"); }
+      else { c += 0.05; adj.push("longs crowded +0.05"); }
+    } else if (f < -0.0003) {
+      if (bullish) { c += 0.05; adj.push("shorts crowded +0.05"); }
+      else { c -= 0.05; adj.push("crowded shorts \u22120.05"); }
+    }
   }
 
   c = Math.max(0.50, Math.min(0.85, c));
@@ -723,6 +737,8 @@ export async function analyzeOne(env, msg) {
   // Sprint 1: try template analysis first (no Gemini call needed for obvious cases).
   // Saves 80% of AI calls. Falls through to Gemini for ambiguous events.
   const ctx = await getMarketContext(env, whale.chain, whale.symbol);
+  // derivatives crowding context rides on the market cache (funding + OI)
+  ctx.derivs = market?.funding?.[String(whale.chain).toLowerCase()] ?? null;
   const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);
