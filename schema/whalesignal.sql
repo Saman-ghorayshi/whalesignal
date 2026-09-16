@@ -259,3 +259,17 @@ CREATE TABLE IF NOT EXISTS price_history (
   price       REAL    NOT NULL,
   PRIMARY KEY (coin, hour_bucket)
 );
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5e — the /latest + /history full-sort fix. Both endpoints ORDER BY
+-- detected_at DESC with no plain index on that column, so every dashboard
+-- poll sorted ~100K rows. Partial index keeps it to the page size.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_whales_done_time ON whales(detected_at DESC) WHERE analysis_status = 'done';
+
+-- Sprint 5e — stablecoin/native flow split. After the direction inversion,
+-- netflow MUST NOT mix BTC inflows (sell-side) with USDT inflows (buy-side):
+-- they are opposite signals in the same SUM. Scanner buckets separately;
+-- backfill populates history once.
+ALTER TABLE hourly_stats ADD COLUMN stable_inflow_usd REAL NOT NULL DEFAULT 0;
+ALTER TABLE hourly_stats ADD COLUMN stable_outflow_usd REAL NOT NULL DEFAULT 0;

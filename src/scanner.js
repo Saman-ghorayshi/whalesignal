@@ -226,7 +226,7 @@ export function accWhale(acc, w, exchangeLabel = null) {
   acc.totals.volume += usd;
   acc.totals.tick_max_usd = Math.max(acc.totals.tick_max_usd || 0, usd);
 
-  const h = acc.hours.get(chain) || { events: 0, volume_usd: 0, inflow_usd: 0, outflow_usd: 0, inflow_count: 0, outflow_count: 0 };
+  const h = acc.hours.get(chain) || { events: 0, volume_usd: 0, inflow_usd: 0, outflow_usd: 0, inflow_count: 0, outflow_count: 0, stable_inflow_usd: 0, stable_outflow_usd: 0 };
   h.events += 1; h.volume_usd += usd;
   acc.hours.set(chain, h);
 
@@ -243,6 +243,7 @@ export function accWhale(acc, w, exchangeLabel = null) {
     acc.edges.set(ek, e);
   }
 
+  const isStableSym = ["USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDP"].includes(sym);
   if (w.tx_type === "exchange_inflow" || w.tx_type === "exchange_outflow") {
     const isIn = w.tx_type === "exchange_inflow";
     const addr = isIn ? w.to_address : w.from_address;
@@ -254,6 +255,10 @@ export function accWhale(acc, w, exchangeLabel = null) {
     acc.exflow.set(xk, x);
     if (isIn) { h.inflow_usd += usd; h.inflow_count += 1; }
     else { h.outflow_usd += usd; h.outflow_count += 1; }
+    if (isStableSym) {
+      if (isIn) h.stable_inflow_usd += usd;
+      else h.stable_outflow_usd += usd;
+    }
   }
   return acc;
 }
@@ -279,13 +284,14 @@ export function rollupStatements(acc) {
   });
   for (const [chain, h] of acc.hours) {
     stmts.push({
-      sql: `INSERT INTO hourly_stats (hour_bucket, chain, events, volume_usd, inflow_usd, outflow_usd, inflow_count, outflow_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO hourly_stats (hour_bucket, chain, events, volume_usd, inflow_usd, outflow_usd, inflow_count, outflow_count, stable_inflow_usd, stable_outflow_usd)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hour_bucket, chain) DO UPDATE SET
               events = events + excluded.events, volume_usd = volume_usd + excluded.volume_usd,
               inflow_usd = inflow_usd + excluded.inflow_usd, outflow_usd = outflow_usd + excluded.outflow_usd,
-              inflow_count = inflow_count + excluded.inflow_count, outflow_count = outflow_count + excluded.outflow_count`,
-      binds: [acc.hour, chain, h.events, h.volume_usd, h.inflow_usd, h.outflow_usd, h.inflow_count, h.outflow_count],
+              inflow_count = inflow_count + excluded.inflow_count, outflow_count = outflow_count + excluded.outflow_count,
+              stable_inflow_usd = stable_inflow_usd + excluded.stable_inflow_usd, stable_outflow_usd = stable_outflow_usd + excluded.stable_outflow_usd`,
+      binds: [acc.hour, chain, h.events, h.volume_usd, h.inflow_usd, h.outflow_usd, h.inflow_count, h.outflow_count, h.stable_inflow_usd, h.stable_outflow_usd],
     });
   }
   for (const [, x] of acc.exflow) {

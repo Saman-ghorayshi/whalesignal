@@ -323,3 +323,20 @@ test("netflow baseline: bias requires loud-vs-history when baseline exists", () 
   );
   assert.equal(r2.totals.bias, "balanced");
 });
+
+test("netflow stablecoin split: inverted bias, kept out of the native totals", () => {
+  // $50M BTC inflow (bearish) + $60M USDT inflow (bullish dry powder)
+  const totals = [{
+    chain: "btc",
+    inflow_usd: 110_000_000, outflow_usd: 0, inflow_count: 10, outflow_count: 0,
+    stable_inflow_usd: 60_000_000, stable_outflow_usd: 0,
+  }];
+  const p = renderNetflowJSON(totals, [], 24, null, { avg_abs_net_daily: null });
+  // native-asset net stays bearish (USDT excluded from it)
+  assert.equal(p.totals.net_inflow_usd, 110_000_000);
+  assert.equal(p.totals.bias, "bearish_pressure");
+  // stablecoin section carries the inverted read
+  assert.equal(p.totals.stablecoin.net_inflow_usd, 60_000_000);
+  assert.equal(p.totals.stablecoin.bias, "bullish_pressure");
+  assert.match(p.totals.stablecoin.note, /INVERSELY/i);
+});

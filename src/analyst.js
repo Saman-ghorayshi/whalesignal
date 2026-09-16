@@ -28,8 +28,15 @@ import { taSnapshot, regimeAlignment } from "./ta.js";
  * Chart + news context for the confluence model. Two small D1 reads.
  * All optional — missing context just means fewer features in the composite.
  */
+// Isolate-level cache: 400-row price read per analyzed event was wasteful
+// when a queue batch analyzes several events from the same chain in seconds.
+const ctxCache = new Map(); // chain → { ctx, ts }
+const CTX_TTL_MS = 60_000;
+
 export async function getMarketContext(env, chain, symbol) {
   const coin = String(chain || "").toLowerCase() === "eth" ? "eth" : "btc";
+  const hit = ctxCache.get(coin);
+  if (hit && Date.now() - hit.ts < CTX_TTL_MS) return hit.ctx;
   let ta = null;
   try {
     const { results } = await env.DB.prepare(
@@ -49,7 +56,9 @@ export async function getMarketContext(env, chain, symbol) {
       if (row && row.n > 0 && row.s != null) newsSent = { sum: row.s, n: row.n };
     }
   } catch { /* no news yet */ }
-  return { ta, newsSent };
+  const out = { ta, newsSent };
+  ctxCache.set(coin, { ctx: out, ts: Date.now() });
+  return out;
 }
 
 /**

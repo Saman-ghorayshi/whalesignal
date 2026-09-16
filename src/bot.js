@@ -1077,6 +1077,7 @@ export function renderStatsJSON(stats, bySymbol, hourly, market = null) {
 export async function netflowTotals(env, since, chain = null) {
   let sql = `SELECT chain,
     SUM(inflow_usd) AS inflow_usd, SUM(outflow_usd) AS outflow_usd,
+    SUM(stable_inflow_usd) AS stable_inflow_usd, SUM(stable_outflow_usd) AS stable_outflow_usd,
     SUM(inflow_count) AS inflow_count, SUM(outflow_count) AS outflow_count
   FROM hourly_stats
   WHERE hour_bucket > ? AND (inflow_count > 0 OR outflow_count > 0)`;
@@ -1153,6 +1154,17 @@ export function renderNetflowJSON(totals, perExchange, windowHours, chain = null
     cur.outflow_count += r.outflow_count || 0;
     byChain.set(key, cur);
   }
+  let sIn = 0, sOut = 0;
+  for (const r of totals || []) {
+    sIn += r.stable_inflow_usd || 0;
+    sOut += r.stable_outflow_usd || 0;
+  }
+  const stableNet = sIn - sOut;
+  const stableGross = sIn + sOut;
+  // stablecoin semantics are INVERTED: stables moving onto exchanges are
+  // deployable buy-side, not sell-side (docs/SIGNAL_MODEL.md category 1)
+  const stableBias = stableGross === 0 || Math.abs(stableNet) < stableGross * 0.05
+    ? "balanced" : stableNet > 0 ? "bullish_pressure" : "bearish_pressure";
   const net = inflow - outflow;
   const gross = inflow + outflow;
   const baselineAvg = baseline?.avg_abs_net_daily ?? null;
@@ -1185,6 +1197,13 @@ export function renderNetflowJSON(totals, perExchange, windowHours, chain = null
       net_vs_7d_daily_avg: vsAvg,
       bias,
       interpretation,
+      stablecoin: {
+        inflow_usd: sIn,
+        outflow_usd: sOut,
+        net_inflow_usd: stableNet,
+        bias: stableBias,
+        note: "Stablecoin flows are read INVERSELY to native assets: inflows are deployable buying power, not sell-side supply.",
+      },
     },
     by_chain: [...byChain.values()].map((c) => ({
       chain: c.chain,
