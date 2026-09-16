@@ -582,6 +582,29 @@ async function markFailed(env, whaleId) {
   ).bind(whaleId).run();
 }
 
+/**
+ * Fold a freshly-analyzed signal into the rollups (hourly_stats + counters).
+ * Signal counts can only be finalized here — the scanner doesn't know the
+ * direction yet. Best-effort: failure never blocks the alert.
+ */
+async function bumpSignalRollups(env, whale, signal) {
+  const hour = Math.floor((whale.detected_at || Date.now()) / 3600000) * 3600000;
+  const col = signal === "bullish" ? "bullish" : signal === "bearish" ? "bearish" : "neutral";
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO hourly_stats (hour_bucket, chain, ${col}) VALUES (?, ?, 1)
+         ON CONFLICT(hour_bucket, chain) DO UPDATE SET ${col} = ${col} + 1`
+      ).bind(hour, whale.chain),
+      env.DB.prepare(
+        "INSERT INTO counters (k, v) VALUES (?, 1) ON CONFLICT(k) DO UPDATE SET v = v + 1"
+      ).bind(`signal:${signal}`),
+    ]);
+  } catch (e) {
+    console.warn(`[analyst] signal rollup failed: ${e.message}`);
+  }
+}
+
 // ─── entry (queue consumer) ──────────────────────────────────────────
 
 export async function analyzeOne(env, msg) {
@@ -617,6 +640,7 @@ export async function analyzeOne(env, msg) {
   const templateResult = templateAnalysis(whale, market, history);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);
+    await bumpSignalRollups(env, whale, templateResult.signal);
     await env.BOTQ.send(JSON.stringify({ kind: "public_alert", whale_id: whale.id }));
     return { ok: true, whale_id, signal: templateResult.signal, confidence: templateResult.confidence, source: "template" };
   }
@@ -636,6 +660,7 @@ export async function analyzeOne(env, msg) {
   }
 
   await saveAnalysis(env, whale_id, parsed);
+  await bumpSignalRollups(env, whale, parsed.signal);
 
   // queue the bot to post the alert to the public channel
   await env.BOTQ.send(JSON.stringify({

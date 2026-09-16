@@ -119,6 +119,65 @@ CREATE INDEX IF NOT EXISTS idx_whales_from_time   ON whales(chain, from_address,
 CREATE INDEX IF NOT EXISTS idx_whales_to_time     ON whales(chain, to_address, detected_at);
 
 -- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5 — free-forever rollups. Principle: every expensive read becomes
+-- an incremental write. Aggregates are updated once when data arrives
+-- (scanner/analyst), so dashboards never scan the raw whales table again —
+-- the D1 read budget becomes traffic-sized, not data-sized.
+-- ─────────────────────────────────────────────────────────────────────
+
+-- lifetime single-value counters ("total_whales", "total_volume",
+-- "largest_transfer", "signal:bullish", "symbol:BTC:count", …)
+CREATE TABLE IF NOT EXISTS counters (
+  k TEXT PRIMARY KEY,
+  v REAL NOT NULL DEFAULT 0
+);
+
+-- per-hour per-chain aggregates. Signal counts are added by the analyst
+-- (only known after analysis); everything else by the scanner.
+CREATE TABLE IF NOT EXISTS hourly_stats (
+  hour_bucket  INTEGER NOT NULL,
+  chain        TEXT    NOT NULL,
+  events       INTEGER NOT NULL DEFAULT 0,
+  volume_usd   REAL    NOT NULL DEFAULT 0,
+  inflow_usd   REAL    NOT NULL DEFAULT 0,
+  outflow_usd  REAL    NOT NULL DEFAULT 0,
+  inflow_count INTEGER NOT NULL DEFAULT 0,
+  outflow_count INTEGER NOT NULL DEFAULT 0,
+  bullish      INTEGER NOT NULL DEFAULT 0,
+  bearish      INTEGER NOT NULL DEFAULT 0,
+  neutral      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (hour_bucket, chain)
+);
+
+-- per-hour per-exchange netflow — the measured bull/bear meter
+CREATE TABLE IF NOT EXISTS exchange_netflow_hourly (
+  hour_bucket  INTEGER NOT NULL,
+  exchange     TEXT    NOT NULL,
+  chain        TEXT    NOT NULL,
+  inflow_usd   REAL    NOT NULL DEFAULT 0,
+  outflow_usd  REAL    NOT NULL DEFAULT 0,
+  inflow_count INTEGER NOT NULL DEFAULT 0,
+  outflow_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (hour_bucket, exchange, chain)
+);
+
+-- per-hour aggregated flow edges for /graph. PK prefix on hour_bucket makes
+-- a window query read only that window's rows. min_usd semantics change:
+-- it now filters the AGGREGATED edge volume (total relationship weight),
+-- not each individual transfer.
+CREATE TABLE IF NOT EXISTS flow_edges_hourly (
+  hour_bucket  INTEGER NOT NULL,
+  chain        TEXT    NOT NULL,
+  from_address TEXT    NOT NULL,
+  to_address   TEXT    NOT NULL,
+  volume_usd   REAL    NOT NULL DEFAULT 0,
+  cnt          INTEGER NOT NULL DEFAULT 0,
+  inflow_cnt   INTEGER NOT NULL DEFAULT 0,
+  outflow_cnt  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (hour_bucket, chain, from_address, to_address)
+);
+
+-- ─────────────────────────────────────────────────────────────────────
 -- seed scanner_state rows so the scanner has a starting point.
 -- INSERT OR IGNORE so re-running won't overwrite last_block mid-operation.
 -- ─────────────────────────────────────────────────────────────────────

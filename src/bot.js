@@ -808,59 +808,82 @@ export function renderLatestJSON(rows, market = null) {
   };
 }
 
-// ─── /stats endpoint ───────────────────────────────────────────────────
+// ─── /stats endpoint (rollup-backed) ──────────────────────────────────
 
 /**
- * Query aggregate stats from D1. One round trip, ~5 reads of existing indexes.
- * Returns: total whales, total volume, signal breakdown, top symbols,
- * 24h count, 7d count, largest transfer, exchange flow ratios.
+ * Lifetime counters — one small table, read wholesale (tens of rows).
+ * Replaces full scans of whales for every /stats request.
+ */
+export async function readCounters(env) {
+  const { results } = await env.DB.prepare("SELECT k, v FROM counters").all();
+  const map = new Map((results || []).map((r) => [r.k, r.v]));
+  return map;
+}
+
+/**
+ * Aggregate stats from rollups: counters + hourly_stats windows.
+ * Reads ~200 rows total regardless of how large whales grows.
+ * Accuracy still reads the analysis table (prediction_outcome rows are few;
+ * once the evaluator writes back at scale, add an outcome counter).
  */
 export async function statsRows(env) {
-  const { results } = await env.DB.prepare(
-    `SELECT
-       COUNT(*)                              AS total_whales,
-       COALESCE(SUM(usd_value), 0)           AS total_volume,
-       COALESCE(SUM(CASE WHEN a.signal='bullish' THEN 1 ELSE 0 END), 0) AS bullish,
-       COALESCE(SUM(CASE WHEN a.signal='bearish' THEN 1 ELSE 0 END), 0) AS bearish,
-       COALESCE(SUM(CASE WHEN a.signal='neutral' THEN 1 ELSE 0 END), 0) AS neutral,
-       COALESCE(SUM(CASE WHEN detected_at > ? THEN 1 ELSE 0 END), 0)   AS count_24h,
-       COALESCE(SUM(CASE WHEN detected_at > ? THEN 1 ELSE 0 END), 0)   AS count_7d,
-       COALESCE(MAX(usd_value), 0)           AS largest_transfer,
-       COALESCE(SUM(CASE WHEN a.prediction_outcome IS NOT NULL THEN 1 ELSE 0 END), 0) AS accuracy_total,
-       COALESCE(SUM(CASE WHEN a.prediction_outcome='correct' THEN 1 ELSE 0 END), 0)  AS accuracy_correct
-     FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id
-     WHERE w.analysis_status IN ('done', 'skipped')`
-  ).bind(Date.now() - 86_400_000, Date.now() - 7 * 86_400_000).all();
-  return (results && results[0]) || {};
+  const now = Date.now();
+  // each query wrapped in its own async fn: a synchronous prepare() throw
+  // then becomes that fn's rejection (handled by Promise.all) instead of an
+  // orphaned rejected promise racing the array literal's construction
+  const windowsQ = async () =>
+    (await env.DB.prepare(
+      `SELECT chain,
+         SUM(CASE WHEN hour_bucket > ? THEN events ELSE 0 END) AS c24,
+         SUM(CASE WHEN hour_bucket > ? THEN events ELSE 0 END) AS c7d,
+         SUM(events) AS events
+       FROM hourly_stats GROUP BY chain`
+    ).bind(now - 86_400_000, now - 7 * 86_400_000).all())?.results || [];
+  const accQ = async () =>
+    // outcome rows stay rare until the evaluator scales; cached upstream
+    await env.DB.prepare(
+      `SELECT SUM(CASE WHEN prediction_outcome IS NOT NULL THEN 1 ELSE 0 END) AS accuracy_total,
+              SUM(CASE WHEN prediction_outcome = 'correct' THEN 1 ELSE 0 END) AS accuracy_correct
+       FROM analysis`
+    ).first();
+  const [counters, rows, acc] = await Promise.all([readCounters(env), windowsQ(), accQ()]);
+  const sum = (key) => rows.reduce((s, r) => s + (r[key] || 0), 0);
+  return {
+    total_whales: counters.get("total_whales") || 0,
+    total_volume: counters.get("total_volume") || 0,
+    largest_transfer: counters.get("largest_transfer") || 0,
+    bullish: counters.get("signal:bullish") || 0,
+    bearish: counters.get("signal:bearish") || 0,
+    neutral: counters.get("signal:neutral") || 0,
+    count_24h: sum("c24"),
+    count_7d: sum("c7d"),
+    accuracy_total: acc?.accuracy_total || 0,
+    accuracy_correct: acc?.accuracy_correct || 0,
+  };
 }
 
-/**
- * Query per-symbol breakdown for the stats page. Top 5 symbols by count.
- */
+/** Per-symbol breakdown from counters (`symbol:<SYM>:count/volume`). */
 export async function statsBySymbol(env) {
-  const { results } = await env.DB.prepare(
-    `SELECT symbol, COUNT(*) AS count, COALESCE(SUM(usd_value), 0) AS volume
-     FROM whales WHERE analysis_status IN ('done', 'skipped')
-     GROUP BY symbol ORDER BY count DESC LIMIT 5`
-  ).all();
-  return results || [];
+  const counters = await readCounters(env);
+  const symbols = new Map();
+  for (const [k, v] of counters) {
+    const m = /^symbol:([A-Z0-9]+):(count|volume)$/.exec(k);
+    if (!m) continue;
+    const cur = symbols.get(m[1]) || { symbol: m[1], count: 0, volume: 0 };
+    if (m[2] === "count") cur.count = v;
+    else cur.volume = v;
+    symbols.set(m[1], cur);
+  }
+  return [...symbols.values()].sort((a, b) => b.count - a.count).slice(0, 5);
 }
 
-/**
- * Query hourly whale activity for the last 24h (for charts). Returns
- * { hour_bucket, count, volume } per hour.
- */
+/** Hourly whale activity for the last 24h, from hourly_stats. */
 export async function statsHourly(env) {
   const { results } = await env.DB.prepare(
-    `SELECT
-       (detected_at / 3600000) * 3600000 AS hour_bucket,
-       COUNT(*)                           AS count,
-       COALESCE(SUM(usd_value), 0)        AS volume
-     FROM whales
-     WHERE detected_at > ? AND analysis_status IN ('done', 'skipped')
-     GROUP BY hour_bucket ORDER BY hour_bucket ASC`
+    `SELECT hour_bucket, SUM(events) AS count, SUM(volume_usd) AS volume
+     FROM hourly_stats WHERE hour_bucket > ? GROUP BY hour_bucket ORDER BY hour_bucket ASC`
   ).bind(Date.now() - 24 * 86_400_000).all();
-  return results || [];
+  return (results || []).map((r) => ({ hour_bucket: r.hour_bucket, count: r.count, volume: r.volume }));
 }
 
 /** Pure. Build the /stats JSON payload from query results. */
@@ -902,71 +925,43 @@ export function renderStatsJSON(stats, bySymbol, hourly, market = null) {
   };
 }
 
-// ─── /netflow endpoint — exchange netflow index ───────────────────────
+// ─── /netflow endpoint — exchange netflow index (rollup-backed) ───────
 
 /**
- * Totals per chain+symbol for directional exchange flows since `since`.
- * One query over the (chain, detected_at) index. Rows only exist for
- * exchange_inflow / exchange_outflow by construction of the WHERE clause.
+ * Totals per chain for directional exchange flows in the window, read from
+ * hourly_stats — a few hundred rows max, whatever the whales table grows to.
  */
 export async function netflowTotals(env, since, chain = null) {
-  let sql = `SELECT chain, symbol,
-    COALESCE(SUM(CASE WHEN tx_type='exchange_inflow' THEN usd_value END), 0)  AS inflow_usd,
-    COALESCE(SUM(CASE WHEN tx_type='exchange_outflow' THEN usd_value END), 0) AS outflow_usd,
-    SUM(CASE WHEN tx_type='exchange_inflow' THEN 1 ELSE 0 END)  AS inflow_count,
-    SUM(CASE WHEN tx_type='exchange_outflow' THEN 1 ELSE 0 END) AS outflow_count
-  FROM whales
-  WHERE detected_at > ? AND tx_type IN ('exchange_inflow','exchange_outflow')`;
+  let sql = `SELECT chain,
+    SUM(inflow_usd) AS inflow_usd, SUM(outflow_usd) AS outflow_usd,
+    SUM(inflow_count) AS inflow_count, SUM(outflow_count) AS outflow_count
+  FROM hourly_stats
+  WHERE hour_bucket > ? AND (inflow_count > 0 OR outflow_count > 0)`;
   const binds = [since];
   if (chain) { sql += " AND chain = ?"; binds.push(chain); }
-  sql += " GROUP BY chain, symbol ORDER BY chain, symbol";
+  sql += " GROUP BY chain ORDER BY chain";
   const { results } = await env.DB.prepare(sql).bind(...binds).all();
   return results || [];
 }
 
 /**
- * Per-exchange flow totals for the window. Two queries because the exchange
- * side of the flow differs: inflows join wallets on to_address, outflows on
- * from_address. Unlabeled exchange destinations show as truncated addresses.
+ * Per-exchange flow totals in the window, from exchange_netflow_hourly.
+ * Reads one row per (hour × exchange) in the window instead of scanning raw.
  */
 export async function netflowByExchange(env, since, chain = null, limit = 12) {
   const n = Math.max(1, Math.min(25, Math.trunc(Number(limit) || 12)));
-  const inflow = await (async () => {
-    let sql = `SELECT w.chain, COALESCE(NULLIF(wl.label, ''), substr(w.to_address, 1, 12) || '…') AS exchange,
-      COALESCE(SUM(w.usd_value), 0) AS inflow_usd, 0 AS outflow_usd, COUNT(*) AS inflow_count, 0 AS outflow_count
-      FROM whales w LEFT JOIN wallets wl ON wl.address = w.to_address AND wl.chain = w.chain AND wl.type = 'exchange'
-      WHERE w.detected_at > ? AND w.tx_type = 'exchange_inflow'`;
-    const binds = [since];
-    if (chain) { sql += " AND w.chain = ?"; binds.push(chain); }
-    sql += " GROUP BY w.chain, exchange ORDER BY inflow_usd DESC LIMIT ?";
-    const { results } = await env.DB.prepare(sql).bind(...binds, n).all();
-    return results || [];
-  })();
-  const outflow = await (async () => {
-    let sql = `SELECT w.chain, COALESCE(NULLIF(wl.label, ''), substr(w.from_address, 1, 12) || '…') AS exchange,
-      0 AS inflow_usd, COALESCE(SUM(w.usd_value), 0) AS outflow_usd, 0 AS inflow_count, COUNT(*) AS outflow_count
-      FROM whales w LEFT JOIN wallets wl ON wl.address = w.from_address AND wl.chain = w.chain AND wl.type = 'exchange'
-      WHERE w.detected_at > ? AND w.tx_type = 'exchange_outflow'`;
-    const binds = [since];
-    if (chain) { sql += " AND w.chain = ?"; binds.push(chain); }
-    sql += " GROUP BY w.chain, exchange ORDER BY outflow_usd DESC LIMIT ?";
-    const { results } = await env.DB.prepare(sql).bind(...binds, n).all();
-    return results || [];
-  })();
-  // merge the two legs per (chain, exchange)
-  const map = new Map();
-  for (const r of [...inflow, ...outflow]) {
-    const key = `${r.chain}:${r.exchange}`;
-    const cur = map.get(key) || { chain: r.chain, exchange: r.exchange, inflow_usd: 0, outflow_usd: 0, inflow_count: 0, outflow_count: 0 };
-    cur.inflow_usd += r.inflow_usd || 0;
-    cur.outflow_usd += r.outflow_usd || 0;
-    cur.inflow_count += r.inflow_count || 0;
-    cur.outflow_count += r.outflow_count || 0;
-    map.set(key, cur);
-  }
-  const rows = [...map.values()];
-  rows.sort((a, b) => (b.inflow_usd + b.outflow_usd) - (a.inflow_usd + a.outflow_usd));
-  return rows.slice(0, n);
+  let sql = `SELECT chain, exchange,
+    SUM(inflow_usd) AS inflow_usd, SUM(outflow_usd) AS outflow_usd,
+    SUM(inflow_count) AS inflow_count, SUM(outflow_count) AS outflow_count
+  FROM exchange_netflow_hourly
+  WHERE hour_bucket > ?`;
+  const binds = [since];
+  if (chain) { sql += " AND chain = ?"; binds.push(chain); }
+  sql += ` GROUP BY chain, exchange
+    ORDER BY (SUM(inflow_usd) + SUM(outflow_usd)) DESC LIMIT ?`;
+  binds.push(n);
+  const { results } = await env.DB.prepare(sql).bind(...binds).all();
+  return results || [];
 }
 
 /**
@@ -1036,27 +1031,29 @@ export function renderNetflowJSON(totals, perExchange, windowHours, chain = null
   };
 }
 
-// ─── /graph endpoint — aggregated flow edges for the network view ─────
+// ─── /graph endpoint — aggregated flow edges (rollup-backed) ──────────
 
 /**
- * Top whale-flow edges in the window, aggregated per (from, to) pair.
- * One GROUP BY over the time index; volume ordering keeps the payload to
- * the flows that actually matter. Pure SQL, exported for tests.
+ * Top whale-flow edges in the window, from flow_edges_hourly — the PK
+ * prefix on hour_bucket means a window query reads only that window's rows.
+ * min_usd filters the AGGREGATED edge volume (relationship weight), not each
+ * individual transfer. Rollups don't carry last_seen (edge freshest hour is
+ * implied by the window); clients get null.
  */
 export async function graphEdges(env, { since, chain = null, minUsd = 0, limit = 50 }) {
   let sql = `SELECT chain, from_address, to_address,
-    COALESCE(SUM(usd_value), 0) AS volume,
-    COUNT(*) AS cnt,
-    MAX(detected_at) AS last_seen,
-    SUM(CASE WHEN tx_type='exchange_inflow' THEN 1 ELSE 0 END)  AS inflow_cnt,
-    SUM(CASE WHEN tx_type='exchange_outflow' THEN 1 ELSE 0 END) AS outflow_cnt
-  FROM whales
-  WHERE detected_at > ? AND usd_value >= ? AND from_address != '' AND to_address != ''
-    AND analysis_status IN ('done', 'skipped')`;
-  const binds = [since, minUsd];
+    SUM(volume_usd) AS volume,
+    SUM(cnt) AS cnt,
+    SUM(inflow_cnt) AS inflow_cnt,
+    SUM(outflow_cnt) AS outflow_cnt
+  FROM flow_edges_hourly
+  WHERE hour_bucket > ?`;
+  const binds = [since];
   if (chain) { sql += " AND chain = ?"; binds.push(chain); }
-  sql += " GROUP BY chain, from_address, to_address ORDER BY volume DESC LIMIT ?";
-  binds.push(limit);
+  sql += ` GROUP BY chain, from_address, to_address
+    HAVING SUM(volume_usd) >= ?
+    ORDER BY volume DESC LIMIT ?`;
+  binds.push(minUsd, limit);
   const { results } = await env.DB.prepare(sql).bind(...binds).all();
   return results || [];
 }

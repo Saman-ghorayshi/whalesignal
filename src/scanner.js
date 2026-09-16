@@ -197,6 +197,147 @@ export function autoPauseState(autoPaused, now) {
   return { active: now < autoPaused.until, expired: now >= autoPaused.until };
 }
 
+// ─── rollup accumulator (free-forever: writes instead of scans) ──────
+//
+// While inserting whales, the scan loop folds each row into in-memory
+// buckets; once per tick flushRollups() writes a handful of UPSERTs via
+// DB.batch. Dashboards then read these small tables instead of scanning
+// the (ever-growing) whales table — the D1 read budget becomes
+// traffic-sized, not data-sized.
+
+export function newRollupAcc(hourBucket) {
+  return {
+    hour: hourBucket,
+    totals: { whales: 0, volume: 0 },
+    hours: new Map(),   // chain → {events, volume_usd, inflow_usd, outflow_usd, inflow_count, outflow_count}
+    edges: new Map(),   // chain|from|to → {volume_usd, cnt, inflow_cnt, outflow_cnt}
+    exflow: new Map(),  // chain|exchange → {inflow_usd, outflow_usd, inflow_count, outflow_count}
+    symbols: new Map(), // symbol → {count, volume}
+  };
+}
+
+/** Fold one inserted whale into the accumulator. Pure. */
+export function accWhale(acc, w, exchangeLabel = null) {
+  const chain = w.chain || "?";
+  const sym = (w.symbol || "?").toUpperCase();
+  const usd = Number(w.usd_value) || 0;
+
+  acc.totals.whales += 1;
+  acc.totals.volume += usd;
+  acc.totals.tick_max_usd = Math.max(acc.totals.tick_max_usd || 0, usd);
+
+  const h = acc.hours.get(chain) || { events: 0, volume_usd: 0, inflow_usd: 0, outflow_usd: 0, inflow_count: 0, outflow_count: 0 };
+  h.events += 1; h.volume_usd += usd;
+  acc.hours.set(chain, h);
+
+  const s = acc.symbols.get(sym) || { count: 0, volume: 0 };
+  s.count += 1; s.volume += usd;
+  acc.symbols.set(sym, s);
+
+  if (w.from_address && w.to_address && w.from_address !== w.to_address) {
+    const ek = `${chain}|${w.from_address}|${w.to_address}`;
+    const e = acc.edges.get(ek) || { chain, from_address: w.from_address, to_address: w.to_address, volume_usd: 0, cnt: 0, inflow_cnt: 0, outflow_cnt: 0 };
+    e.volume_usd += usd; e.cnt += 1;
+    if (w.tx_type === "exchange_inflow") e.inflow_cnt += 1;
+    if (w.tx_type === "exchange_outflow") e.outflow_cnt += 1;
+    acc.edges.set(ek, e);
+  }
+
+  if (w.tx_type === "exchange_inflow" || w.tx_type === "exchange_outflow") {
+    const isIn = w.tx_type === "exchange_inflow";
+    const addr = isIn ? w.to_address : w.from_address;
+    const label = exchangeLabel || shortLabel(addr);
+    const xk = `${chain}|${label}`;
+    const x = acc.exflow.get(xk) || { chain, exchange: label, inflow_usd: 0, outflow_usd: 0, inflow_count: 0, outflow_count: 0 };
+    if (isIn) { x.inflow_usd += usd; x.inflow_count += 1; }
+    else { x.outflow_usd += usd; x.outflow_count += 1; }
+    acc.exflow.set(xk, x);
+    if (isIn) { h.inflow_usd += usd; h.inflow_count += 1; }
+    else { h.outflow_usd += usd; h.outflow_count += 1; }
+  }
+  return acc;
+}
+
+/** Fallback display name when a flow touches no labeled exchange wallet. */
+function shortLabel(addr) {
+  const a = String(addr || "");
+  return a.length > 12 ? a.slice(0, 12) + "…" : a || "(unknown)";
+}
+
+/** Build the batch of UPSERT statements for one tick. Array of {sql, binds}. */
+export function rollupStatements(acc) {
+  const stmts = [];
+  stmts.push({
+    sql: `INSERT INTO counters (k, v) VALUES ('total_whales', ?), ('total_volume', ?)
+          ON CONFLICT(k) DO UPDATE SET v = v + excluded.v`,
+    binds: [acc.totals.whales, acc.totals.volume],
+  });
+  stmts.push({
+    sql: `INSERT INTO counters (k, v) VALUES ('largest_transfer', ?)
+          ON CONFLICT(k) DO UPDATE SET v = MAX(v, excluded.v)`,
+    binds: [acc.totals.tick_max_usd ?? 0],
+  });
+  for (const [chain, h] of acc.hours) {
+    stmts.push({
+      sql: `INSERT INTO hourly_stats (hour_bucket, chain, events, volume_usd, inflow_usd, outflow_usd, inflow_count, outflow_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hour_bucket, chain) DO UPDATE SET
+              events = events + excluded.events, volume_usd = volume_usd + excluded.volume_usd,
+              inflow_usd = inflow_usd + excluded.inflow_usd, outflow_usd = outflow_usd + excluded.outflow_usd,
+              inflow_count = inflow_count + excluded.inflow_count, outflow_count = outflow_count + excluded.outflow_count`,
+      binds: [acc.hour, chain, h.events, h.volume_usd, h.inflow_usd, h.outflow_usd, h.inflow_count, h.outflow_count],
+    });
+  }
+  for (const [, x] of acc.exflow) {
+    stmts.push({
+      sql: `INSERT INTO exchange_netflow_hourly (hour_bucket, exchange, chain, inflow_usd, outflow_usd, inflow_count, outflow_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hour_bucket, exchange, chain) DO UPDATE SET
+              inflow_usd = inflow_usd + excluded.inflow_usd, outflow_usd = outflow_usd + excluded.outflow_usd,
+              inflow_count = inflow_count + excluded.inflow_count, outflow_count = outflow_count + excluded.outflow_count`,
+      binds: [acc.hour, x.exchange, x.chain, x.inflow_usd, x.outflow_usd, x.inflow_count, x.outflow_count],
+    });
+  }
+  for (const [, e] of acc.edges) {
+    stmts.push({
+      sql: `INSERT INTO flow_edges_hourly (hour_bucket, chain, from_address, to_address, volume_usd, cnt, inflow_cnt, outflow_cnt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hour_bucket, chain, from_address, to_address) DO UPDATE SET
+              volume_usd = volume_usd + excluded.volume_usd, cnt = cnt + excluded.cnt,
+              inflow_cnt = inflow_cnt + excluded.inflow_cnt, outflow_cnt = outflow_cnt + excluded.outflow_cnt`,
+      binds: [acc.hour, e.chain, e.from_address, e.to_address, e.volume_usd, e.cnt, e.inflow_cnt, e.outflow_cnt],
+    });
+  }
+  for (const [sym, s] of acc.symbols) {
+    stmts.push({
+      sql: `INSERT INTO counters (k, v) VALUES (?, ?)
+            ON CONFLICT(k) DO UPDATE SET v = v + excluded.v`,
+      binds: [`symbol:${sym}:count`, s.count],
+    });
+    stmts.push({
+      sql: `INSERT INTO counters (k, v) VALUES (?, ?)
+            ON CONFLICT(k) DO UPDATE SET v = v + excluded.v`,
+      binds: [`symbol:${sym}:volume`, s.volume],
+    });
+  }
+  return stmts;
+}
+
+/**
+ * Write the tick's rollups. D1 batch = one round trip; on failure the raw
+ * whales rows are already safe (inserted first) and rollups only drift by
+ * this tick — acceptable for aggregates, never retried to avoid doubles.
+ */
+async function flushRollups(env, acc) {
+  const stmts = rollupStatements(acc);
+  if (!stmts.length) return;
+  try {
+    await env.DB.batch(stmts.map((s) => env.DB.prepare(s.sql).bind(...s.binds)));
+  } catch (e) {
+    console.warn(`[scanner] rollup flush failed (aggregates drift by one tick): ${e.message}`);
+  }
+}
+
 // ─── interestingness score ──────────────────────────────────────────
 //
 // Pure 0-100 heuristic. Gates the AI queue: >= SCORE_THRESHOLD → Gemini,
@@ -767,6 +908,7 @@ export async function scanChain(env, chain, market) {
   }
 
   const walletMap = await loadWalletMap(env);
+  const acc = newRollupAcc(Math.floor(Date.now() / 3600000) * 3600000);
 
   let cursor = state.last_block + 1;
   let lastProcessed = state.last_block;
@@ -806,7 +948,15 @@ export async function scanChain(env, chain, market) {
           const walletInfo = walletMap.get(fromKey) ?? null;
           const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
           const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
-          if (inserted) newlyCounted++;
+          if (inserted) {
+            newlyCounted++;
+            // fold into the tick's rollups; the exchange side carries its label
+            const flowAddr = w.tx_type === "exchange_inflow" ? w.to_address : w.from_address;
+            const info = flowAddr
+              ? (walletMap.get(flowAddr) ?? walletMap.get(String(flowAddr).toLowerCase()))
+              : null;
+            accWhale(acc, w, info?.label || null);
+          }
         } catch (e) {
           console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);
         }
@@ -824,6 +974,8 @@ export async function scanChain(env, chain, market) {
     cursor++;
   }
 
+  // one batch of UPSERTs per tick — dashboards read these instead of raw scans
+  await flushRollups(env, acc);
   return { chain, processed, newWhales: newlyCounted, primed: false };
 }
 
@@ -889,6 +1041,14 @@ export default {
     // never clobber each other); it expires itself once `until` has passed.
     let paused = {};
     try { paused = JSON.parse(await env.KV.get("config:paused") || "{}"); } catch {}
+    // legacy self-heal: the first cap-guard prototype wrote its {until,
+    // reason} into config:paused — if that `until` has passed, clear the
+    // key (admin manual pauses carry no until, so they're untouched)
+    if (paused.until && paused.reason === "d1_read_cap" && Date.now() >= paused.until) {
+      try { await env.KV.delete("config:paused"); } catch { /* next tick */ }
+      console.log("[scanner] legacy cap pause expired — resuming");
+      paused = {};
+    }
     let autoPaused = null;
     try { autoPaused = JSON.parse(await env.KV.get("config:auto_paused") || "null"); } catch {}
     const guard = autoPauseState(autoPaused, Date.now());

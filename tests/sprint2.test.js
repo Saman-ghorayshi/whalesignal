@@ -191,6 +191,7 @@ function mockEnvD1(opts = {}) {
   const txRows = opts.txRows || [];
   const walletRow = opts.walletRow || null;
   const latestRows = opts.latestRows || [];
+  const countersRows = opts.countersRows || [];
 
   class Chain {
     constructor() { this.lastSql = null; }
@@ -198,7 +199,9 @@ function mockEnvD1(opts = {}) {
     bind(...args) { return this; }
     async all() {
       const sql = this.lastSql || "";
-      // stats aggregate query (has COUNT(*) AS total_whales)
+      // rollup counters table (sprint 5)
+      if (/FROM counters/.test(sql)) return { results: countersRows };
+      // stats aggregate query (has COUNT(*) AS total_whales) — legacy shape
       if (/total_whales/.test(sql)) return { results: [statsRow] };
       // symbol breakdown (has GROUP BY symbol)
       if (/GROUP BY symbol/.test(sql)) return { results: symbolRows };
@@ -215,6 +218,7 @@ function mockEnvD1(opts = {}) {
       // wallet profile query (SELECT ... FROM wallets WHERE address = ?)
       if (/FROM wallets WHERE address/.test(sql)) return walletRow;
       // stats firstRow fallback
+      if (/FROM analysis/.test(sql)) return { accuracy_total: 0, accuracy_correct: 0 };
       if (/total_whales/.test(sql)) return statsRow;
       return null;
     }
@@ -228,7 +232,14 @@ function mockEnvD1(opts = {}) {
 }
 
 test("GET /stats returns 200 with CORS+JSON", async () => {
-  const env = mockEnvD1({ statsRow: STATS, symbolRows: BY_SYMBOL, hourlyRows: HOURLY });
+  const env = mockEnvD1({
+    countersRows: [
+      { k: "total_whales", v: 42 }, { k: "total_volume", v: 1_000_000 },
+      { k: "largest_transfer", v: 900_000 },
+      { k: "signal:bullish", v: 2 }, { k: "signal:bearish", v: 20 }, { k: "signal:neutral", v: 5 },
+    ],
+    symbolRows: BY_SYMBOL, hourlyRows: HOURLY,
+  });
   const req = new Request("https://whalesignal-bot.example.workers.dev/stats");
   const resp = await fetchHandler(req, env, {});
   assert.equal(resp.status, 200);
