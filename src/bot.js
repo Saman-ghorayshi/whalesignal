@@ -456,9 +456,10 @@ export async function fetchHandler(request, env, ctx) {
         const walletRows = [];
         for (let i = 0; i < addrs.length; i += 80) {
           const chunk = addrs.slice(i, i + 80);
+          const variants = chunk.flatMap((c) => [c, String(c).toLowerCase()]);
           const r = await env.DB.prepare(
-            "SELECT address, chain, label, type FROM wallets WHERE lower(address) IN (" + chunk.map(() => "lower(?)").join(",") + ")"
-          ).bind(...chunk).all();
+            "SELECT address, chain, label, type FROM wallets WHERE address IN (" + variants.map(() => "?").join(",") + ")"
+          ).bind(...variants).all();
           walletRows.push(...(r?.results || []));
         }
         return renderGraphJSON(edges, walletRows, { windowHours, chain, minUsd });

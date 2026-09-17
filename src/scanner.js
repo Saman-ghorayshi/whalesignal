@@ -729,10 +729,13 @@ async function fetchWalletInfos(env, addresses, chain) {
   for (let i = 0; i < uniq.length; i += 50) {
     const chunk = uniq.slice(i, i + 50);
     try {
+      // raw+lowercase variants keep the index usable (lower() on the
+      // column = full scan, the 10M-reads disease)
+      const variants = chunk.flatMap((c) => [c, String(c).toLowerCase()]);
       const { results } = await env.DB.prepare(
         "SELECT address, chain, type, tx_count, first_seen, last_seen FROM wallets " +
-        "WHERE chain = ? AND lower(address) IN (" + chunk.map(() => "lower(?)").join(",") + ")"
-      ).bind(chain, ...chunk).all();
+        "WHERE address IN (" + variants.map(() => "?").join(",") + ")"
+      ).bind(...variants).all();
       for (const r of results || []) out.set(String(r.address).toLowerCase(), r);
     } catch (e) {
       console.warn("wallet infos chunk failed (scoring degrades gracefully):", e.message);

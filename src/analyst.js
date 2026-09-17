@@ -673,9 +673,12 @@ async function getWalletHistory(env, address, chain, excludeId) {
 
 /** Load labels for the from+to addresses of the whale. */
 async function labelPair(env, fromAddr, toAddr) {
+  // indexable: IN over raw+lowercase variants — lower(address) on the
+  // column defeats idx_wallets_address (full wallets scan per event)
+  const f = String(fromAddr), t = String(toAddr);
   const { results } = await env.DB.prepare(
-    "SELECT address, label, type FROM wallets WHERE lower(address) IN (?, ?)"
-  ).bind(String(fromAddr).toLowerCase(), String(toAddr).toLowerCase()).all();
+    "SELECT address, label, type FROM wallets WHERE address IN (?, ?, ?, ?)"
+  ).bind(f, f.toLowerCase(), t, t.toLowerCase()).all();
   const map = new Map();
   for (const r of results || []) map.set(String(r.address).toLowerCase(), r);
   return {

@@ -309,3 +309,8 @@ CREATE TABLE IF NOT EXISTS alert_feedback (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (whale_id, reactor)
 );
+
+-- Sprint 5k: bare from/to lookups (wallet profiles, clusters, spam check)
+-- can't seek the (chain, from_address, ...) composite without a chain bind.
+CREATE INDEX IF NOT EXISTS idx_whales_from ON whales(from_address);
+CREATE INDEX IF NOT EXISTS idx_whales_to   ON whales(to_address);
