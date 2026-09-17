@@ -1463,7 +1463,42 @@ export async function refreshNewsCache(env) {
 
 // ─── scan one chain (with batched catch-up) ──────────────────────────
 
+function instrumentDB(env) {
+  const usage = [];
+  const track = (r, sql, kind) => { usage.push([String(sql).slice(0, 60), r?.meta?.rows_read ?? (kind === "first" ? 1 : 0)]); return r; };
+  const wrap = (stmt, sql) => ({
+    all: async () => track(await stmt.all(), sql, "all"),
+    first: async () => track(await stmt.first(), sql, "first"),
+    run: async () => track(await stmt.run(), sql, "run"),
+    bind(...args) {
+      const bound = stmt.bind(...args);
+      return {
+        all: async () => track(await bound.all(), sql, "all"),
+        first: async () => track(await bound.first(), sql, "first"),
+        run: async () => track(await bound.run(), sql, "run"),
+      };
+    },
+  });
+  return {
+    usage,
+    db: {
+      prepare(sql) { if (typeof sql !== "string") console.log("[debug] non-string SQL:", typeof sql, JSON.stringify(sql).slice(0, 80)); return wrap(env.DB.prepare(sql), sql); },
+      async batch(stmts) {
+        for (const st of stmts) { try { const r = await st.run(); usage.push(["batch", r?.meta?.rows_read ?? 0]); } catch {} }
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    },
+  };
+}
+
 export async function scanChain(env, chain, market) {
+  const instr = instrumentDB(env);
+  env = { ...env, DB: instr.db };
+  const logUsage = () => {
+    const totalReads = instr.usage.reduce((sum, [, n]) => sum + (n || 0), 0);
+    instr.usage.sort((x, y) => y[1] - x[1]);
+    console.log(`[scanner:${chain}] rows_read=${totalReads} top: ${instr.usage.slice(0, 4).map(([q, n]) => n + "x " + q).join(" | ")}`);
+  };
   const state = await getState(env, chain);
   const maxBlocks = parseInt((await env.KV.get("config:max_blocks")) ?? env.MAX_BLOCKS ?? DEFAULT_MAX_BLOCKS, 10);
   // first run: prime from latest (no processing this tick, just record where we are)
@@ -1484,6 +1519,7 @@ export async function scanChain(env, chain, market) {
   let lastProcessed = state.last_block;
   let processed = 0;
   let newlyCounted = 0;
+  let lastWalletInfos = 0;
   while (cursor <= latest && processed < maxBlocks) {
     try {
       const block = await fetchBlock(chain, cursor, env);
@@ -1515,6 +1551,7 @@ export async function scanChain(env, chain, market) {
       // wallet attributes only for THIS tick's candidates (indexed IN query)
       const candAddrs = whales.flatMap((w) => [w.from_address, w.to_address]).filter(Boolean);
       const walletInfos = await fetchWalletInfos(env, candAddrs, chain);
+      lastWalletInfos = walletInfos.size;
 
       for (const w of whales) {
         try {
@@ -1550,7 +1587,10 @@ export async function scanChain(env, chain, market) {
 
   // one batch of UPSERTs per tick — dashboards read these instead of raw scans
   await flushRollups(env, acc);
-  return { chain, processed, newWhales: newlyCounted, primed: false, walletInfos: walletInfos.size };
+  const totalReads = instr.usage.reduce((sum, [, n]) => sum + (n || 0), 0);
+  instr.usage.sort((x, y) => y[1] - x[1]);
+  console.log(`[scanner:${chain}] rows_read=${totalReads} top: ${instr.usage.slice(0, 4).map(([q, n]) => n + "x " + q).join(" | ")}`);
+  return { chain, processed, newWhales: newlyCounted, primed: false, walletInfos: lastWalletInfos };
 }
 
 // ─── entry ─────────────────────────────────────────────────────────────

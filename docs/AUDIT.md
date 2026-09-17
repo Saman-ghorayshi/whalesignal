@@ -20,16 +20,29 @@ wrong, fix this doc first.
 | **TRADER: LLM TP/SL silently discarded** — hardcoded 3%/5% at close | Prompt asked for levels the closer ignored | ✅ persisted per trade, used by the closer |
 | Python trading-loop tests never ran in CI | test.yml only ran node tests | ✅ pytest job added |
 
-## THE recurring cap-trip root cause (found by account inventory)
+## THE recurring cap-trip root cause (found by account inventory + measurement)
 
-The D1 read cap is ACCOUNT-WIDE. This account also hosts battery-relay-db,
-battery-relay-staging-db, cryptopay and mechanicfriend — their traffic
-shares the same 5M reads/day budget. WhaleSignal's fixes were all real,
-but the shared budget kept getting consumed by the neighbors. Definitive
-fix: move WhaleSignal to its own free account — docs/MIGRATION.md has the
-exact 10-step guide (30-45 min, $0). Correction logged: an earlier audit
-dismissed the "another account" idea; the account inventory proved it
-was the right call.
+**Final chain, established with tools/d1_metrics.mjs (GraphQL analytics):**
+
+1. whalesignal-db read **9.9–10M rows/24h** — the cap was OURS. The neighbors
+   were innocent (mechanicfriend: 46 reads, ghanonyar: 24K).
+2. Query-level attribution (instrumentDB proxy, per-tick rows_read logs):
+   `loadLabelMap` full-scanned the wallets table (~7K rows) on every isolate
+   creation — the `label IS NOT NULL OR type IN (...)` filter is unindexable,
+   and CF recycles isolates aggressively, so it ran near-constantly.
+3. **FIXED**: label map lives in KV (hash-guarded writes, free reads) with an
+   indexed D1 fallback; `lower(address)` scans made indexable everywhere
+   (labelPair, fetchWalletInfos, graph chunks); bare from/to indexes added.
+4. Expected steady state: **<500K reads/day** (10% of cap). Verify with
+   `node tools/d1_metrics.mjs` after the next UTC reset.
+5. Correction logged: the earlier audit dismissed the "another account" idea —
+   partially wrong. The account-share mattered, but our own scan was the
+   dominant burn. docs/MIGRATION.md remains the isolation option.
+
+**Also found during live debugging:** 9,849 rows in analysis_status='failed'
+(pre-key era LLM failures — /api/reanalyze can retry them now); scanner pause
+froze whale storage ~14h (auto-resumed); instrumentation (per-tick rows_read)
+stays in the code so any future burn names its query in the logs.
 
 ## Admin worker audit (sprint 5i)
 

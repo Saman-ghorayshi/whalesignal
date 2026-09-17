@@ -1,0 +1,157 @@
+{
+    "wallTime": 24,
+    "cpuTime": 1,
+    "truncated": false,
+    "executionModel": "stateless",
+    "outcome": "ok",
+    "scriptVersion": {
+        "id": "01a40886-45ea-4eea-bc59-3bd1105c5a48"
+    },
+    "scriptName": "whalesignal-scanner",
+    "diagnosticsChannelEvents": [],
+    "exceptions": [],
+    "logs": [
+        {
+            "message": [
+                "[scanner:eth] paused via admin — skipping tick"
+            ],
+            "level": "log",
+            "timestamp": 1789677819658
+        },
+        {
+            "message": [
+                "[scanner:btc] paused via admin — skipping tick"
+            ],
+            "level": "log",
+            "timestamp": 1789677819658
+        },
+        {
+            "message": [
+                "[scanner] tick done:",
+                "[{\"chain\":\"eth\",\"skipped\":\"paused\"},{\"chain\":\"btc\",\"skipped\":\"paused\"}]"
+            ],
+            "level": "log",
+            "timestamp": 1789677819658
+        }
+    ],
+    "eventTimestamp": 1789677819645,
+    "event": {
+        "cron": "* * * * *",
+        "scheduledTime": 1789677819000
+    }
+}
+{
+    "wallTime": 5310,
+    "cpuTime": 16,
+    "truncated": false,
+    "executionModel": "stateless",
+    "outcome": "ok",
+    "scriptVersion": {
+        "id": "01a40886-45ea-4eea-bc59-3bd1105c5a48"
+    },
+    "scriptName": "whalesignal-scanner",
+    "diagnosticsChannelEvents": [],
+    "exceptions": [],
+    "logs": [
+        {
+            "message": [
+                "coingecko price fetch failed, falling back to the source chain:",
+                "HTTP 429 Too Many Requests for https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true — {\"status\":{\"error_code\":429,\"error_message\":\"You've exceeded the Rate Limit. Please visit https://www.coingecko.com/en/api/pricing to subscribe to our API plans for higher rate limits.\"}}"
+            ],
+            "level": "warn",
+            "timestamp": 1789677879939
+        },
+        {
+            "message": [
+                "[scanner:eth] paused via admin — skipping tick"
+            ],
+            "level": "log",
+            "timestamp": 1789677884946
+        },
+        {
+            "message": [
+                "[scanner:btc] paused via admin — skipping tick"
+            ],
+            "level": "log",
+            "timestamp": 1789677884946
+        },
+        {
+            "message": [
+                "[scanner] tick done:",
+                "[{\"chain\":\"eth\",\"skipped\":\"paused\"},{\"chain\":\"btc\",\"skipped\":\"paused\"}]"
+            ],
+            "level": "log",
+            "timestamp": 1789677884946
+        }
+    ],
+    "eventTimestamp": 1789677879646,
+    "event": {
+        "cron": "* * * * *",
+        "scheduledTime": 1789677879000
+    }
+}
+{
+    "wallTime": 1696,
+    "cpuTime": 3,
+    "truncated": false,
+    "executionModel": "stateless",
+    "outcome": "ok",
+    "scriptVersion": {
+        "id": "01a40886-45ea-4eea-bc59-3bd1105c5a48"
+    },
+    "scriptName": "whalesignal-scanner",
+    "diagnosticsChannelEvents": [],
+    "exceptions": [],
+    "logs": [
+        {
+            "message": [
+                "[scanner] cap auto-pause expired — resuming"
+            ],
+            "level": "log",
+            "timestamp": 1789677940044
+        },
+        {
+            "message": [
+                "[scanner:eth] scan failed:",
+                "D1_ERROR: Your account has exceeded D1's free tier daily row read limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue. See https://developers.cloudflare.com/d1/platform/limits/ for more details."
+            ],
+            "level": "error",
+            "timestamp": 1789677940290
+        },
+        {
+            "message": [
+                "[scanner] D1 read cap hit — auto-paused until 2026-09-17T21:15:40.290Z"
+            ],
+            "level": "warn",
+            "timestamp": 1789677940691
+        },
+        {
+            "message": [
+                "[scanner:btc] scan failed:",
+                "D1_ERROR: Your account has exceeded D1's free tier daily row read limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue. See https://developers.cloudflare.com/d1/platform/limits/ for more details."
+            ],
+            "level": "error",
+            "timestamp": 1789677940934
+        },
+        {
+            "message": [
+                "[scanner] D1 read cap hit — auto-paused until 2026-09-17T21:15:40.934Z"
+            ],
+            "level": "warn",
+            "timestamp": 1789677941334
+        },
+        {
+            "message": [
+                "[scanner] tick done:",
+                "[{\"chain\":\"eth\",\"auto_paused_until\":1789679740290},{\"chain\":\"btc\",\"auto_paused_until\":1789679740934}]"
+            ],
+            "level": "log",
+            "timestamp": 1789677941334
+        }
+    ],
+    "eventTimestamp": 1789677939651,
+    "event": {
+        "cron": "* * * * *",
+        "scheduledTime": 1789677939000
+    }
+}
