@@ -37,10 +37,9 @@ jobs:
             --starting-balance "$STARTING_BALANCE" \
             --gemini-key "$GEMINI_KEY"
 
-      - name: Commit trades.db back to repo
-        run: |
-          git config user.name "whalesignal-bot"
-          git config user.email "bot@whalesignal"
-          git add trades.db
-          git commit -m "trades.db: updated by GH Actions trade loop [skip ci]" || true
-          git push
+      # trades.db is a local artifact — committing a binary DB to the repo
+      # on every run bloats history and conflicts with .gitignore. The paper
+      # results live in the DB on the runner; export to the dashboard later
+      # if/when the paper results become a product surface.
+      - name: Note paper-trade results
+        run: echo "trades stay on the runner; commit-to-repo disabled"

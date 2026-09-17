@@ -1,0 +1,19 @@
+{
+  "generated_at": 1789606871016,
+  "mode": "retro (flow + behavior + TA only — no news/derivatives available historically)",
+  "flows_pulled": 300,
+  "flows_simulated": 1,
+  "directional": 0,
+  "accuracy": null,
+  "high_confidence": {
+    "directional": 0,
+    "rate": null
+  },
+  "by_regime": {},
+  "by_signal": {},
+  "by_symbol": {},
+  "thresholds": {
+    "btc": 1,
+    "eth": 1.51
+  }
+}

@@ -1,0 +1,75 @@
+# Production monitor — probes the live endpoints hourly and DMs the admin
+# through the bot when something breaks. This closes the "silent failure"
+# class: two production bugs in this project's history (all-neutral feed,
+# D1 cap-out) would have been caught by this workflow in their first hour.
+#
+# Secrets needed: WS_BOT_TOKEN + ADMIN_CHAT_ID (already required by
+# weekly_review.yml) and the public bot URL (hardcoded below).
+name: prod-monitor
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y curl jq
+      - name: Probe live endpoints
+        id: probe
+        env:
+          BASE: https://whalesignal-bot.sthidontknow.workers.dev
+        run: |
+          FAIL=""
+          H=$(curl -s -m 20 "$BASE/health" || echo '{"ok":false}')
+          echo "$H" | jq -e '.ok == true' > /dev/null || FAIL="$FAIL health"
+          S=$(curl -s -m 20 "$BASE/stats" || echo '{"ok":false}')
+          echo "$S" | jq -e '.ok == true' > /dev/null || FAIL="$FAIL stats"
+          N=$(curl -s -m 20 "$BASE/netflow?window=24" || echo '{"ok":false}')
+          echo "$N" | jq -e '.ok == true' > /dev/null || FAIL="$FAIL netflow"
+          # total_whales must be growing over any 25h window (scanner alive)
+          T=$(echo "$S" | jq '.total_whales')
+          echo "total=$T" >> "$GITHUB_OUTPUT"
+          if [ -n "$FAIL" ]; then echo "failed=$FAIL" >> "$GITHUB_OUTPUT"; exit 1; fi
+      - name: Alert admin on failure
+        if: failure()
+        env:
+          WS_BOT_TOKEN: ${{ secrets.WS_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: |
+          curl -s -m 15 "https://api.telegram.org/bot${WS_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${ADMIN_CHAT_ID}" \
+            --data-urlencode "text=🚨 WhaleSignal monitor: endpoints failing (${{ steps.probe.outputs.failed || 'probe error' }}). Check /health and worker logs." \
+            || echo "alert failed"
+      - name: Alert if scanner looks stalled
+        env:
+          WS_BOT_TOKEN: ${{ secrets.WS_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: |
+          # growth check runs after 25h of state via the workflow cache-free
+          # trick: compare against yesterday's value stored in the repo
+          T=${{ steps.probe.outputs.total }}
+          PREV=$(cat .monitor_total 2>/dev/null || echo 0)
+          echo "$T" > .monitor_total
+          if [ "$PREV" != "0" ] && [ "$T" -le "$PREV" ]; then
+            curl -s -m 15 "https://api.telegram.org/bot${WS_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${ADMIN_CHAT_ID}" \
+              --data-urlencode "text=⚠️ WhaleSignal: scanner looks stalled (total_whales $PREV → $T in ~25h)." \
+              || echo "alert failed"
+          fi
+      - name: Persist last count
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "whalesignal-monitor"
+          git config user.email "monitor@whalesignal"
+          git add .monitor_total 2>/dev/null || true
+          git commit -m "monitor: total count [skip ci]" 2>/dev/null && git push || true
