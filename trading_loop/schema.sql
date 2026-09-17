@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS paper_trades (
   bear_case TEXT,
   bullish_case TEXT,
   llm_confidence REAL,
-  hl_order_id TEXT
+  hl_order_id TEXT,
+  tp_pct REAL,
+  sl_pct REAL,
+  qty REAL
 );
 
 CREATE TABLE IF NOT EXISTS whale_scores (

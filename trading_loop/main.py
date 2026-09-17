@@ -38,6 +38,12 @@ def init_db(db_path: str) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     with open(SCHEMA_PATH) as f:
         db.executescript(f.read())
+    # migrations for DBs created before tp_pct/sl_pct/qty existed
+    for col in ("tp_pct", "sl_pct", "qty"):
+        try:
+            db.execute(f"ALTER TABLE paper_trades ADD COLUMN {col} REAL")
+        except sqlite3.OperationalError:
+            pass  # column exists
     db.commit()
     return db
 
@@ -215,13 +221,21 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
 
     hl_order_id = "dry-run"
     entry_price = 0.0
+    qty = None
     if hl and not dry_run:
         try:
             is_buy = (side == "long")
-            resp = hl.open_market(coin, is_buy, sz)
+            # CRITICAL: size_usd is DOLLARS; HL market_open expects COIN
+            # QUANTITY. Passing dollars directly opened a position sized
+            # ~1/price times too large (a $10 decision = 10 BTC).
+            mid = hl.mid_price(coin)
+            if not mid or mid <= 0:
+                raise Exception(f"invalid mid price {mid} for {coin}")
+            qty = round(sz / mid, 4)
+            resp = hl.open_market(coin, is_buy, qty)
             hl_order_id = resp.get("response", {}).get("data", {}).get("oid", "unknown")
             entry_price = hl.mid_price(coin)
-            print(f"  signal {signal['id']}: COPY {side} {sz} {coin} @ ~{entry_price} (oid={hl_order_id})")
+            print(f"  signal {signal['id']}: COPY {side} {sz} USD = {qty} {coin} @ ~{entry_price} (oid={hl_order_id})")
         except Exception as e:
             print(f"  signal {signal['id']}: HL order failed — {e}", file=sys.stderr)
             mark_processed(db, signal["id"])
@@ -236,6 +250,9 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
     # Record trade
     record_trade(db, {
         "signal_id": signal["id"],
+        "tp_pct": decision.tp_pct,
+        "sl_pct": check_result.adjusted["sl_pct"],
+        "qty": qty,
         "whale": whale,
         "side": side,
         "size_usd": sz,
@@ -282,9 +299,11 @@ def check_and_close_trades(db, hl, dry_run=False):
         else:
             pnl_pct = (entry - current_price) / entry * 100
 
-        # check TP/SL/time
-        tp = 3.0   # embedded in trade — but we simplfy: no column for it, check in state
-        sl = 5.0
+        # check TP/SL/time — use the trade's OWN levels (the LLM decision),
+        # falling back to 3%/5% only when missing. The old code hardcoded
+        # 3/5 and silently discarded the LLM's risk parameters.
+        tp = t["tp_pct"] if ("tp_pct" in t.keys() and t["tp_pct"]) else 3.0
+        sl = t["sl_pct"] if ("sl_pct" in t.keys() and t["sl_pct"]) else 5.0
         close_reason = None
 
         if pnl_pct >= tp:
@@ -305,6 +324,7 @@ def check_and_close_trades(db, hl, dry_run=False):
                     print(f"  close failed for trade {t['id']}: {e}", file=sys.stderr)
                     continue
             close_trade(db, t["id"], current_price, pnl_usd, close_reason, now)
+            update_whale_score_after_close(db, t["whale"], now)
             db.commit()
             print(f"  trade {t['id']}: closed ({close_reason}) pnl={pnl_usd:+.2f}")
 

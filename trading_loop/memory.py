@@ -78,3 +78,29 @@ def close_trade(db: sqlite3.Connection, trade_id: int, exit_price: float,
         "close_reason = ? WHERE id = ?",
         (now, exit_price, pnl_usd, close_reason, trade_id),
     )
+
+
+def update_whale_score_after_close(db, whale, now):
+    """Recompute a whale's win/loss record from closed paper trades and
+    upsert whale_scores. This was the missing writer: the FinMem score was
+    read by every decision but NEVER updated by anything."""
+    row = db.execute(
+        "SELECT COUNT(*) AS n, "
+        "SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) AS wins, "
+        "COALESCE(SUM(pnl_usd), 0) AS pnl "
+        "FROM paper_trades WHERE whale = ? AND closed_at IS NOT NULL",
+        (whale,),
+    ).fetchone()
+    n, wins, pnl = row["n"] or 0, row["wins"] or 0, row["pnl"] or 0
+    if n == 0:
+        return
+    # Bayesian-lite: win rate pulled toward a 0.5 prior by 2 phantom trades
+    score = round((wins + 2 * 0.5) / (n + 2), 3)
+    db.execute(
+        "INSERT INTO whale_scores (whale, trade_count, win_count, total_pnl_usd, score, last_updated) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(whale) DO UPDATE SET trade_count = excluded.trade_count, "
+        "win_count = excluded.win_count, total_pnl_usd = excluded.total_pnl_usd, "
+        "score = excluded.score, last_updated = excluded.last_updated",
+        (whale, n, wins, pnl, score, now),
+    )

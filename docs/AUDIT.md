@@ -15,6 +15,10 @@ wrong, fix this doc first.
 | `loadWalletMap` full-scanned the wallets table **per tick** | Fine at 19 rows; broke as auto-labeling grew it | ✅ labels-only map + per-candidate infos |
 | evaluate.yml computed a second, conflicting accuracy number | Two "accuracy" values = zero trustworthy accuracy | ✅ retired; worker grader is the single truth |
 | Windows path bug: laptop tools' CLI guards never matched | Worked on POSIX CI, silently no-op'd on Windows | ✅ pathToFileURL |
+| **TRADER: HL sizing bug — size_usd passed as coin quantity** (a $10 decision = 10 BTC position) | Hidden because the live loop never ran on testnet | ✅ mid-price conversion + qty recorded |
+| **TRADER: FinMem whale scores never written** — read every decision, updated by nothing | The weekly review's UPDATE matched zero rows | ✅ upsert after each close |
+| **TRADER: LLM TP/SL silently discarded** — hardcoded 3%/5% at close | Prompt asked for levels the closer ignored | ✅ persisted per trade, used by the closer |
+| Python trading-loop tests never ran in CI | test.yml only ran node tests | ✅ pytest job added |
 
 ## Admin worker audit (sprint 5i)
 
