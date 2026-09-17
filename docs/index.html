@@ -119,13 +119,30 @@ footer a:hover{color:var(--t2)}
 <div id="alerts"><div class="none"><span class="e">🐋</span><p>Waiting for the next whale move. Scanner is scanning BTC + ETH blocks every 30s.</p></div></div>
 
 <footer>
-<div><a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal/blob/master/PLAN.md" target="_blank">Plan</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal/blob/master/PLAN_trading_loop.md" target="_blank">Trading loop</a></div>
+<div><a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="graph.html">Graph</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal/blob/master/PLAN.md" target="_blank">Plan</a></div>
 <div class="ft-mono">builder: Samsha &nbsp;|&nbsp; no price prediction &nbsp;|&nbsp; scanner + analyst + bot</div>
 </footer>
 </div>
 
 <script>
 const API = 'https://whalesignal-bot.sthidontknow.workers.dev/latest?limit=6';
+const stripEl = document.createElement('div');
+stripEl.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:0 auto 20px;max-width:860px;padding:0 16px';
+document.querySelector('.con')?.prepend(stripEl);
+async function loadStrip(){
+  try{
+    const [s,n] = await Promise.all([fetch('https://whalesignal-bot.sthidontknow.workers.dev/stats').then(r=>r.json()),fetch('https://whalesignal-bot.sthidontknow.workers.dev/netflow?window=168').then(r=>r.json())]);
+    const acc = s.accuracy ? s.accuracy.rate + '% accuracy (' + s.accuracy.correct + '/' + s.accuracy.evaluated + ')' : 'accuracy: ledger building';
+    const bias = n.totals ? n.totals.bias.replace(/_/g,' ') : '—';
+    const cards = [
+      ['🎯', acc],
+      ['🧭', 'netflow: ' + bias],
+      ['🐋', (s.total_whales||0).toLocaleString() + ' whales tracked'],
+    ];
+    stripEl.innerHTML = cards.map(c=>'<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px 14px;font-size:12.5px;color:#d0d6e0">'+c[0]+' '+c[1]+'</div>').join('');
+  }catch(e){ /* strip is non-essential */ }
+}
+loadStrip();setInterval(loadStrip,60000);
 const POLL_S = 30;
 let tid;
 

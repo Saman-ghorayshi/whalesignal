@@ -103,9 +103,22 @@ async function handleApi(request, env, path) {
   }
 
   if (path === "/api/config" && request.method === "GET") {
+    // the FULL knob surface — the panel predates five sprints and only
+    // exposed pause flags; ops can't manage what it can't see
+    const knobs = {};
+    for (const k of ["config:min_usd", "config:score_cutoff", "config:internal_floor",
+                     "config:channel_mode", "config:eval_min_age_h", "config:max_blocks",
+                     "config:flow_weights", "config:flow_weights_bull", "config:flow_weights_bear",
+                     "config:flow_weights_choppy", "config:vol_spikes", "config:llm_chain",
+                     "config:model", "config:model_groq"]) {
+      try { knobs[k.replace("config:", "")] = JSON.parse(await env.KV.get(k) || "null"); }
+      catch { knobs[k.replace("config:", "")] = "raw:" + (await env.KV.get(k)); }
+    }
     let gemini = !!env.GEMINI_KEY;
     if (!gemini) { try { gemini = !!(await env.KV.get("key:gemini")); } catch {} }
-    return okJson({ ok: true, paused: await getPaused(env), ai: { gemini_key: gemini } });
+    let groq = false;
+    try { groq = !!(await env.KV.get("key:groq")); } catch {}
+    return okJson({ ok: true, paused: await getPaused(env), knobs, ai: { gemini_key: gemini, groq_key: groq } });
   }
 
   if (path === "/api/pause" && request.method === "POST") {
@@ -189,8 +202,9 @@ async function handleApi(request, env, path) {
     ).bind(status, limit).all();
     let queued = 0;
     for (const row of results || []) {
+      const wr = await env.DB.prepare("SELECT chain FROM whales WHERE id = ?").bind(row.id).first();
       await env.DB.prepare("UPDATE whales SET analysis_status = 'pending' WHERE id = ?").bind(row.id).run();
-      await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id }));
+      await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wr?.chain ?? null }));
       queued++;
     }
     return okJson({ ok: true, requeued: queued, from_status: status });

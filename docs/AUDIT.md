@@ -16,6 +16,19 @@ wrong, fix this doc first.
 | evaluate.yml computed a second, conflicting accuracy number | Two "accuracy" values = zero trustworthy accuracy | ✅ retired; worker grader is the single truth |
 | Windows path bug: laptop tools' CLI guards never matched | Worked on POSIX CI, silently no-op'd on Windows | ✅ pathToFileURL |
 
+## Admin worker audit (sprint 5i)
+
+Found: the control plane predated five sprints — /api/config only exposed
+pause flags while the system grew a dozen knobs (thresholds, channel mode,
+fitted weights, vol spikes, LLM chain/models). FIXED: /api/config now
+returns the full knob surface + groq key status. /api/reanalyze now passes
+chain in the queue message. Still missing from the panel UI: channel-mode
+and weight controls (API-only — the panel HTML is cosmetic-grade).
+Security: token compare is constant-time-ish, routes sit behind one gate,
+no rate limiting on token attempts (acceptable: long random token, own
+subdomain). collectCounts still SUM-scans whales per health call — admin-
+only, low frequency; should switch to counters like /stats did.
+
 ## Still "looks complete" — ranked by danger
 
 1. **The admin worker (`admin.js`, `admin-panel.js`) has never been audited.**
