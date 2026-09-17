@@ -805,6 +805,60 @@ export async function analyzeOne(env, msg) {
   return { ok: true, whale_id, signal: parsed.signal, confidence: parsed.confidence, source: "gemini" };
 }
 
+
+// ─── daily market brief (LLM narrative, generated once per day) ──────
+//
+// The analyst composes the brief from rollup context (regime, netflow,
+// funding, headlines) and stores it in KV; the bot posts it with the
+// 18:00 UTC scoreboard. Architecture rule preserved: only the bot
+// touches Telegram.
+export function buildBriefPrompt(ctx) {
+  return "You are WhaleSignal's daily brief writer. Using ONLY the facts below,\n" +
+    "write a 4-6 line market brief for a crypto whale-watching audience.\n" +
+    "Tone: plain, factual, no hype, no price predictions. End with one line:\n" +
+    '"What to watch" naming the single most informative thing to monitor.\n\n' +
+    "FACTS:\n" + ctx.lines + "\n\n" +
+    "Return plain text only.";
+}
+
+export async function generateDailyBrief(env) {
+  const marker = "brief:" + new Date().toISOString().slice(0, 10);
+  try { if (await env.KV.get(marker)) return { skipped: "already_generated" }; } catch {}
+  const lines = [];
+  try {
+    const { results: ph } = await env.DB.prepare(
+      "SELECT ts, price FROM price_history WHERE coin = 'btc' ORDER BY ts DESC LIMIT 48"
+    ).all();
+    if (ph && ph.length >= 51) {
+      const t = taSnapshot(ph.slice().reverse());
+      lines.push("BTC tape: " + t.regime + " (RSI14 " + t.rsi14 + ")");
+    }
+  } catch {}
+  try {
+    const n = await env.DB.prepare(
+      "SELECT SUM(inflow_usd - outflow_usd) AS net FROM hourly_stats WHERE hour_bucket > ? AND (inflow_count > 0 OR outflow_count > 0)"
+    ).bind(Date.now() - 86_400_000).first();
+    if (n?.net != null) lines.push("24h exchange netflow: " + Math.round(n.net / 1e6) + "M USD");
+  } catch {}
+  try {
+    const m = JSON.parse(await env.KV.get("market_cache") || "null");
+    if (m?.funding?.btc?.funding != null) lines.push("BTC funding (8h): " + (m.funding.btc.funding * 100).toFixed(3) + "%");
+    if (m?.fear_greed != null) lines.push("Fear & Greed: " + m.fear_greed + " (" + (m.fear_greed_label || "") + ")");
+  } catch {}
+  try {
+    const n = JSON.parse(await env.KV.get("news_cache") || "null");
+    const heads = (n?.headlines || []).slice(0, 5).map((h) => "- " + h.title);
+    if (heads.length) lines.push("Recent headlines:\n" + heads.join("\n"));
+  } catch {}
+  if (lines.length < 2) return { skipped: "insufficient context" };
+  const text = await callLLM(env, buildBriefPrompt({ lines: lines.join("\n") }));
+  const clean = String(text || "").replace(/^```[a-z]*|```$/g, "").trim().slice(0, 1200);
+  if (!clean) return { skipped: "empty brief" };
+  await env.KV.put("daily_brief", JSON.stringify({ text: clean, generated_at: Date.now() }), { expirationTtl: 3 * 86400 });
+  try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch {}
+  return { generated: true, chars: clean.length };
+}
+
 export default {
   // Cloudflare Queues: batch messages arrive — ack each by awaiting.
   async queue(batch, env) {

@@ -190,6 +190,42 @@ async function handleApi(request, env, path) {
     return errJson("unsupported provider", 400);
   }
 
+  if (path === "/api/knob" && request.method === "POST") {
+    // strict whitelist: only these keys are writable from the panel
+    let body = null;
+    try { body = await request.json(); } catch { return errJson("invalid json", 400); }
+    const key = String(body?.key || "");
+    const allowed = {
+      "channel_mode": ["all", "directional", "high"],
+      "internal_floor": "number",
+      "eval_min_age_h": "number",
+      "min_usd": "number",
+    };
+    if (allowed[key]) {
+      let value = body.value;
+      if (Array.isArray(allowed[key])) {
+        if (!allowed[key].includes(String(value))) return errJson("value must be " + allowed[key].join("|"), 400);
+      } else {
+        value = Number(value);
+        if (!Number.isFinite(value) || value < 0) return errJson("value must be a non-negative number", 400);
+      }
+      await env.KV.put("config:" + key, String(value));
+      return okJson({ ok: true, key, value });
+    }
+    if (key === "flow_weights") {
+      // fitted weights from the laptop loop — sanitized server-side
+      const w = body?.value;
+      if (!w || typeof w !== "object") return errJson("flow_weights must be an object", 400);
+      const clean = {};
+      for (const k of ["fg", "history", "tape", "size", "news", "derivs"]) {
+        const v = Number(w[k]);
+        if (Number.isFinite(v) && v >= 0 && v <= 0.12) clean[k] = v;
+      }
+      await env.KV.put("config:flow_weights", JSON.stringify(clean));
+      return okJson({ ok: true, key, value: clean });
+    }
+    return errJson("unknown knob", 400);
+  }
   if (path === "/api/reanalyze" && request.method === "POST") {
     // requeue whales for analysis — used after adding/rotating the Gemini
     // key so failed (and optionally skipped) rows get another pass.

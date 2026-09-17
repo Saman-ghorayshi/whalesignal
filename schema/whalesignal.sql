@@ -296,3 +296,16 @@ CREATE TABLE IF NOT EXISTS stablecoin_supply (
   total_usd REAL NOT NULL,
   PRIMARY KEY (day)
 );
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5i — reader feedback. 👍/👎 inline buttons on channel alerts;
+-- every reaction is a free human label that the laptop research loop can
+-- fold into weight fitting alongside the price grading.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS alert_feedback (
+  whale_id   INTEGER NOT NULL,
+  reactor    TEXT    NOT NULL,
+  reaction   TEXT    NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (whale_id, reactor)
+);

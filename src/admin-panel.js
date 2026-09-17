@@ -49,6 +49,9 @@ export function renderPanel() {
 <section>
   <h2>Recent events</h2>
   <div id="alerts" class="muted">loading…</div>
+<section id="knobs" style="margin-top:18px">
+  <h2 style="font-size:14px;color:#d0d6e0;margin-bottom:8px">Operational knobs</h2>
+  <div id="knob-list" style="font-size:12px;color:#8a8f98">loading…</div>
 </section>
 
 <script>
@@ -122,6 +125,28 @@ document.getElementById("resumeAll").onclick = async () => {
 
 refresh();
 setInterval(refresh, 30000);
+async function loadKnobs(){
+  try{
+    const r = await fetch('/api/config', { headers: { 'x-admin-token': localStorage.getItem('admin_token') || '' } });
+    const j = await r.json();
+    const list = document.getElementById('knob-list');
+    if (!list) return;
+    const editable = ['channel_mode', 'internal_floor', 'eval_min_age_h', 'min_usd'];
+    list.innerHTML = Object.entries(j.knobs || {}).map(([k, v]) => {
+      const canEdit = editable.includes(k);
+      return '<div style="margin:4px 0"><b>' + k + '</b>: ' + (canEdit
+        ? '<input id="knob_' + k + '" value="' + (v ?? '') + '" style="background:#141517;color:#f7f8f8;border:1px solid #26272b;border-radius:4px;padding:2px 6px;width:160px">' +
+          ' <button onclick="saveKnob(\'' + k + '\')" style="background:#5e6ad2;color:#fff;border:0;border-radius:4px;padding:2px 8px;cursor:pointer">save</button>'
+        : JSON.stringify(v)) + '</div>';
+    }).join('');
+  }catch(e){}
+}
+async function saveKnob(k){
+  const v = document.getElementById('knob_' + k).value;
+  await fetch('/api/knob', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': localStorage.getItem('admin_token') || '' }, body: JSON.stringify({ key: k, value: v }) });
+  loadKnobs();
+}
+document.addEventListener('DOMContentLoaded', loadKnobs);
 </script>
 </body>
 </html>`;

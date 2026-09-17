@@ -633,6 +633,33 @@ async function exportRows(env, { limit, sinceId }) {
   // 8s AbortController cap, so this is fine for Phase 1. Phase 2 should switch
   // to `ctx.waitUntil(tgSendMessage(...))` and return 200 immediately so we
   // don't hold the request open for slow /latest queries.
+  // inline-keyboard reactions from the channel: every 👍/👎 is a free human
+  // label on a graded call. ACK via answerCallbackQuery so Telegram stops
+  // showing the spinner; never treat feedback as a DM command.
+  if (update.callback_query?.data?.startsWith("fb:")) {
+    const cq = update.callback_query;
+    const [, idStr, reaction] = String(cq.data).split(":");
+    try {
+      if (reaction === "up" || reaction === "down") {
+        const reactor = "tg:" + (cq.from?.id ?? cq.message?.message_id ?? "anon");
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO alert_feedback (whale_id, reactor, reaction, created_at) VALUES (?, ?, ?, ?)"
+        ).bind(parseInt(idStr, 10) || 0, reactor, reaction, Date.now()).run();
+        await env.DB.prepare(
+          "INSERT INTO counters (k, v) VALUES (?, 1) ON CONFLICT(k) DO UPDATE SET v = v + 1"
+        ).bind("feedback:" + reaction).run();
+      }
+      await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/answerCallbackQuery`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ callback_query_id: cq.id, text: reaction === "up" ? "Noted — thanks!" : "Noted — helps the model" }),
+      }).catch(() => {});
+    } catch (e) {
+      console.warn("[bot] feedback handler failed:", e.message);
+    }
+    return okJson({ ok: true, handled: "feedback" });
+  }
+
   const msg = update.message || update.channel_post;
   // Commands are a DM feature. Channel echoes must NEVER be answered: every
   // alert the bot posts into PUBLIC_CHANNEL comes back to this webhook as a
@@ -1077,6 +1104,8 @@ export async function statsRows(env) {
     count_7d: sum("c7d"),
     accuracy_total: correct + wrong,
     accuracy_correct: correct,
+    feedback_up: counters.get("feedback:up") || 0,
+    feedback_down: counters.get("feedback:down") || 0,
   };
 }
 
@@ -1981,7 +2010,13 @@ async function postPublicAlert(env, whaleId) {
     await env.KV.put("tg_last_channel_send", String(Date.now()));
   } catch { /* pacing is best-effort */ }
 
-  await tgSendMessage(env.BOT_TOKEN, chatId, text, { parse_mode: "" /* plain text */ });
+  await tgSendMessage(env.BOT_TOKEN, chatId, text, {
+    parse_mode: "" /* plain text */,
+    reply_markup: { inline_keyboard: [[
+      { text: "👍 right call", callback_data: `fb:${whaleId}:up` },
+      { text: "👎 wrong call", callback_data: `fb:${whaleId}:down` },
+    ]] },
+  });
 
   // R2 export for the Python trading loop (trading_loop.py polls this)
   const alertJSON = buildAlertJSON(whale, market);
@@ -2033,10 +2068,20 @@ export default {
         } catch (e) { console.warn("[bot] prune failed:", e.message); }
       }
 
-            // daily scoreboard to the public channel at 18:00 UTC
+            // daily scoreboard to the public channel at 18:00 UTC (analyst
+      // generates the narrative brief; bot delivers — only bot touches TG)
       if (event.cron === "0 18 * * *") {
         const s = await postScoreboard(env);
         console.log(`[bot] scoreboard: ${JSON.stringify(s)}`);
+      }
+      if (event.cron === "0 18 * * *") {
+        try {
+          const brief = JSON.parse(await env.KV.get("daily_brief") || "null");
+          if (brief?.text) {
+            await tgSendMessage(env.BOT_TOKEN, env.PUBLIC_CHANNEL, "🌅 Daily brief\n\n" + brief.text, { parse_mode: "" });
+            console.log("[bot] daily brief posted");
+          }
+        } catch (e) { console.warn("[bot] brief post failed:", e.message); }
       }
     } catch (e) {
       console.error("[bot] scheduled failed:", e.message);
