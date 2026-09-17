@@ -44,6 +44,16 @@ wrong, fix this doc first.
 froze whale storage ~14h (auto-resumed); instrumentation (per-tick rows_read)
 stays in the code so any future burn names its query in the logs.
 
+## cryptopay (other account project): CRITICAL secret leak
+
+PAY_SECRET_CONST + ADMIN_SECRET_CONST are plaintext literals in the bundle,
+used as the FALLBACK auth for /verify /invoice /debit /grant (gem-minting
+and spending). The in-source comment claims no secret literals — it lies.
+Also timing-unsafe === compare. Fix order (documented in full in
+docs/WORKER_CHANGES.md): rotate secrets → update callers → remove const
+fallbacks (fail closed) → constant-time compare. Not auto-fixed: needs a
+coordinated deploy with the bot; doing it half-way would lock the bot out.
+
 ## Admin worker audit (sprint 5i)
 
 Found: the control plane predated five sprints — /api/config only exposed
