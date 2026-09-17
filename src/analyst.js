@@ -28,6 +28,17 @@ import { taSnapshot, regimeAlignment } from "./ta.js";
  * Chart + news context for the confluence model. Two small D1 reads.
  * All optional — missing context just means fewer features in the composite.
  */
+// Fitted confluence weights (config:flow_weights, written by the laptop
+// research loop) — isolate-cached 5 min. Missing/invalid → defaults.
+let weightsCache = { w: null, ts: 0 };
+async function loadFlowWeights(env) {
+  if (weightsCache.w && Date.now() - weightsCache.ts < 300_000) return weightsCache.w;
+  let w = null;
+  try { w = JSON.parse(await env.KV.get("config:flow_weights") || "null"); } catch {}
+  weightsCache = { w: sanitizeWeights(w), ts: Date.now() };
+  return weightsCache.w;
+}
+
 // Isolate-level cache: 400-row price read per analyzed event was wasteful
 // when a queue batch analyzes several events from the same chain in seconds.
 const ctxCache = new Map(); // chain → { ctx, ts }
@@ -74,33 +85,51 @@ export async function getMarketContext(env, chain, symbol) {
  * migration risk). Pure. Returns { confidence, features[] } so every alert
  * can show its own reasoning.
  */
+const DEFAULT_WEIGHTS = { fg: 0.05, history: 0.05, tape: 0.08, size: 0.05, news: 0.05, derivs: 0.05 };
+
+/**
+ * weights override: config:flow_weights (KV JSON) replaces defaults —
+ * written by the laptop research loop from graded-ledger fits (RESEARCH.md).
+ * Unknown/oversized weights are ignored.
+ */
+export function sanitizeWeights(w) {
+  const out = {};
+  if (!w || typeof w !== "object") return out;
+  for (const k of Object.keys(DEFAULT_WEIGHTS)) {
+    const v = Number(w[k]);
+    if (Number.isFinite(v) && v >= 0 && v <= 0.12) out[k] = v;
+  }
+  return out;
+}
+
 export function flowConfidence({
   bullish, fgRegime = null, behavior = null, sizeRatio = null,
-  taRegime = null, newsSent = null, derivs = null, hugeUnlabeled = false,
+  taRegime = null, newsSent = null, derivs = null, hugeUnlabeled = false, weights = null,
 }) {
+  const W = { ...DEFAULT_WEIGHTS, ...sanitizeWeights(weights) };
   const adj = [];
   let c = 0.60;
 
-  if (fgRegime === (bullish ? "greed" : "fear")) { c += 0.05; adj.push("F&G agrees +0.05"); }
-  else if (fgRegime === (bullish ? "fear" : "greed")) { c -= 0.05; adj.push("F&G conflicts −0.05"); }
+  if (fgRegime === (bullish ? "greed" : "fear")) { c += W.fg; adj.push("F&G agrees +" + W.fg); }
+  else if (fgRegime === (bullish ? "fear" : "greed")) { c -= W.fg; adj.push("F&G conflicts −" + W.fg); }
 
-  if (bullish && behavior === "accumulation") { c += 0.05; adj.push("wallet history agrees +0.05"); }
-  else if (!bullish && behavior === "distribution") { c += 0.05; adj.push("wallet history agrees +0.05"); }
+  if (bullish && behavior === "accumulation") { c += W.history; adj.push("wallet history agrees +" + W.history); }
+  else if (!bullish && behavior === "distribution") { c += W.history; adj.push("wallet history agrees +" + W.history); }
   else if ((bullish && behavior === "distribution") || (!bullish && behavior === "accumulation")) {
-    c -= 0.05; adj.push("wallet history conflicts −0.05");
+    c -= W.history; adj.push("wallet history conflicts −" + W.history);
   }
 
   const align = regimeAlignment(taRegime, bullish);
-  if (align === 1) { c += 0.08; adj.push("tape agrees +0.08"); }
-  else if (align === -1) { c -= 0.08; adj.push("tape conflicts −0.08"); }
+  if (align === 1) { c += W.tape; adj.push("tape agrees +" + W.tape); }
+  else if (align === -1) { c -= W.tape; adj.push("tape conflicts −" + W.tape); }
 
-  if (sizeRatio != null && sizeRatio >= 5) { c += 0.05; adj.push(`size ${sizeRatio.toFixed(1)}× usual +0.05`); }
-  else if (sizeRatio != null && sizeRatio <= 0.25) { c -= 0.05; adj.push(`size ${sizeRatio.toFixed(1)}× usual −0.05`); }
+  if (sizeRatio != null && sizeRatio >= 5) { c += W.size; adj.push(`size ${sizeRatio.toFixed(1)}× usual +${W.size}`); }
+  else if (sizeRatio != null && sizeRatio <= 0.25) { c -= W.size; adj.push(`size ${sizeRatio.toFixed(1)}× usual −${W.size}`); }
 
   if (newsSent && newsSent.n >= 2) {
     const s = Math.sign(newsSent.sum);
-    if ((bullish && s > 0) || (!bullish && s < 0)) { c += 0.05; adj.push("news agrees +0.05"); }
-    else if ((bullish && s < 0) || (!bullish && s > 0)) { c -= 0.05; adj.push("news conflicts −0.05"); }
+    if ((bullish && s > 0) || (!bullish && s < 0)) { c += W.news; adj.push("news agrees +" + W.news); }
+    else if ((bullish && s < 0) || (!bullish && s > 0)) { c -= W.news; adj.push("news conflicts −" + W.news); }
   }
 
   // derivatives crowding (contrarian — the 2026 regime papers treat funding
@@ -224,6 +253,8 @@ export function templateAnalysis(whale, market, history, ctx = null) {
       sizeRatio,
       taRegime: ctx?.ta?.regime ?? null,
       newsSent: ctx?.newsSent ?? null,
+      derivs: ctx?.derivs ?? null,
+      weights: ctx?.weights ?? null,
       hugeUnlabeled,
     });
 
@@ -739,6 +770,7 @@ export async function analyzeOne(env, msg) {
   const ctx = await getMarketContext(env, whale.chain, whale.symbol);
   // derivatives crowding context rides on the market cache (funding + OI)
   ctx.derivs = market?.funding?.[String(whale.chain).toLowerCase()] ?? null;
+  ctx.weights = await loadFlowWeights(env);
   const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);

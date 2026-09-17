@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rsi, ema, classifyRegime, regimeAlignment, taSnapshot } from "../src/ta.js";
-import { flowConfidence } from "../src/analyst.js";
+import { flowConfidence, sanitizeWeights } from "../src/analyst.js";
 
 const UP = Array.from({ length: 60 }, (_, i) => 100 + i);        // monotonic up
 const DOWN = Array.from({ length: 60 }, (_, i) => 200 - i);      // monotonic down
@@ -103,4 +103,17 @@ test("flowConfidence: derivatives crowding is contrarian", () => {
   const r4 = flowConfidence({ bullish: true, derivs: { funding: 0.0001 } });
   assert.equal(r4.confidence, 0.60);
   assert.deepEqual(r4.features, []);
+});
+
+test("sanitizeWeights + adaptive loop: fitted weights override defaults safely", () => {
+  // garbage input → defaults
+  assert.deepEqual(sanitizeWeights(null), {});
+  assert.deepEqual(sanitizeWeights({ tape: "hack" }), {});
+  assert.deepEqual(sanitizeWeights({ tape: 0.5 }), {}, "oversized weight ignored");
+  // valid fit output → applied
+  assert.deepEqual(sanitizeWeights({ tape: 0.06, fg: 0.04, news: 0.07 }), { tape: 0.06, fg: 0.04, news: 0.07 });
+  // regime tape agreement now uses the fitted weight
+  const fitted = flowConfidence({ bullish: true, taRegime: "bull_trend", weights: { tape: 0.12 } });
+  assert.equal(fitted.confidence, 0.72, "0.60 + fitted tape weight 0.12");
+  assert.match(fitted.features[0], /tape agrees \+0\.12/);
 });
