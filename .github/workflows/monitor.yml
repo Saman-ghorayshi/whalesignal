@@ -34,7 +34,13 @@ jobs:
           echo "$S" | jq -e '.ok == true' > /dev/null || FAIL="$FAIL stats"
           N=$(curl -s -m 20 "$BASE/netflow?window=24" || echo '{"ok":false}')
           echo "$N" | jq -e '.ok == true' > /dev/null || FAIL="$FAIL netflow"
-          # total_whales must be growing over any 25h window (scanner alive)
+          # data-quality checks: the historical silent failures were uptime-OK
+          # but quality-dead (100% neutral feed, empty news cache)
+          BULL=; BEAR=
+          if [ "" = "0" ] && [ "" = "0" ]; then FAIL=" signals_all_neutral"; fi
+          NH=
+          if [ "" -lt 1 ]; then FAIL=" news_empty"; fi
+                    # total_whales must be growing over any 25h window (scanner alive)
           T=$(echo "$S" | jq '.total_whales')
           echo "total=$T" >> "$GITHUB_OUTPUT"
           if [ -n "$FAIL" ]; then echo "failed=$FAIL" >> "$GITHUB_OUTPUT"; exit 1; fi
