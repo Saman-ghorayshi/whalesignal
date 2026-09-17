@@ -171,12 +171,50 @@ def inject_into_tomls(db_id, kv_id, dry=False):
 
 
 def apply_schema(dry=False):
+    """Apply the schema with idempotent ALTER handling.
+
+    The schema file mixes IF-NOT-EXISTS creates (safe to re-run as one
+    batch) with ALTER TABLE ADD COLUMN statements, which FAIL on re-runs
+    ('duplicate column name') — and wrangler d1 execute --file aborts the
+    WHOLE file on the first error, so every later CREATE TABLE silently
+    never applied. That is how the sprint-3 analysis columns went missing
+    from production for weeks. Fix: creates/indexes run as one batch;
+    each ALTER runs individually and duplicate-column counts as success.
+    """
     print("[4/6] applying D1 schema (remote)...")
     if not SCHEMA.exists():
         print(f"  ! missing schema {SCHEMA}")
         return
-    run([npx(), "wrangler", "d1", "execute", DB_NAME, "--remote",
-         "--file", str(SCHEMA)], dry=dry)
+    raw = SCHEMA.read_text(encoding="utf-8")
+    # strip line comments, then split into statements
+    stripped = "\n".join(
+        line.split("--")[0] if line.lstrip().startswith("--") else line
+        for line in raw.splitlines()
+    )
+    stmts = [s.strip() + ";" for s in stripped.split(";") if s.strip()]
+    alters = [s for s in stmts if s.upper().startswith("ALTER TABLE")]
+    rest = [s for s in stmts if not s.upper().startswith("ALTER TABLE")]
+
+    if rest:
+        batch = "\n".join(rest)
+        batch_path = HERE / "schema_batch.tmp.sql"
+        batch_path.write_text(batch, encoding="utf-8")
+        run([npx(), "wrangler", "d1", "execute", DB_NAME, "--remote",
+             "--file", str(batch_path)], dry=dry)
+        batch_path.unlink(missing_ok=True)
+
+    if dry:
+        print(f"  ~ would run {len(alters)} ALTERs guarded")
+        return
+    for s in alters:
+        r = run([npx(), "wrangler", "d1", "execute", DB_NAME, "--remote",
+                 "--command", s, "-y"], capture=True)
+        out = (r.stdout or "") + (r.stderr or "") if hasattr(r, "stdout") else str(r)
+        if "duplicate column" in out.lower():
+            print("  ✓ column already exists — skipping")
+        elif hasattr(r, "returncode") and r.returncode != 0:
+            print(f"  ! ALTER failed: {out[:200]}")
+    print(f"  ✓ schema applied ({len(alters)} ALTERs guarded)")
 
 
 def seed_wallets(dry=False):

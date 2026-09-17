@@ -44,7 +44,7 @@ def fmt_usd(n) -> str:
     return f"${n:.0f}"
 
 
-def build_summary(data: dict, date_str: str) -> str:
+def build_summary(data: dict, date_str: str, netflow: dict = None) -> str:
     """Build the Telegram message text for the daily summary."""
     lines = [
         f"📊 WhaleSignal Daily Report — {date_str}",
@@ -64,6 +64,15 @@ def build_summary(data: dict, date_str: str) -> str:
         lines.append("")
 
     acc = data.get("accuracy")
+    if netflow and netflow.get("totals"):
+        t = netflow["totals"]
+        net = t.get("net_inflow_usd", 0)
+        bias = str(t.get("bias", "")).replace("_", " ")
+        lines.append(f"🧭 Exchange netflow: {fmt_usd(net)} net ({bias})")
+        sc = t.get("stablecoin") or {}
+        if sc.get("supply_context"):
+            lines.append(f"   Stablecoin supply: {sc['supply_context']}")
+        lines.append("")
     if acc:
         lines.append(f"🎯 AI Accuracy: {acc.get('correct', 0)}/{acc.get('evaluated', 0)} "
                       f"({acc.get('rate', 0)}%)")
@@ -123,6 +132,10 @@ def main():
     print(f"[daily_report] fetching stats from {args.api}/stats for {date_str}")
 
     data = fetch_json(f"{args.api}/stats")
+    try:
+        netflow = fetch_json(f"{args.api}/netflow?window=24")
+    except Exception:
+        netflow = {}
 
     # Write JSON report
     out_dir = Path(args.output)
@@ -133,7 +146,7 @@ def main():
     print(f"[daily_report] wrote {out_file}")
 
     # Build summary and post to Telegram
-    summary = build_summary(data, date_str)
+    summary = build_summary(data, date_str, netflow)
     print(f"[daily_report] summary:\n{summary}")
 
     if send_telegram(args.tg_token, args.chat_id, summary):
