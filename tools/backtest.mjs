@@ -19,6 +19,7 @@
 //   - accuracy on <30 graded calls is noise; the report says so
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { taSnapshot } from "../src/ta.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -228,7 +229,8 @@ function renderReport(summary) {
 }
 
 const args = process.argv.slice(2);
-if (import.meta.url === `file://${process.argv[1]}` || args.includes("--run")) {
+const invoked = import.meta.url === pathToFileURL(process.argv[1]).href || args.includes("--run");
+if (invoked) {
   const refresh = args.includes("--refresh");
   const jsonOut = args.includes("--json") ? args[args.indexOf("--json") + 1] : null;
   const apiIdx = args.indexOf("--api");
