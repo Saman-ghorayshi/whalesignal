@@ -20,6 +20,17 @@ wrong, fix this doc first.
 | **TRADER: LLM TP/SL silently discarded** — hardcoded 3%/5% at close | Prompt asked for levels the closer ignored | ✅ persisted per trade, used by the closer |
 | Python trading-loop tests never ran in CI | test.yml only ran node tests | ✅ pytest job added |
 
+## THE recurring cap-trip root cause (found by account inventory)
+
+The D1 read cap is ACCOUNT-WIDE. This account also hosts battery-relay-db,
+battery-relay-staging-db, cryptopay and mechanicfriend — their traffic
+shares the same 5M reads/day budget. WhaleSignal's fixes were all real,
+but the shared budget kept getting consumed by the neighbors. Definitive
+fix: move WhaleSignal to its own free account — docs/MIGRATION.md has the
+exact 10-step guide (30-45 min, $0). Correction logged: an earlier audit
+dismissed the "another account" idea; the account inventory proved it
+was the right call.
+
 ## Admin worker audit (sprint 5i)
 
 Found: the control plane predated five sprints — /api/config only exposed
