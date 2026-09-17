@@ -667,31 +667,54 @@ export function statTargets(fromAddr, toAddr, fromType, toType) {
  * Labels map — the ONLY wallet data the tick loop needs on every row.
  * Exchange/treasury/bridge/miner labels drive tx classification; the map is
  * tiny (dozens of rows) and cached per isolate. Whale-history attributes
- * (tx_count/dormancy) are fetched per-candidate in fetchWalletInfos —
- * full-table scans of the (auto-label grown) wallets table were the last
- * big read burner in the tick path.
+ * (tx_count/dormancy) are fetched per-candidate in fetchWalletInfos. The
+ * label map itself lives in KV (hash-guarded) — the D1 full-scan version
+ * burned ~10M rows/day and tripped the account read cap daily.
  */
 let labelMapCache = { map: null, ts: 0 };
 const LABEL_MAP_TTL_MS = 60_000;
+
+function labelMapFromRows(rows) {
+  const m = new Map();
+  for (const r of rows || []) {
+    if (!r || !r.address) continue;
+    const entry = { label: r.label, type: r.type, chain: r.chain, tx_count: 0, first_seen: null, last_seen: null };
+    m.set(String(r.address).toLowerCase(), entry);
+    m.set(String(r.address), entry);
+  }
+  return m;
+}
 
 async function loadLabelMap(env) {
   if (labelMapCache.map && Date.now() - labelMapCache.ts < LABEL_MAP_TTL_MS) {
     return labelMapCache.map;
   }
-  const { results } = await env.DB.prepare(
-    "SELECT address, chain, label, type FROM wallets " +
-    "WHERE label IS NOT NULL OR type IN ('exchange', 'treasury', 'bridge', 'miner', 'institution')"
-  ).all();
-  const m = new Map();
-  if (results) {
-    for (const r of results) {
-      if (!r || !r.address) continue;
-      const entry = { label: r.label, type: r.type, chain: r.chain, tx_count: 0, first_seen: null, last_seen: null };
-      m.set(String(r.address).toLowerCase(), entry);
-      m.set(String(r.address), entry);
+  // 1) KV first — KV reads are FREE and the map is written only when labels
+  // change. THE fix for the 10M-reads/day full-scan (see block comment).
+  try {
+    const kv = JSON.parse(await env.KV.get("labels:json") || "null");
+    if (Array.isArray(kv) && kv.length) {
+      const m = labelMapFromRows(kv);
+      labelMapCache = { map: m, ts: Date.now() };
+      return m;
     }
-  }
+  } catch { /* fall through to D1 */ }
+  // 2) D1 fallback (bounded by idx_wallets_type)
+  const { results } = await env.DB.prepare(
+    "SELECT address, chain, label, type FROM wallets WHERE type IN ('exchange', 'treasury', 'bridge', 'miner', 'institution', 'exchange_candidate')"
+  ).all();
+  const m = labelMapFromRows(results);
   labelMapCache = { map: m, ts: Date.now() };
+  // publish to KV so every other isolate reads free (hash-guard the write)
+  try {
+    const rows = results || [];
+    const hash = rows.length + ":" + (rows.map((r) => r.address).join(",").length);
+    const prevHash = await env.KV.get("labels:hash");
+    if (prevHash !== hash) {
+      await env.KV.put("labels:json", JSON.stringify(rows));
+      await env.KV.put("labels:hash", hash);
+    }
+  } catch { /* best effort */ }
   return m;
 }
 
