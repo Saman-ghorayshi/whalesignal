@@ -703,6 +703,14 @@ async function saveAnalysis(env, whaleId, parsed) {
   await env.DB.prepare(
     "UPDATE whales SET analysis_status = 'done' WHERE id = ?"
   ).bind(whaleId).run();
+  try {
+    await env.DB.prepare(
+      "INSERT INTO counters (k, v) VALUES ('status:pending', -1) ON CONFLICT(k) DO UPDATE SET v = MAX(0, v + excluded.v)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO counters (k, v) VALUES ('status:done', 1) ON CONFLICT(k) DO UPDATE SET v = v + 1"
+    ).run();
+  } catch { /* non-essential */ }
 }
 
 /** Mark analysis failed (acknowledged). */

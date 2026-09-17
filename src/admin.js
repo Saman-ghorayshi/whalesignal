@@ -70,19 +70,31 @@ async function getPaused(env) {
   catch { return {}; }
 }
 
+// Status/volume counts read from the rollup counters + hourly_stats —
+// the OLD version full-scanned whales, and the admin panel polls this
+// every 30s: one open panel tab burned the entire daily read cap
+// (~26M reads/hour). THE recurring cap-trip root cause.
 async function collectCounts(env) {
-  const whales = await env.DB.prepare(
-    `SELECT COUNT(*) AS total,
-            SUM(CASE WHEN detected_at > ? THEN 1 ELSE 0 END) AS last_24h,
-            COALESCE(SUM(usd_value), 0) AS volume
-     FROM whales`
+  const counters = new Map(
+    ((await env.DB.prepare("SELECT k, v FROM counters").all()).results || [])
+      .map((r) => [r.k, r.v])
+  );
+  const windows = await env.DB.prepare(
+    "SELECT SUM(CASE WHEN hour_bucket > ? THEN events ELSE 0 END) AS c24 FROM hourly_stats"
   ).bind(Date.now() - 86_400_000).first();
-  const analysis = await env.DB.prepare(
-    `SELECT analysis_status AS status, COUNT(*) AS n FROM whales GROUP BY analysis_status`
-  ).all();
-  const byStatus = {};
-  for (const r of analysis.results || []) byStatus[r.status] = r.n;
-  return { whales, analysis: byStatus };
+  const status = {};
+  for (const k of ["done", "failed", "pending", "skipped"]) {
+    const v = counters.get("status:" + k);
+    if (v != null) status[k] = v;
+  }
+  return {
+    whales: {
+      total: counters.get("total_whales") || 0,
+      last_24h: windows?.c24 || 0,
+      volume: counters.get("total_volume") || 0,
+    },
+    analysis: status,
+  };
 }
 
 /**

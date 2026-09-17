@@ -552,6 +552,13 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
   ).run();
   if (ins.meta.changes === 0) return false; // dup
 
+  // status counters for ops dashboards (replaces full-scan status counts)
+  try {
+    await env.DB.prepare(
+      "INSERT INTO counters (k, v) VALUES (?, 1) ON CONFLICT(k) DO UPDATE SET v = v + 1"
+    ).bind("status:" + (shouldAnalyze ? "pending" : "skipped")).run();
+  } catch { /* non-essential */ }
+
   const row = await env.DB.prepare(
     "SELECT id FROM whales WHERE tx_hash = ?"
   ).bind(wh.tx_hash).first();

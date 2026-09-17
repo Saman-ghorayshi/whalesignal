@@ -124,7 +124,13 @@ document.getElementById("resumeAll").onclick = async () => {
 };
 
 refresh();
-setInterval(refresh, 30000);
+// 2-min cadence + hidden-tab pause: the panel polls /api/health, and a
+// forgotten open tab must not become a read-budget firehose
+let panelTimer = null;
+function startPolling(){ if (!panelTimer) panelTimer = setInterval(refresh, 120_000); }
+function stopPolling(){ if (panelTimer) { clearInterval(panelTimer); panelTimer = null; } }
+document.addEventListener("visibilitychange", () => document.hidden ? stopPolling() : (refresh(), startPolling()));
+startPolling();
 async function loadKnobs(){
   try{
     const r = await fetch('/api/config', { headers: { 'x-admin-token': localStorage.getItem('admin_token') || '' } });
