@@ -475,6 +475,31 @@ export async function fetchHandler(request, env, ctx) {
     }
   }
 
+  // ─── public GET /health — component status for ops ─────────────────
+  if (request.method === "GET" && path === "/health") {
+    try {
+      const payload = await cachedPayload(env, "health:v1", async () => {
+        const out = { ok: true, generated_at: Date.now(), components: {} };
+        try {
+          const c = await env.DB.prepare("SELECT COUNT(*) AS n FROM counters").first();
+          out.components.d1 = { ok: true, counters: c?.n ?? 0 };
+        } catch (e) { out.components.d1 = { ok: false, error: e.message.slice(0, 80) }; }
+        try {
+          const m = JSON.parse(await env.KV.get("market_cache") || "null");
+          out.components.market_cache = { age_min: m?.updated_at ? Math.round((Date.now() - m.updated_at) / 60000) : null, prices_from: m?.prices_from ?? null, funding: !!m?.funding };
+        } catch { out.components.market_cache = { ok: false }; }
+        try {
+          const n = JSON.parse(await env.KV.get("news_cache") || "null");
+          out.components.news_cache = { age_min: n?.updated_at ? Math.round((Date.now() - n.updated_at) / 60000) : null, source: n?.source ?? null, headlines: n?.headlines?.length ?? 0 };
+        } catch { out.components.news_cache = { ok: false }; }
+        return out;
+      });
+      return jsonResponse(payload);
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
   // ─── public GET /news?limit=20 — recent keyword-matching headlines ────
   // The "why did whales move" history: what the news cache saw, deduped.
   if (request.method === "GET" && path === "/news") {
@@ -1617,6 +1642,23 @@ function priceForSymbol(market, symbol) {
  * graded as 'expired' so the ledger never pretends a late price read was
  * the 24h mark).
  */
+/**
+ * Pure: vol-adaptive grading threshold. A flat 1% is a huge move in quiet
+ * markets and noise in violent ones — grade each call against its asset's
+ * own recent volatility instead (7d of hourly closes → dailyized stdev,
+ * threshold = max(1%, half the daily vol)).
+ */
+export function volThreshold(hourlyPrices) {
+  const prices = (hourlyPrices || []).map((p) => (typeof p === "object" ? p.price : p)).filter((p) => p > 0);
+  if (prices.length < 24) return 1.0;
+  const rets = [];
+  for (let i = 1; i < prices.length; i++) rets.push(Math.log(prices[i] / prices[i - 1]));
+  const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
+  const sd = Math.sqrt(rets.reduce((s, r) => s + (r - mean) ** 2, 0) / rets.length);
+  const dailyPct = Math.sqrt(24) * sd * 100;
+  return Math.round(Math.max(1.0, 0.5 * dailyPct) * 100) / 100;
+}
+
 export function gradeWindowCheck(detectedAt, now, minHours = 24, maxHours = 36) {
   const ageH = (now - detectedAt) / 3_600_000;
   if (ageH < minHours) return "young";
@@ -1648,6 +1690,18 @@ export async function gradePending(env, opts = {}) {
      WHERE prediction_outcome IS NULL AND signal IN ('bullish','bearish')
        AND whale_id IN (SELECT id FROM whales WHERE detected_at < ?)`
   ).bind(now0, now0 - maxAgeHours * 3_600_000).run();
+
+  // per-asset vol-adaptive thresholds (BTC/ETH), computed once per run —
+  // a flat 1% is huge in quiet markets and noise in violent ones
+  const thresholds = {};
+  for (const coin of ["btc", "eth"]) {
+    try {
+      const { results: ph } = await env.DB.prepare(
+        "SELECT price FROM price_history WHERE coin = ? ORDER BY hour_bucket DESC LIMIT 168"
+      ).bind(coin).all();
+      thresholds[coin] = volThreshold(ph || []);
+    } catch { thresholds[coin] = 1.0; }
+  }
   const { results } = await env.DB.prepare(
     `SELECT w.id, w.chain, w.symbol, w.usd_value, w.detected_at, w.price_at_detect, w.from_address,
             a.signal, a.confidence
@@ -1660,7 +1714,7 @@ export async function gradePending(env, opts = {}) {
   let graded = 0;
   for (const row of results || []) {
     const priceNow = priceForSymbol(market, row.symbol);
-    const outcome = gradeSignal(row.signal, row.price_at_detect, priceNow);
+    const outcome = gradeSignal(row.signal, row.price_at_detect, priceNow, thresholds[String(row.chain).toLowerCase()] || 1.0);
     // CAS-style: only grade if still ungraded (guards against overlapping runs)
     const upd = await env.DB.prepare(
       `UPDATE analysis SET prediction_outcome = ?, price_at_eval = ?, evaluated_at = ?
@@ -1951,7 +2005,18 @@ export default {
       try { minAge = Number(await env.KV.get("config:eval_min_age_h") ?? 24); } catch {}
       const g = await gradePending(env, { minAgeHours: Number.isFinite(minAge) && minAge >= 0 ? minAge : 24 });
       console.log(`[bot] graded ${g.graded}/${g.considered} predictions (min age ${Number.isFinite(minAge) ? minAge : 24}h)`);
-      // daily scoreboard to the public channel at 18:00 UTC
+      // monthly raw-data retention: rollups keep forever, raw whale rows
+      // past 18 months go (KEEP_RAW_DAYS toggles it for research)
+      const day = new Date().getUTCDate();
+      if (day === 1) {
+        try {
+          const keepMs = 545 * 86_400_000;
+          const r = await env.DB.prepare("DELETE FROM whales WHERE detected_at < ?").bind(Date.now() - keepMs).run();
+          console.log(`[bot] retention prune: ${r.meta?.changes ?? 0} raw rows`);
+        } catch (e) { console.warn("[bot] prune failed:", e.message); }
+      }
+
+            // daily scoreboard to the public channel at 18:00 UTC
       if (event.cron === "0 18 * * *") {
         const s = await postScoreboard(env);
         console.log(`[bot] scoreboard: ${JSON.stringify(s)}`);

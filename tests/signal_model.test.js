@@ -117,3 +117,14 @@ test("sanitizeWeights + adaptive loop: fitted weights override defaults safely",
   assert.equal(fitted.confidence, 0.72, "0.60 + fitted tape weight 0.12");
   assert.match(fitted.features[0], /tape agrees \+0\.12/);
 });
+
+// ─── vol-adaptive grading + per-regime weights (accuracy round) ───────
+import { volThreshold } from "../src/bot.js";
+
+test("volThreshold: flat in calm markets, adaptive in violent ones", () => {
+  const calm = Array.from({ length: 168 }, (_, i) => ({ price: 100_000 + Math.sin(i) * 50 }));
+  assert.equal(volThreshold(calm), 1.0, "quiet market keeps the 1% floor");
+  const wild = Array.from({ length: 168 }, (_, i) => 100_000 * (1 + 0.02 * Math.sin(i * 0.7) + (i % 5) * 0.004));
+  assert.ok(volThreshold(wild) > 1.0, "violent market raises the threshold above 1%");
+  assert.equal(volThreshold([{ price: 100 }]), 1.0, "too few rows → conservative 1%");
+});
