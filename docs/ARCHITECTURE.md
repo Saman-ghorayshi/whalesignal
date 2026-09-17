@@ -105,7 +105,10 @@ Telegram channel + scoreboard + DM bot (premium waitlist live) + dashboard
 | 7 | DefiLlama | **no key needed** | stablecoin supply, TVL | phase: Piece 4 |
 | 8 | GDELT / RSS | **no key** | global news breadth | ✅ (7 feeds) |
 | 9 | Reddit API (free OAuth) | reddit.com/prefs/apps | r/Crypto sentiment | phase 2 |
-| 10 | Glassnode/CryptoQuant | **paid** — skip until revenue | SOPR/MVRV depth | deliberately deferred |
+| 10 | **CoinMetrics Community** | **no key** (community-api.coinmetrics.io/v4) | on-chain metrics + liquidations catalog + free daily CSVs | laptop backtests |
+| 11 | **Bybit liquidation stream** | **no key** (v5 websocket, 500ms) | real-time liquidations → crowding events | laptop collects 10h/day |
+| 12 | **GDELT TONE** | **no key** (BigQuery / tonechart mode) | per-topic news tone −100..+100 | news engine v2 |
+| 13 | Glassnode/CryptoQuant | **paid** — skip until revenue | SOPR/MVRV depth | deliberately deferred |
 
 ## Research base
 
