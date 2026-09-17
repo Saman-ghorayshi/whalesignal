@@ -1122,7 +1122,18 @@ export async function fetchDerivatives(coin, fetcher = fetchJSON) {
     out.funding = by.funding;
     out.bybit_oi_usd = by.oi_usd;
     out.source = "bybit";
-  } catch { /* both dead — panel empty, feature degrades */ }
+    if (by.funding != null) return out;
+  } catch (e) {
+    console.warn();
+  }
+  // OKX fallback: funding rate only
+  try {
+    const ox = await fetcher("https://www.okx.com/api/v5/public/funding-rate?instId=" + coin.toUpperCase() + "-USDT-SWAP", { timeoutMs: 8000 });
+    const fr = parseFloat(ox?.data?.[0]?.fundingRate);
+    if (Number.isFinite(fr)) { out.funding = fr; out.source = "okx"; }
+  } catch (e) {
+    console.warn();
+  }
   return out;
 }
 
