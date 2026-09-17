@@ -421,7 +421,8 @@ export async function fetchHandler(request, env, ctx) {
         const totals = await netflowTotals(env, since, chain);
         const perExchange = await netflowByExchange(env, since, chain);
         const baseline = await netflowBaseline(env, chain);
-        return renderNetflowJSON(totals, perExchange, windowHours, chain, baseline);
+        const stableCtx = await stablecoinContext(env);
+        return renderNetflowJSON(totals, perExchange, windowHours, chain, baseline, stableCtx);
       });
       return new Response(JSON.stringify(payload), {
         status: 200,
@@ -1213,7 +1214,22 @@ export async function netflowBaseline(env, chain = null) {
  *   2. |net| ≥ 1.5× the trailing 7-day daily average (when a baseline
  *      exists) — a raw number without history context is not a signal.
  */
-export function renderNetflowJSON(totals, perExchange, windowHours, chain = null, baseline = null) {
+/**
+ * Stablecoin supply trend from the daily snapshots: the research caveat —
+ * flows during flat supply are rotation; during rising supply, fresh capital.
+ */
+export async function stablecoinContext(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT day, total_usd FROM stablecoin_supply ORDER BY day DESC LIMIT 8"
+  ).all();
+  if (!results || results.length < 2) return null;
+  const latest = results[0].total_usd, oldest = results[results.length - 1].total_usd;
+  const delta = Math.round(latest - oldest);
+  const pct = oldest > 0 ? Math.round((delta / oldest) * 10000) / 100 : null;
+  const read = pct == null ? "unknown" : pct > 1 ? "fresh capital entering the system" : pct < -1 ? "capital exiting the system" : "roughly flat — flows are mostly rotation";
+  return { days: results.length, delta_usd: delta, pct, read };
+}
+export function renderNetflowJSON(totals, perExchange, windowHours, chain = null, baseline = null, stableCtx = null) {
   let inflow = 0, outflow = 0, inflowCount = 0, outflowCount = 0;
   const byChain = new Map();
   for (const r of totals || []) {
@@ -1276,7 +1292,8 @@ export function renderNetflowJSON(totals, perExchange, windowHours, chain = null
         outflow_usd: sOut,
         net_inflow_usd: stableNet,
         bias: stableBias,
-        note: "Stablecoin flows are read INVERSELY to native assets: inflows are deployable buying power, not sell-side supply.",
+        supply_context: stableCtx,
+        note: "Stablecoin flows are read INVERSELY to native assets: inflows are deployable buying power, not sell-side supply." + (stableCtx ? " Supply 7d: " + (stableCtx.delta_usd >= 0 ? "+" : "") + fmtUSD(stableCtx.delta_usd) + " (" + stableCtx.read + ")." : ""),
       },
     },
     by_chain: [...byChain.values()].map((c) => ({

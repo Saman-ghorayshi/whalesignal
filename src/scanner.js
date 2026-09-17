@@ -992,6 +992,22 @@ export const SPOT_SOURCES = [
     parse: (j) => { const n = parseFloat(j?.price); return Number.isFinite(n) ? n : null; },
   },
   {
+    name: "bitfinex",
+    url: (c) => "https://api-pub.bitfinex.com/v2/ticker/t" + c.toUpperCase() + "USD",
+    parse: (j) => { const n = parseFloat(Array.isArray(j) ? j[6] : null); return Number.isFinite(n) ? n : null; },
+  },
+  {
+    name: "kucoin",
+    url: (c) => "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=" + c.toUpperCase() + "-USDT",
+    parse: (j) => { const n = parseFloat(j?.data?.price); return Number.isFinite(n) ? n : null; },
+  },
+  {
+    name: "cryptocompare",
+    url: (c) => "https://min-api.cryptocompare.com/data/price?fsym=" + c.toUpperCase() + "&tsyms=USD",
+    keyHeader: (env) => (env.CRYPTOCOMPARE_KEY ? { "X-API-Key": env.CRYPTOCOMPARE_KEY } : {}),
+    parse: (j) => { const n = parseFloat(j?.USD); return Number.isFinite(n) ? n : null; },
+  },
+  {
     name: "okx",
     url: (c) => "https://www.okx.com/api/v5/market/ticker?instId=" + c.toUpperCase() + "-USDT",
     parse: (j) => { const n = parseFloat(j?.data?.[0]?.last); return Number.isFinite(n) ? n : null; },
@@ -1013,13 +1029,13 @@ export function pickConsensusPrice(values) {
 }
 
 /** Query fallback sources until 3 answer; returns consensus + provenance. */
-export async function fetchSpotPrice(coin, fetcher = fetchJSON) {
+export async function fetchSpotPrice(coin, fetcher = fetchJSON, env = null) {
   const results = [];
   const from = [];
   for (const src of SPOT_SOURCES) {
     if (results.length >= 3) break;
     try {
-      const p = src.parse(await fetcher(src.url(coin), { timeoutMs: 6000 }));
+      const p = src.parse(await fetcher(src.url(coin), { timeoutMs: 6000, headers: src.keyHeader ? src.keyHeader(env) : {} }));
       if (p != null) { results.push(p); from.push(src.name); }
     } catch { /* next source */ }
   }
@@ -1045,6 +1061,23 @@ export function rssStartIndex(nowMs, n) {
 // geo-blocked or down the feature degrades to null.
 
 /** Pure: premiumIndex payload → 8h funding rate as a decimal. */
+/**
+ * CoinGecko demo-key rotation: env CG_KEYS (or CG_KEY) may hold several
+ * comma-separated demo keys from separate free accounts. One is picked at
+ * random per call to spread the monthly quota — the same operational
+ * pattern the etherscan rotation already uses. No key → keyless requests.
+ */
+async function cgKeyHeader(env) {
+  let keys = [];
+  try {
+    const kv = JSON.parse(await env.KV.get("key:cg") || "null");
+    if (Array.isArray(kv)) keys = kv.map(String);
+  } catch { /* fall through to env */ }
+  const raw = [env.CG_KEYS, env.CG_KEY].filter(Boolean).join(",");
+  if (raw) keys = raw.split(",").map((k) => k.trim()).filter(Boolean);
+  if (!keys.length) return {};
+  return { "x-cg-demo-api-key": keys[Math.floor(Math.random() * keys.length)] };
+}
 export function parseBinanceFunding(j) {
   const n = parseFloat(j?.lastFundingRate);
   return Number.isFinite(n) ? n : null;
@@ -1144,18 +1177,18 @@ export async function refreshMarketCache(env) {
     "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
   let cg = null;
   try {
-    cg = await fetchJSON(cgUrl, { timeoutMs: 6000, headers: env.CG_KEY ? { "x-cg-demo-api-key": env.CG_KEY } : {} });
+    cg = await fetchJSON(cgUrl, { timeoutMs: 6000, headers: await cgKeyHeader(env) });
   } catch (e) {
     console.warn("coingecko price fetch failed, falling back to the source chain:", e.message);
   }
   // per-coin consensus from the keyless source chain when CoinGecko missed
   let btcFill = null, ethFill = null, pricesFrom = {};
   if (cg?.bitcoin?.usd == null) {
-    btcFill = await fetchSpotPrice("btc");
+    btcFill = await fetchSpotPrice("btc", fetchJSON, env);
     pricesFrom.btc = btcFill.agreed ? btcFill.from.join("+") : "DISAGREED:" + btcFill.from.join("+");
   }
   if (cg?.ethereum?.usd == null) {
-    ethFill = await fetchSpotPrice("eth");
+    ethFill = await fetchSpotPrice("eth", fetchJSON, env);
     pricesFrom.eth = ethFill.agreed ? ethFill.from.join("+") : "DISAGREED:" + ethFill.from.join("+");
   }
   const btcSpot = btcFill?.price ?? null;
@@ -1530,6 +1563,30 @@ export async function discoverSinkCandidates(env) {
   }
   try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch {}
   return { candidates: added };
+}
+
+
+// ─── stablecoin supply context (DefiLlama, keyless) ─────────────────
+//
+// The research's own caveat: exchange inflows during FLAT stablecoin supply
+// are rotation; during RISING supply they are fresh capital. One daily
+// snapshot per day (sum of all chains); /netflow reads the last 8 days.
+export async function writeStablecoinSnapshot(env) {
+  const marker = "stablesnap:" + new Date().toISOString().slice(0, 10);
+  try { if (await env.KV.get(marker)) return { skipped: "already_ran" }; } catch {}
+  const j = await fetchJSON("https://stablecoins.llama.fi/stablecoinchains", { timeoutMs: 10_000, maxBytes: 1_500_000 });
+  let total = 0;
+  for (const ch of j || []) {
+    const v = ch?.totalCirculatingUSD?.peggedUSD;
+    if (Number.isFinite(v)) total += v;
+  }
+  if (!(total > 0)) return { skipped: "no data" };
+  const day = new Date().toISOString().slice(0, 10);
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO stablecoin_supply (day, total_usd) VALUES (?, ?)"
+  ).bind(day, Math.round(total)).run();
+  try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch {}
+  return { total_usd: Math.round(total) };
 }
 
 export default {

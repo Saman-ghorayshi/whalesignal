@@ -284,3 +284,15 @@ CREATE TABLE IF NOT EXISTS waitlist (
   joined_at INTEGER NOT NULL,
   PRIMARY KEY (chat_id)
 );
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5h — stablecoin supply snapshots (DefiLlama, one row per day).
+-- Gives /netflow the rotation-vs-fresh-capital context the research calls
+-- for: inflows during flat supply are rotation; during rising supply, new
+-- money entering the system.
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS stablecoin_supply (
+  day       TEXT NOT NULL,
+  total_usd REAL NOT NULL,
+  PRIMARY KEY (day)
+);

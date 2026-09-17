@@ -384,3 +384,15 @@ test("derivatives parsers: basis, LSR, taker, Bybit fallback", () => {
   assert.equal(by.oi_usd, 12345.6);
   assert.equal(parseBybitTickers({ result: { list: [] } }).funding, null);
 });
+
+test("netflow stablecoin supply context: rotation vs fresh capital reads", () => {
+  // fresh capital: supply up 3%
+  const p = renderNetflowJSON([], [], 24, null, null, { days: 8, delta_usd: 900_000_000, pct: 3, read: "fresh capital entering the system" });
+  assert.match(p.totals.stablecoin.note, /fresh capital entering/);
+  // flat: rotation
+  const p2 = renderNetflowJSON([], [], 24, null, null, { days: 8, delta_usd: 50_000_000, pct: 0.4, read: "roughly flat — flows are mostly rotation" });
+  assert.match(p2.totals.stablecoin.note, /rotation/);
+  // absent context → note without supply line
+  const p3 = renderNetflowJSON([], [], 24, null, null, null);
+  assert.doesNotMatch(p3.totals.stablecoin.note, /Supply 7d/);
+});
