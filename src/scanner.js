@@ -1303,6 +1303,20 @@ export function headlineSentiment(title) {
  * headlines are ALSO persisted into the `news` table (deduped by hash) so
  * history accumulates and /news can serve it.
  */
+/** Pure: GDELT DOC 2.0 artlist JSON → titles (keyless global news). */
+export function parseGdeltTitles(j) {
+  return (Array.isArray(j?.articles) ? j.articles : [])
+    .filter((a) => a && typeof a.title === "string")
+    .map((a) => ({ title: a.title }));
+}
+
+async function fetchGdeltNews() {
+  const url = "https://api.gdeltproject.org/api/v2/doc/doc?query=(bitcoin%20OR%20ethereum)%20sourcelang:english&mode=artlist&maxrecords=30&timespan=1h&format=json";
+  try {
+    return parseGdeltTitles(await fetchJSON(url, { timeoutMs: 8000 }));
+  } catch { return []; }
+}
+
 export async function refreshNewsCache(env) {
   let token = env.NEWS_TOKEN;
   if (!token) {
@@ -1332,6 +1346,21 @@ export async function refreshNewsCache(env) {
         if (headlines.length) source = new URL(feed).hostname;
       } catch (e) {
         console.warn(`rss news fetch failed for ${feed}:`, e.message);
+      }
+    }
+    // GDELT: keyless global events feed — tops up when RSS came back thin
+    if (headlines.length < 5) {
+      try {
+        const gdeltTitles = await fetchGdeltNews();
+        const extra = filterNewsKeywords(gdeltTitles);
+        if (extra.length) {
+          const seen = new Set(headlines.map((h) => h.title));
+          for (const h of extra) if (!seen.has(h.title)) headlines.push(h);
+          headlines = headlines.slice(0, 5);
+          source = "gdelt.org";
+        }
+      } catch (e) {
+        console.warn("gdelt news fetch failed:", e.message);
       }
     }
   }

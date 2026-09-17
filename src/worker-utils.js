@@ -100,6 +100,15 @@ export function usdValue(amount, symbol, market) {
   return amount * p;
 }
 
+/**
+ * Flow-class key for the vol-spike lookup (chain:tx_type:size band).
+ * Shared by the laptop research tool and the alert formatter.
+ */
+export function volSpikeClass(chain, txType, usd) {
+  const band = usd >= 10_000_000 ? "10M+" : usd >= 1_000_000 ? "1M-10M" : "<1M";
+  return `${String(chain || "?").toLowerCase()}:${txType || "unknown"}:${band}`;
+}
+
 /** Current time in ms. indirection so tests can stub it. */
 export function nowMs() {
   return Date.now();

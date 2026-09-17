@@ -17,8 +17,9 @@
 // Usage: node tools/laptop/research.mjs [--api URL] [--out FILE]
 
 import { writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { volSpikeClass } from "../../src/worker-utils.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API = "https://whalesignal-bot.sthidontknow.workers.dev";
@@ -154,6 +155,20 @@ export function hitRates(rows) {
   return { add, agg };
 }
 
+/** Per-flow-class historical P(24h realized vol >= 2%) — the Herremans-style
+ *  direction-agnostic signal. Published to config:vol_spikes for alerts. */
+export function volSpikeClasses(rows) {
+  const m = {};
+  for (const r of rows) {
+    if (r.vol24 == null) continue;
+    const k = volSpikeClass(r.chain, r.tx_type, r.usd);
+    m[k] = m[k] || { n: 0, spikes: 0 };
+    m[k].n++;
+    if (r.vol24 >= 2) m[k].spikes++;
+  }
+  return Object.fromEntries(Object.entries(m).map(([k, v]) => [k, { n: v.n, pct: Math.round((v.spikes / v.n) * 100) }]).filter(([, v]) => v.n >= 5));
+}
+
 export function summarize(rows) {
   const rate = (list) => {
     const dir = list.filter((r) => r.outcome === "correct" || r.outcome === "wrong");
@@ -227,7 +242,8 @@ export function logisticFit(rows, { iters = 4000, lr = 0.1 } = {}) {
 // ─── CLI ──────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-if (import.meta.url === `file://${process.argv[1]}` || args.includes("--run")) {
+const invoked = import.meta.url === pathToFileURL(process.argv[1]).href || args.includes("--run");
+if (invoked) {
   const apiIdx = args.indexOf("--api");
   const api = apiIdx >= 0 ? args[apiIdx + 1] : DEFAULT_API;
   console.error("[research] pulling graded ledger…");
@@ -237,8 +253,9 @@ if (import.meta.url === `file://${process.argv[1]}` || args.includes("--run")) {
   const prices = await fetchPrices();
   const rows = buildFeatureRows(events, prices);
   const summary = summarize(rows);
+  const volSpikes = volSpikeClasses(rows);
   const fit = logisticFit(rows);
-  const report = { generated_at: Date.now(), events: events.length, feature_rows: rows.length, summary, logistic: fit };
+  const report = { generated_at: Date.now(), events: events.length, feature_rows: rows.length, summary, logistic: fit, vol_spikes: volSpikes };
   const outDir = join(HERE, "..", "..", "docs", "data", "research");
   mkdirSync(outDir, { recursive: true });
   const outFile = join(outDir, "feature_report.json");

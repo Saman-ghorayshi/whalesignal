@@ -14,6 +14,7 @@
 
 import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
 import { taSnapshot } from "./ta.js";
+import { volSpikeClass } from "./worker-utils.js";
 
 /** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
@@ -127,6 +128,16 @@ export async function fireGitHubDispatch(env, alertJSON) {
   }
 }
 
+// Published vol-spike rates (config:vol_spikes, written by the laptop
+// research loop) — isolate-cached 5 min. Missing → no field, honest.
+let volSpikeCache = { rates: null, ts: 0 };
+async function getVolSpikeRates(env) {
+  if (volSpikeCache.rates && Date.now() - volSpikeCache.ts < 300_000) return volSpikeCache.rates;
+  try { volSpikeCache.rates = JSON.parse(await env.KV.get("config:vol_spikes") || "null"); } catch { volSpikeCache.rates = null; }
+  volSpikeCache.ts = Date.now();
+  return volSpikeCache.rates;
+}
+
 // ─── alert formatting (pure, testable) ────────────────────────────────
 
 /**
@@ -226,6 +237,11 @@ export function formatAlert(whale, analysis, market, opts = {}) {
     lines.push("📰 Related headlines:");
     for (const t of opts.related) lines.push(`• ${t}`);
     lines.push("");
+  }
+  // Herremans-style direction-agnostic signal: historical odds that this
+  // flow class precedes a >=2% dailyized vol move
+  if (opts.volSpike != null) {
+    lines.push(`⚡ Vol-spike odds for this flow class: ~${opts.volSpike}% (historical)`);
   }
   lines.push(`📊 Market: BTC ${btcP} (${btcChg}) | ${fg} | ETH ${ethP}`);
   lines.push(signalLine);
@@ -1871,13 +1887,17 @@ async function postPublicAlert(env, whaleId) {
   const clusterCount = await countCluster(env, whale.to_address, whale.chain, whale.detected_at, whaleId);
   const clusterNote = formatClusterNote(clusterCount);
 
+  const vsRates = await getVolSpikeRates(env);
+  const vsKey = vsRates ? volSpikeClass(whale.chain, whale.tx_type, whale.usd_value) : null;
+  const volSpike = vsKey && vsRates[vsKey] ? vsRates[vsKey].pct : null;
+
   let text = formatAlert(whale, {
     headline: whale.headline,
     interpretation: whale.interpretation,
     signal: whale.signal,
     confidence: whale.confidence,
     related_factor: whale.related_factor,
-  }, market, { related });
+  }, market, { related, volSpike });
   if (clusterNote) text = clusterNote + "\n" + text;
 
   // Telegram bot pacing: ~1 msg/sec per chat and channels punish bursts

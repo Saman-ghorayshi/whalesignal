@@ -62,3 +62,27 @@ test("normalizeMempoolBlock: satoshi values kept, shape matches extractCandidate
   assert.equal(blk.tx[0].out[1].addr, "1Dest");
   assert.equal(blk.tx[0].out[1].value, 600, "mempool values are sats — no ×1e8");
 });
+
+// ─── GDELT parser + co-spend clustering (sprint 5g) ──────────────────
+import { parseGdeltTitles } from "../src/scanner.js";
+import { coSpendsFromTxs } from "../tools/laptop/cluster.mjs";
+
+test("parseGdeltTitles: artlist shape, tolerant of garbage", () => {
+  const j = { articles: [{ title: "Bitcoin ETF inflows resume" }, { url: "no title" }, { title: "Ethereum staking surges" }] };
+  assert.equal(parseGdeltTitles(j).length, 2);
+  assert.deepEqual(parseGdeltTitles({}), []);
+  assert.deepEqual(parseGdeltTitles(null), []);
+});
+
+test("coSpendsFromTxs: common-input-ownership heuristic", () => {
+  const seed = "1Exchange";
+  const txs = [
+    { vin: [{ prevout: { scriptpubkey_address: seed } }, { prevout: { scriptpubkey_address: "1Hot2" } }] },
+    { vin: [{ prevout: { scriptpubkey_address: seed } }, { prevout: { scriptpubkey_address: "1Hot2" } }, { prevout: { scriptpubkey_address: "1Hot3" } }] },
+    { vin: [{ prevout: { scriptpubkey_address: "1Other" } }] },
+  ];
+  const counts = coSpendsFromTxs(txs, seed);
+  assert.equal(counts.get("1Hot2"), 2);
+  assert.equal(counts.get("1Hot3"), 1);
+  assert.equal(counts.get("1Other"), undefined);
+});

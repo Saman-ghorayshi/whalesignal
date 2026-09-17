@@ -1,0 +1,59 @@
+{
+  "generated_at": 1789604327001,
+  "events": 1,
+  "feature_rows": 1,
+  "summary": {
+    "overall": {
+      "graded": 1,
+      "directional": 0,
+      "correct": 0,
+      "rate": null
+    },
+    "by_confidence": {
+      "0.6": {
+        "graded": 1,
+        "directional": 0,
+        "correct": 0,
+        "rate": null
+      }
+    },
+    "by_regime": {
+      "bear_trend": {
+        "graded": 1,
+        "directional": 0,
+        "correct": 0,
+        "rate": null
+      }
+    },
+    "by_signal": {
+      "bearish": {
+        "graded": 1,
+        "directional": 0,
+        "correct": 0,
+        "rate": null
+      }
+    },
+    "by_symbol": {
+      "BTC": {
+        "graded": 1,
+        "directional": 0,
+        "correct": 0,
+        "rate": null
+      }
+    },
+    "by_tx_type": {
+      "unknown": {
+        "graded": 1,
+        "directional": 0,
+        "correct": 0,
+        "rate": null
+      }
+    },
+    "vol_spike_rate": 0
+  },
+  "logistic": {
+    "enough_data": false,
+    "n": 0
+  },
+  "vol_spikes": {}
+}
