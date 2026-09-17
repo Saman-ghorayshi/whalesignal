@@ -36,10 +36,11 @@ jobs:
           echo "$N" | jq -e '.ok == true' > /dev/null || FAIL="$FAIL netflow"
           # data-quality checks: the historical silent failures were uptime-OK
           # but quality-dead (100% neutral feed, empty news cache)
-          BULL=; BEAR=
-          if [ "" = "0" ] && [ "" = "0" ]; then FAIL=" signals_all_neutral"; fi
-          NH=
-          if [ "" -lt 1 ]; then FAIL=" news_empty"; fi
+          BULL=$(echo "$S" | jq ".signals.bullish")
+          BEAR=$(echo "$S" | jq ".signals.bearish")
+          if [ "$BULL" = "0" ] && [ "$BEAR" = "0" ]; then FAIL="$FAIL signals_all_neutral"; fi
+          NH=$(curl -s -m 20 "$BASE/news?limit=5" | jq ".count // 0")
+          if [ "$NH" -lt 1 ]; then FAIL="$FAIL news_empty"; fi
                     # total_whales must be growing over any 25h window (scanner alive)
           T=$(echo "$S" | jq '.total_whales')
           echo "total=$T" >> "$GITHUB_OUTPUT"
