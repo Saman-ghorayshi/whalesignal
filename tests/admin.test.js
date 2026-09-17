@@ -47,3 +47,18 @@ test("buildHealth: shapes vitals with ages and pause flags", () => {
   assert.equal(h.ai.gemini_key, false);
   assert.equal(h.whales.total, 10);
 });
+
+// ─── knob validation (whitelisted control-plane writes) ──────────────
+import { validateKnob } from "../src/admin.js";
+
+test("validateKnob: enum, numeric bounds, weights clamping, unknown keys", () => {
+  assert.deepEqual(validateKnob("channel_mode", "directional"), { ok: true, value: "directional" });
+  assert.equal(validateKnob("channel_mode", "yolo").ok, false);
+  assert.deepEqual(validateKnob("min_usd", "250000"), { ok: true, value: 250000 });
+  assert.equal(validateKnob("min_usd", -5).ok, false);
+  assert.equal(validateKnob("min_usd", 99_000_000).ok, false, "over bound rejected");
+  const w = validateKnob("flow_weights", { tape: 0.06, fg: "hack", derivs: 0.5 });
+  assert.deepEqual(w.value, { tape: 0.06 }, "invalid + oversized weights dropped");
+  assert.equal(validateKnob("flow_weights", "garbage").ok, false);
+  assert.equal(validateKnob("arbitrary_key", 1).ok, false, "whitelist only");
+});

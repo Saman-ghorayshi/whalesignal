@@ -72,6 +72,13 @@ only, low frequency; should switch to counters like /stats did.
 - First-sighting wallet insert, directional bonus arithmetic, vol-adaptive
   thresholds — all unit-tested with the exact boundary numbers.
 
+## Transparency
+
+The calibration page (docs/research.html) renders the laptop's
+feature/retro reports publicly — hit-rates by regime and confidence.
+Transparency is the product's answer to the "just looks complete" problem:
+the numbers are the numbers.
+
 ## The meta-rule
 
 Anything added to this project ships with: a test that would catch it
