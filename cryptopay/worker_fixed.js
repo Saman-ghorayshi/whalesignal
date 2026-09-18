@@ -316,8 +316,8 @@ async function verifyEVM(chainCfg, txid, expectedMemo, env, chainId) {
   const wlt = chainCfg.wallet;
   if (!wlt || wlt.length < 8) return { ok: false, reason: "wallet not configured" };
 
-  const baseUrl = chainCfg.api_url;
-  const { key: apiKey } = _pickEVMKey(chainCfg, env, chainId);
+  let baseUrl = chainCfg.api_url;
+  let { key: apiKey } = _pickEVMKey(chainCfg, env, chainId);
 
   // Step 1: Get transaction (includes value + to)
   let r, usedUrl;
@@ -721,7 +721,7 @@ async function verifyCardano(chainCfg, txid, expectedMemo, env, chainId) {
   // Env override: env.CRYPTOPAY_API_KEYS_ADA (comma-sep, single key ok) wins over stamped cfg.
   const envName = "CRYPTOPAY_API_KEYS_" + String(chainId || "").toUpperCase();
   const envKey = env && env[envName] ? String(env[envName]).split(",")[0].trim() : null;
-  const apiKey = envKey || chainCfg.api_key;
+  let apiKey = envKey || chainCfg.api_key;
   if (!wlt || wlt.length < 8) return { ok: false, reason: "wallet not configured" };
   if (!apiKey) return { ok: false, reason: "Blockfrost API key not configured for ADA" };
 
