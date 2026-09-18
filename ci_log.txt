@@ -1,0 +1,1349 @@
+﻿2026-09-18T18:58:35.0170021Z Current runner version: '2.337.0'
+2026-09-18T18:58:35.0197221Z ##[group]Runner Image Provisioner
+2026-09-18T18:58:35.0198191Z Hosted Compute Agent
+2026-09-18T18:58:35.0198840Z Version: 20260828.587
+2026-09-18T18:58:35.0199466Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-18T18:58:35.0200277Z Build Date: 2026-08-28T16:44:25Z
+2026-09-18T18:58:35.0201071Z Worker ID: {35a698c4-c0c6-49ef-b257-5bf29cbee6ec}
+2026-09-18T18:58:35.0201875Z Azure Region: eastus
+2026-09-18T18:58:35.0202528Z ##[endgroup]
+2026-09-18T18:58:35.0204137Z ##[group]Operating System
+2026-09-18T18:58:35.0204827Z Ubuntu
+2026-09-18T18:58:35.0205361Z 24.04.5
+2026-09-18T18:58:35.0205928Z LTS
+2026-09-18T18:58:35.0206716Z ##[endgroup]
+2026-09-18T18:58:35.0207275Z ##[group]Runner Image
+2026-09-18T18:58:35.0207995Z Image: ubuntu-24.04
+2026-09-18T18:58:35.0208580Z Version: 20260907.300.1
+2026-09-18T18:58:35.0209888Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-18T18:58:35.0211526Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+2026-09-18T18:58:35.0212524Z ##[endgroup]
+2026-09-18T18:58:35.0213791Z ##[group]GITHUB_TOKEN Permissions
+2026-09-18T18:58:35.0215812Z Contents: read
+2026-09-18T18:58:35.0216944Z Metadata: read
+2026-09-18T18:58:35.0217654Z Packages: read
+2026-09-18T18:58:35.0218285Z ##[endgroup]
+2026-09-18T18:58:35.0221119Z Secret source: Actions
+2026-09-18T18:58:35.0222144Z Cache mode: write
+2026-09-18T18:58:35.0223135Z Prepare workflow directory
+2026-09-18T18:58:35.0574537Z Prepare all required actions
+2026-09-18T18:58:35.0624402Z Getting action download info
+2026-09-18T18:58:35.2885488Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-09-18T18:58:35.4032850Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-09-18T18:58:35.6028847Z Complete job name: test (20)
+2026-09-18T18:58:35.6936981Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-18T18:58:35.6946339Z ##[group]Run actions/checkout@v4
+2026-09-18T18:58:35.6947316Z with:
+2026-09-18T18:58:35.6947823Z   repository: Saman-ghorayshi/whalesignal
+2026-09-18T18:58:35.6952017Z   token: ***
+2026-09-18T18:58:35.6952470Z   ssh-strict: true
+2026-09-18T18:58:35.6952923Z   ssh-user: git
+2026-09-18T18:58:35.6953382Z   persist-credentials: true
+2026-09-18T18:58:35.6953890Z   clean: true
+2026-09-18T18:58:35.6954350Z   sparse-checkout-cone-mode: true
+2026-09-18T18:58:35.6954893Z   fetch-depth: 1
+2026-09-18T18:58:35.6955343Z   fetch-tags: false
+2026-09-18T18:58:35.6955805Z   show-progress: true
+2026-09-18T18:58:35.6956476Z   lfs: false
+2026-09-18T18:58:35.6956971Z   submodules: false
+2026-09-18T18:58:35.6957451Z   set-safe-directory: true
+2026-09-18T18:58:35.6957972Z   allow-unsafe-pr-checkout: false
+2026-09-18T18:58:35.6958778Z ##[endgroup]
+2026-09-18T18:58:35.8062682Z Syncing repository: Saman-ghorayshi/whalesignal
+2026-09-18T18:58:35.8064805Z ##[group]Getting Git version info
+2026-09-18T18:58:35.8065623Z Working directory is '/home/runner/work/whalesignal/whalesignal'
+2026-09-18T18:58:35.8067144Z [command]/usr/bin/git version
+2026-09-18T18:58:35.8180784Z git version 2.55.0
+2026-09-18T18:58:35.8207525Z ##[endgroup]
+2026-09-18T18:58:35.8223031Z Temporarily overriding HOME='/home/runner/work/_temp/97742c77-01dd-462a-9637-8727531839ad' before making global git config changes
+2026-09-18T18:58:35.8225333Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-18T18:58:35.8229826Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/whalesignal/whalesignal
+2026-09-18T18:58:35.8294144Z Deleting the contents of '/home/runner/work/whalesignal/whalesignal'
+2026-09-18T18:58:35.8301106Z ##[group]Initializing the repository
+2026-09-18T18:58:35.8305183Z [command]/usr/bin/git init /home/runner/work/whalesignal/whalesignal
+2026-09-18T18:58:35.8461568Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-18T18:58:35.8465868Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-18T18:58:35.8467350Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-18T18:58:35.8468129Z hint: call:
+2026-09-18T18:58:35.8468563Z hint:
+2026-09-18T18:58:35.8469122Z hint: 	git config --global init.defaultBranch <name>
+2026-09-18T18:58:35.8470175Z hint:
+2026-09-18T18:58:35.8471229Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-18T18:58:35.8472206Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-18T18:58:35.8472961Z hint:
+2026-09-18T18:58:35.8473452Z hint: 	git branch -m <name>
+2026-09-18T18:58:35.8473943Z hint:
+2026-09-18T18:58:35.8474610Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-18T18:58:35.8476452Z Initialized empty Git repository in /home/runner/work/whalesignal/whalesignal/.git/
+2026-09-18T18:58:35.8479574Z [command]/usr/bin/git remote add origin https://github.com/Saman-ghorayshi/whalesignal
+2026-09-18T18:58:35.8535459Z ##[endgroup]
+2026-09-18T18:58:35.8537137Z ##[group]Disabling automatic garbage collection
+2026-09-18T18:58:35.8540469Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-18T18:58:35.8575438Z ##[endgroup]
+2026-09-18T18:58:35.8581480Z ##[group]Setting up auth
+2026-09-18T18:58:35.8583743Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-18T18:58:35.8627319Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-18T18:58:35.9042401Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-18T18:58:35.9084536Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-18T18:58:35.9321316Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-18T18:58:35.9360555Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-18T18:58:35.9593691Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-18T18:58:35.9636384Z ##[endgroup]
+2026-09-18T18:58:35.9637569Z ##[group]Fetching the repository
+2026-09-18T18:58:35.9647148Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +e2f94914a38fd1a0d67412afd36de3a65351f3ff:refs/remotes/origin/main
+2026-09-18T18:58:36.2421402Z From https://github.com/Saman-ghorayshi/whalesignal
+2026-09-18T18:58:36.2423231Z  * [new ref]         e2f94914a38fd1a0d67412afd36de3a65351f3ff -> origin/main
+2026-09-18T18:58:36.2427255Z ##[endgroup]
+2026-09-18T18:58:36.2428895Z ##[group]Determining the checkout info
+2026-09-18T18:58:36.2430717Z ##[endgroup]
+2026-09-18T18:58:36.2438804Z [command]/usr/bin/git sparse-checkout disable
+2026-09-18T18:58:36.2513465Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-18T18:58:36.2546819Z ##[group]Checking out the ref
+2026-09-18T18:58:36.2550576Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-09-18T18:58:36.2706754Z Switched to a new branch 'main'
+2026-09-18T18:58:36.2712138Z branch 'main' set up to track 'origin/main'.
+2026-09-18T18:58:36.2719251Z ##[endgroup]
+2026-09-18T18:58:36.2769569Z [command]/usr/bin/git log -1 --format=%H
+2026-09-18T18:58:36.2798435Z e2f94914a38fd1a0d67412afd36de3a65351f3ff
+2026-09-18T18:58:36.3105503Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-18T18:58:36.3108881Z ##[group]Run actions/setup-node@v4
+2026-09-18T18:58:36.3109428Z with:
+2026-09-18T18:58:36.3109841Z   node-version: 20
+2026-09-18T18:58:36.3110293Z   always-auth: false
+2026-09-18T18:58:36.3110783Z   check-latest: false
+2026-09-18T18:58:36.3114670Z   token: ***
+2026-09-18T18:58:36.3115099Z ##[endgroup]
+2026-09-18T18:58:36.4728587Z Attempting to download 20...
+2026-09-18T18:58:36.4785599Z (node:2254) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-18T18:58:36.4788347Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-18T18:58:36.8637348Z Acquiring 20.20.2 - x64 from https://github.com/actions/node-versions/releases/download/20.20.2-23521894959/node-20.20.2-linux-x64.tar.gz
+2026-09-18T18:58:37.1529701Z Extracting ...
+2026-09-18T18:58:37.1661098Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/f24d0602-487f-4108-b705-1c147252c404 -f /home/runner/work/_temp/ea683e61-7f50-4340-9af5-17415418f85c
+2026-09-18T18:58:38.2063048Z Adding to the cache ...
+2026-09-18T18:58:40.0796942Z ##[group]Environment details
+2026-09-18T18:58:40.3098491Z node: v20.20.2
+2026-09-18T18:58:40.3099108Z npm: 10.8.2
+2026-09-18T18:58:40.3099764Z yarn: 1.22.22
+2026-09-18T18:58:40.3100912Z ##[endgroup]
+2026-09-18T18:58:40.3291946Z ##[group]Run node tests/run_tests.js
+2026-09-18T18:58:40.3292451Z [36;1mnode tests/run_tests.js[0m
+2026-09-18T18:58:40.3337669Z shell: /usr/bin/bash -e {0}
+2026-09-18T18:58:40.3338042Z ##[endgroup]
+2026-09-18T18:58:40.3745783Z running 15 test file(s):
+2026-09-18T18:58:40.3746796Z   - admin.test.js
+2026-09-18T18:58:40.3747230Z   - analyst.test.js
+2026-09-18T18:58:40.3747694Z   - bot.test.js
+2026-09-18T18:58:40.3748020Z   - e2e.test.js
+2026-09-18T18:58:40.3748352Z   - latest.test.js
+2026-09-18T18:58:40.3748694Z   - scanner.test.js
+2026-09-18T18:58:40.3749054Z   - scheduled.test.js
+2026-09-18T18:58:40.3749418Z   - signal_model.test.js
+2026-09-18T18:58:40.3749808Z   - sources.test.js
+2026-09-18T18:58:40.3750159Z   - sprint1.test.js
+2026-09-18T18:58:40.3750503Z   - sprint2.test.js
+2026-09-18T18:58:40.3750851Z   - sprint3.test.js
+2026-09-18T18:58:40.3751225Z   - sprint4.test.js
+2026-09-18T18:58:40.3751595Z   - sprint5.test.js
+2026-09-18T18:58:40.3751949Z   - utils.test.js
+2026-09-18T18:58:40.3752238Z 
+2026-09-18T18:58:40.4183094Z TAP version 13
+2026-09-18T18:58:40.4594591Z # Subtest: isAuthorized: matching token passes, wrong/missing/unconfigured fail
+2026-09-18T18:58:40.4625894Z ok 1 - isAuthorized: matching token passes, wrong/missing/unconfigured fail
+2026-09-18T18:58:40.4627620Z   ---
+2026-09-18T18:58:40.4628597Z   duration_ms: 1.419513
+2026-09-18T18:58:40.4629572Z   ...
+2026-09-18T18:58:40.4637410Z # Subtest: parsePauseBody: valid scopes and coercion; rejects garbage
+2026-09-18T18:58:40.4647631Z ok 2 - parsePauseBody: valid scopes and coercion; rejects garbage
+2026-09-18T18:58:40.4687532Z   ---
+2026-09-18T18:58:40.4688328Z   duration_ms: 0.733145
+2026-09-18T18:58:40.4689089Z   ...
+2026-09-18T18:58:40.4690168Z # Subtest: buildHealth: shapes vitals with ages and pause flags
+2026-09-18T18:58:40.4691488Z ok 3 - buildHealth: shapes vitals with ages and pause flags
+2026-09-18T18:58:40.4692499Z   ---
+2026-09-18T18:58:40.4693210Z   duration_ms: 0.373275
+2026-09-18T18:58:40.4693966Z   ...
+2026-09-18T18:58:40.4695197Z # Subtest: validateKnob: enum, numeric bounds, weights clamping, unknown keys
+2026-09-18T18:58:40.4697127Z ok 4 - validateKnob: enum, numeric bounds, weights clamping, unknown keys
+2026-09-18T18:58:40.4698340Z   ---
+2026-09-18T18:58:40.4699148Z   duration_ms: 0.300019
+2026-09-18T18:58:40.4700075Z   ...
+2026-09-18T18:58:40.5093705Z # Subtest: buildPrompt always contains all the structural anchors the AI needs
+2026-09-18T18:58:40.5096557Z ok 5 - buildPrompt always contains all the structural anchors the AI needs
+2026-09-18T18:58:40.5097937Z   ---
+2026-09-18T18:58:40.5098974Z   duration_ms: 28.437392
+2026-09-18T18:58:40.5099953Z   ...
+2026-09-18T18:58:40.5133353Z # Subtest: buildPrompt handles missing market + history gracefully
+2026-09-18T18:58:40.5134965Z ok 6 - buildPrompt handles missing market + history gracefully
+2026-09-18T18:58:40.5136493Z   ---
+2026-09-18T18:58:40.5137447Z   duration_ms: 0.473531
+2026-09-18T18:58:40.5138356Z   ...
+2026-09-18T18:58:40.5139655Z # Subtest: parseAnalysis parses clean JSON out of plain JSON text
+2026-09-18T18:58:40.5141269Z ok 7 - parseAnalysis parses clean JSON out of plain JSON text
+2026-09-18T18:58:40.5142520Z   ---
+2026-09-18T18:58:40.5143430Z   duration_ms: 0.576213
+2026-09-18T18:58:40.5144347Z   ...
+2026-09-18T18:58:40.5145860Z # Subtest: parseAnalysis strips ```json fences and extracts the embedded object
+2026-09-18T18:58:40.5148081Z ok 8 - parseAnalysis strips ```json fences and extracts the embedded object
+2026-09-18T18:58:40.5149477Z   ---
+2026-09-18T18:58:40.5150324Z   duration_ms: 0.312271
+2026-09-18T18:58:40.5151247Z   ...
+2026-09-18T18:58:40.5152600Z # Subtest: parseAnalysis clamps confidence to [0,1] and rejects unknown signals
+2026-09-18T18:58:40.5154461Z ok 9 - parseAnalysis clamps confidence to [0,1] and rejects unknown signals
+2026-09-18T18:58:40.5155730Z   ---
+2026-09-18T18:58:40.5156918Z   duration_ms: 0.316779
+2026-09-18T18:58:40.5157820Z   ...
+2026-09-18T18:58:40.5184600Z # Subtest: parseAnalysis returns null when no JSON is recoverable
+2026-09-18T18:58:40.5186516Z ok 10 - parseAnalysis returns null when no JSON is recoverable
+2026-09-18T18:58:40.5188092Z   ---
+2026-09-18T18:58:40.5189080Z   duration_ms: 0.25782
+2026-09-18T18:58:40.5190080Z   ...
+2026-09-18T18:58:40.5191204Z # Subtest: parseAnalysis truncates runaway long fields
+2026-09-18T18:58:40.5192555Z ok 11 - parseAnalysis truncates runaway long fields
+2026-09-18T18:58:40.5193696Z   ---
+2026-09-18T18:58:40.5194596Z   duration_ms: 0.329684
+2026-09-18T18:58:40.5195614Z   ...
+2026-09-18T18:58:40.5362810Z # [bot] GitHub dispatch sent for alert 42
+2026-09-18T18:58:40.5366962Z # [bot] GitHub dispatch failed: 401 Unauthorized
+2026-09-18T18:58:40.5368372Z # [bot] GitHub dispatch error: ECONNREFUSED
+2026-09-18T18:58:40.5369465Z # [bot] GitHub dispatch sent for alert undefined
+2026-09-18T18:58:40.5407902Z # Subtest: formatAlert renders the canonical phase-1 alert block
+2026-09-18T18:58:40.5425416Z ok 12 - formatAlert renders the canonical phase-1 alert block
+2026-09-18T18:58:40.5427002Z   ---
+2026-09-18T18:58:40.5447244Z   duration_ms: 20.943941
+2026-09-18T18:58:40.5450108Z   ...
+2026-09-18T18:58:40.5463193Z # Subtest: formatAlert swaps in blockchain.com URL for BTC
+2026-09-18T18:58:40.5467826Z ok 13 - formatAlert swaps in blockchain.com URL for BTC
+2026-09-18T18:58:40.5468818Z   ---
+2026-09-18T18:58:40.5469672Z   duration_ms: 0.338079
+2026-09-18T18:58:40.5470216Z   ...
+2026-09-18T18:58:40.5470874Z # Subtest: formatAlert handles missing analysis gracefully
+2026-09-18T18:58:40.5471785Z ok 14 - formatAlert handles missing analysis gracefully
+2026-09-18T18:58:40.5472377Z   ---
+2026-09-18T18:58:40.5472773Z   duration_ms: 0.246559
+2026-09-18T18:58:40.5473199Z   ...
+2026-09-18T18:58:40.5473870Z # Subtest: formatAlert handles missing market fields gracefully
+2026-09-18T18:58:40.5474770Z ok 15 - formatAlert handles missing market fields gracefully
+2026-09-18T18:58:40.5475375Z   ---
+2026-09-18T18:58:40.5475764Z   duration_ms: 0.264843
+2026-09-18T18:58:40.5476419Z   ...
+2026-09-18T18:58:40.5477060Z # Subtest: formatAlert maps all four tx_types to a label
+2026-09-18T18:58:40.5477882Z ok 16 - formatAlert maps all four tx_types to a label
+2026-09-18T18:58:40.5478456Z   ---
+2026-09-18T18:58:40.5478849Z   duration_ms: 0.875801
+2026-09-18T18:58:40.5479274Z   ...
+2026-09-18T18:58:40.5480129Z # Subtest: buildAlertJSON produces the NDJSON contract shape for trading_loop.py
+2026-09-18T18:58:40.5481849Z ok 17 - buildAlertJSON produces the NDJSON contract shape for trading_loop.py
+2026-09-18T18:58:40.5482703Z   ---
+2026-09-18T18:58:40.5483163Z   duration_ms: 0.309336
+2026-09-18T18:58:40.5483642Z   ...
+2026-09-18T18:58:40.5484418Z # Subtest: buildAlertJSON returns null when required fields are missing
+2026-09-18T18:58:40.5485487Z ok 18 - buildAlertJSON returns null when required fields are missing
+2026-09-18T18:58:40.5486428Z   ---
+2026-09-18T18:58:40.5486893Z   duration_ms: 0.157393
+2026-09-18T18:58:40.5487390Z   ...
+2026-09-18T18:58:40.5488160Z # Subtest: buildAlertJSON handles missing market (nulls, not crash)
+2026-09-18T18:58:40.5489270Z ok 19 - buildAlertJSON handles missing market (nulls, not crash)
+2026-09-18T18:58:40.5489960Z   ---
+2026-09-18T18:58:40.5490367Z   duration_ms: 0.19849
+2026-09-18T18:58:40.5490825Z   ...
+2026-09-18T18:58:40.5491616Z # Subtest: fireGitHubDispatch sends POST to GitHub API with correct body
+2026-09-18T18:58:40.5492697Z ok 20 - fireGitHubDispatch sends POST to GitHub API with correct body
+2026-09-18T18:58:40.5493400Z   ---
+2026-09-18T18:58:40.5493807Z   duration_ms: 1.34748
+2026-09-18T18:58:40.5494240Z   ...
+2026-09-18T18:58:40.5495059Z # Subtest: fireGitHubDispatch is a no-op when GH_PAT or GH_REPO not set
+2026-09-18T18:58:40.5496658Z ok 21 - fireGitHubDispatch is a no-op when GH_PAT or GH_REPO not set
+2026-09-18T18:58:40.5497434Z   ---
+2026-09-18T18:58:40.5497849Z   duration_ms: 0.35438
+2026-09-18T18:58:40.5498291Z   ...
+2026-09-18T18:58:40.5499035Z # Subtest: fireGitHubDispatch handles non-ok response without throwing
+2026-09-18T18:58:40.5500459Z ok 22 - fireGitHubDispatch handles non-ok response without throwing
+2026-09-18T18:58:40.5501175Z   ---
+2026-09-18T18:58:40.5501598Z   duration_ms: 1.432207
+2026-09-18T18:58:40.5502065Z   ...
+2026-09-18T18:58:40.5502822Z # Subtest: fireGitHubDispatch handles network error without throwing
+2026-09-18T18:58:40.5503876Z ok 23 - fireGitHubDispatch handles network error without throwing
+2026-09-18T18:58:40.5504561Z   ---
+2026-09-18T18:58:40.5505006Z   duration_ms: 0.422858
+2026-09-18T18:58:40.5505483Z   ...
+2026-09-18T18:58:40.5506472Z # Subtest: fireGitHubDispatch handles null alertJSON fields safely
+2026-09-18T18:58:40.5507605Z ok 24 - fireGitHubDispatch handles null alertJSON fields safely
+2026-09-18T18:58:40.5508284Z   ---
+2026-09-18T18:58:40.5508704Z   duration_ms: 0.301682
+2026-09-18T18:58:40.5509186Z   ...
+2026-09-18T18:58:40.5509994Z # Subtest: isAdmin matches numeric from.id against ADMIN_CHAT_ID string
+2026-09-18T18:58:40.5514134Z ok 25 - isAdmin matches numeric from.id against ADMIN_CHAT_ID string
+2026-09-18T18:58:40.5537177Z   ---
+2026-09-18T18:58:40.5547584Z   duration_ms: 0.228475
+2026-09-18T18:58:40.5548740Z   ...
+2026-09-18T18:58:40.5550113Z # Subtest: isAdmin rejects wrong user, missing id, and unconfigured admin
+2026-09-18T18:58:40.5551882Z ok 26 - isAdmin rejects wrong user, missing id, and unconfigured admin
+2026-09-18T18:58:40.5553147Z   ---
+2026-09-18T18:58:40.5553774Z   duration_ms: 0.220039
+2026-09-18T18:58:40.5554650Z   ...
+2026-09-18T18:58:40.5577674Z # Subtest: renderAdminStats formats a compact DM summary
+2026-09-18T18:58:40.5590454Z ok 27 - renderAdminStats formats a compact DM summary
+2026-09-18T18:58:40.5591263Z   ---
+2026-09-18T18:58:40.5591756Z   duration_ms: 0.474724
+2026-09-18T18:58:40.5592286Z   ...
+2026-09-18T18:58:40.5593017Z # Subtest: renderAdminStats handles empty db without NaN
+2026-09-18T18:58:40.5593975Z ok 28 - renderAdminStats handles empty db without NaN
+2026-09-18T18:58:40.5594683Z   ---
+2026-09-18T18:58:40.5595166Z   duration_ms: 0.251207
+2026-09-18T18:58:40.5595663Z   ...
+2026-09-18T18:58:40.5596744Z # Subtest: parseKeyCommand accepts whitelisted set and del
+2026-09-18T18:58:40.5597789Z ok 29 - parseKeyCommand accepts whitelisted set and del
+2026-09-18T18:58:40.5598479Z   ---
+2026-09-18T18:58:40.5598945Z   duration_ms: 1.06356
+2026-09-18T18:58:40.5599456Z   ...
+2026-09-18T18:58:40.5600287Z # Subtest: parseKeyCommand rejects unknown names and malformed input
+2026-09-18T18:58:40.5602019Z ok 30 - parseKeyCommand rejects unknown names and malformed input
+2026-09-18T18:58:40.5602698Z   ---
+2026-09-18T18:58:40.5603109Z   duration_ms: 0.195093
+2026-09-18T18:58:40.5603548Z   ...
+2026-09-18T18:58:40.5604403Z # Subtest: renderKeyStatus shows source precedence without leaking values
+2026-09-18T18:58:40.5605672Z ok 31 - renderKeyStatus shows source precedence without leaking values
+2026-09-18T18:58:40.5606807Z   ---
+2026-09-18T18:58:40.5607313Z   duration_ms: 0.480645
+2026-09-18T18:58:40.5607869Z   ...
+2026-09-18T18:58:40.5608755Z # Subtest: parseChainCommand validates and lowercases provider names
+2026-09-18T18:58:40.5610010Z ok 32 - parseChainCommand validates and lowercases provider names
+2026-09-18T18:58:40.5610825Z   ---
+2026-09-18T18:58:40.5611317Z   duration_ms: 0.273169
+2026-09-18T18:58:40.5611834Z   ...
+2026-09-18T18:58:40.5612674Z # Subtest: parseCfgCommand accepts whitelisted numeric config names
+2026-09-18T18:58:40.5613878Z ok 33 - parseCfgCommand accepts whitelisted numeric config names
+2026-09-18T18:58:40.5614717Z   ---
+2026-09-18T18:58:40.5615210Z   duration_ms: 0.371832
+2026-09-18T18:58:40.5615740Z   ...
+2026-09-18T18:58:40.5619144Z # node:internal/modules/esm/translators:391
+2026-09-18T18:58:40.5632903Z #     throw new ERR_UNKNOWN_BUILTIN_MODULE(url);
+2026-09-18T18:58:40.5633865Z #           ^
+2026-09-18T18:58:40.5635016Z # Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: node:sqlite
+2026-09-18T18:58:40.5636972Z #     at ModuleLoader.builtinStrategy (node:internal/modules/esm/translators:391:11)
+2026-09-18T18:58:40.5638502Z #     at \#translate (node:internal/modules/esm/loader:497:12)
+2026-09-18T18:58:40.5640398Z #     at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:544:27) {
+2026-09-18T18:58:40.5641718Z #   code: 'ERR_UNKNOWN_BUILTIN_MODULE'
+2026-09-18T18:58:40.5642626Z # }
+2026-09-18T18:58:40.5643361Z # Node.js v20.20.2
+2026-09-18T18:58:40.5644520Z # Subtest: /home/runner/work/whalesignal/whalesignal/tests/e2e.test.js
+2026-09-18T18:58:40.5646387Z not ok 4 - /home/runner/work/whalesignal/whalesignal/tests/e2e.test.js
+2026-09-18T18:58:40.5647528Z   ---
+2026-09-18T18:58:40.5648598Z   duration_ms: 78.458559
+2026-09-18T18:58:40.5650055Z   location: '/home/runner/work/whalesignal/whalesignal/tests/e2e.test.js:1:1'
+2026-09-18T18:58:40.5651323Z   failureType: 'testCodeFailure'
+2026-09-18T18:58:40.5652275Z   exitCode: 1
+2026-09-18T18:58:40.5653095Z   signal: ~
+2026-09-18T18:58:40.5653869Z   error: 'test failed'
+2026-09-18T18:58:40.5654750Z   code: 'ERR_TEST_FAILURE'
+2026-09-18T18:58:40.5655671Z   ...
+2026-09-18T18:58:40.6403179Z # Subtest: renderLatestJSON returns the public JSON contract shape
+2026-09-18T18:58:40.6447287Z ok 35 - renderLatestJSON returns the public JSON contract shape
+2026-09-18T18:58:40.6448534Z   ---
+2026-09-18T18:58:40.6477959Z   duration_ms: 1.682302
+2026-09-18T18:58:40.6496938Z   ...
+2026-09-18T18:58:40.6498030Z # Subtest: renderLatestJSON handles empty rows with ok=false
+2026-09-18T18:58:40.6499414Z ok 36 - renderLatestJSON handles empty rows with ok=false
+2026-09-18T18:58:40.6500408Z   ---
+2026-09-18T18:58:40.6501068Z   duration_ms: 0.219719
+2026-09-18T18:58:40.6501811Z   ...
+2026-09-18T18:58:40.6502764Z # Subtest: renderLatestJSON handles null rows with ok=false
+2026-09-18T18:58:40.6503943Z ok 37 - renderLatestJSON handles null rows with ok=false
+2026-09-18T18:58:40.6504828Z   ---
+2026-09-18T18:58:40.6505497Z   duration_ms: 0.192519
+2026-09-18T18:58:40.6506582Z   ...
+2026-09-18T18:58:40.6514234Z # Subtest: renderLatestJSON tolerates missing market (nulls not crash)
+2026-09-18T18:58:40.6515171Z ok 38 - renderLatestJSON tolerates missing market (nulls not crash)
+2026-09-18T18:58:40.6515799Z   ---
+2026-09-18T18:58:40.6517032Z   duration_ms: 0.169385
+2026-09-18T18:58:40.6517535Z   ...
+2026-09-18T18:58:40.6518120Z # Subtest: renderLatestReply builds the original 5-row DM text
+2026-09-18T18:58:40.6518838Z ok 39 - renderLatestReply builds the original 5-row DM text
+2026-09-18T18:58:40.6519366Z   ---
+2026-09-18T18:58:40.6519791Z   duration_ms: 0.413861
+2026-09-18T18:58:40.6520634Z   ...
+2026-09-18T18:58:40.6521293Z # Subtest: renderLatestReply handles empty rows with the friendly scanner message
+2026-09-18T18:58:40.6522163Z ok 40 - renderLatestReply handles empty rows with the friendly scanner message
+2026-09-18T18:58:40.6522762Z   ---
+2026-09-18T18:58:40.6523158Z   duration_ms: 0.147845
+2026-09-18T18:58:40.6523579Z   ...
+2026-09-18T18:58:40.6524092Z # Subtest: latestRows queries D1 and returns the rows
+2026-09-18T18:58:40.6524722Z ok 41 - latestRows queries D1 and returns the rows
+2026-09-18T18:58:40.6525207Z   ---
+2026-09-18T18:58:40.6525599Z   duration_ms: 0.380669
+2026-09-18T18:58:40.6526253Z   ...
+2026-09-18T18:58:40.6527170Z # Subtest: latestRows returns [] when D1 has no rows
+2026-09-18T18:58:40.6527956Z ok 42 - latestRows returns [] when D1 has no rows
+2026-09-18T18:58:40.6528307Z   ---
+2026-09-18T18:58:40.6528552Z   duration_ms: 0.261537
+2026-09-18T18:58:40.6528819Z   ...
+2026-09-18T18:58:40.6529186Z # Subtest: latestRows default limit is 1
+2026-09-18T18:58:40.6630980Z ok 43 - latestRows default limit is 1
+2026-09-18T18:58:40.6631668Z   ---
+2026-09-18T18:58:40.6632103Z   duration_ms: 0.30609
+2026-09-18T18:58:40.6632422Z   ...
+2026-09-18T18:58:40.6647249Z # Subtest: GET /latest returns CORS+JSON, 200, with alerts in body
+2026-09-18T18:58:40.6669433Z ok 44 - GET /latest returns CORS+JSON, 200, with alerts in body
+2026-09-18T18:58:40.6671062Z   ---
+2026-09-18T18:58:40.6671573Z   duration_ms: 33.101629
+2026-09-18T18:58:40.6672068Z   ...
+2026-09-18T18:58:40.6672883Z # Subtest: GET /latest with no alerts returns ok=false, 200
+2026-09-18T18:58:40.6674277Z ok 45 - GET /latest with no alerts returns ok=false, 200
+2026-09-18T18:58:40.6674931Z   ---
+2026-09-18T18:58:40.6675374Z   duration_ms: 0.924632
+2026-09-18T18:58:40.6675842Z   ...
+2026-09-18T18:58:40.6676892Z # Subtest: GET /latest catches DB errors and returns 500 with reason
+2026-09-18T18:58:40.6677935Z ok 46 - GET /latest catches DB errors and returns 500 with reason
+2026-09-18T18:58:40.6678685Z   ---
+2026-09-18T18:58:40.6679128Z   duration_ms: 1.040518
+2026-09-18T18:58:40.6679623Z   ...
+2026-09-18T18:58:40.6680493Z # Subtest: non-/latest, non-/tg/<token> path still 404s
+2026-09-18T18:58:40.6699796Z ok 47 - non-/latest, non-/tg/<token> path still 404s
+2026-09-18T18:58:40.6719292Z   ---
+2026-09-18T18:58:40.6720092Z   duration_ms: 0.59573
+2026-09-18T18:58:40.6720928Z   ...
+2026-09-18T18:58:40.6721867Z # Subtest: POST /latest falls through to the Telegram branch (not handled as get route)
+2026-09-18T18:58:40.6723129Z ok 48 - POST /latest falls through to the Telegram branch (not handled as get route)
+2026-09-18T18:58:40.6723886Z   ---
+2026-09-18T18:58:40.6724328Z   duration_ms: 0.861775
+2026-09-18T18:58:40.6724763Z   ...
+2026-09-18T18:58:40.6909535Z # Subtest: extractCandidatesBTC takes the LARGEST single output, skipping change outputs
+2026-09-18T18:58:40.6965071Z ok 49 - extractCandidatesBTC takes the LARGEST single output, skipping change outputs
+2026-09-18T18:58:40.7082875Z   ---
+2026-09-18T18:58:40.7163361Z   duration_ms: 2.306164
+2026-09-18T18:58:40.7224686Z   ...
+2026-09-18T18:58:40.7257615Z # Subtest: extractCandidatesBTC with missing inputs/out skips gracefully
+2026-09-18T18:58:40.7327816Z ok 50 - extractCandidatesBTC with missing inputs/out skips gracefully
+2026-09-18T18:58:40.7356964Z   ---
+2026-09-18T18:58:40.7380336Z   duration_ms: 0.251678
+2026-09-18T18:58:40.7381581Z   ...
+2026-09-18T18:58:40.7382812Z # Subtest: extractCandidatesETH converts hex wei to decimal eth
+2026-09-18T18:58:40.7384323Z ok 51 - extractCandidatesETH converts hex wei to decimal eth
+2026-09-18T18:58:40.7385414Z   ---
+2026-09-18T18:58:40.7386544Z   duration_ms: 0.355302
+2026-09-18T18:58:40.7387384Z   ...
+2026-09-18T18:58:40.7388687Z # Subtest: extractERC20Candidates pulls USDT transfer amounts with decimals=6
+2026-09-18T18:58:40.7390203Z ok 52 - extractERC20Candidates pulls USDT transfer amounts with decimals=6
+2026-09-18T18:58:40.7391317Z   ---
+2026-09-18T18:58:40.7391997Z   duration_ms: 0.426584
+2026-09-18T18:58:40.7393266Z   ...
+2026-09-18T18:58:40.7394221Z # Subtest: filterWhales keeps only txs above MIN_USD
+2026-09-18T18:58:40.7395587Z ok 53 - filterWhales keeps only txs above MIN_USD
+2026-09-18T18:58:40.7397145Z   ---
+2026-09-18T18:58:40.7398059Z   duration_ms: 0.803797
+2026-09-18T18:58:40.7399125Z   ...
+2026-09-18T18:58:40.7400533Z # Subtest: classifyWhales stamps tx_type using lowercase evm labels
+2026-09-18T18:58:40.7402833Z ok 54 - classifyWhales stamps tx_type using lowercase evm labels
+2026-09-18T18:58:40.7403853Z   ---
+2026-09-18T18:58:40.7404480Z   duration_ms: 0.386631
+2026-09-18T18:58:40.7405195Z   ...
+2026-09-18T18:58:40.7407135Z # Subtest: statTargets skips exchange-address stat bumps (fix: don't make Binance look like a whale)
+2026-09-18T18:58:40.7409095Z ok 55 - statTargets skips exchange-address stat bumps (fix: don't make Binance look like a whale)
+2026-09-18T18:58:40.7410421Z   ---
+2026-09-18T18:58:40.7411098Z   duration_ms: 0.204711
+2026-09-18T18:58:40.7411864Z   ...
+2026-09-18T18:58:40.7413035Z # Subtest: filterNewsKeywords keeps only titles matching the asset word list
+2026-09-18T18:58:40.7415160Z ok 56 - filterNewsKeywords keeps only titles matching the asset word list
+2026-09-18T18:58:40.7416510Z   ---
+2026-09-18T18:58:40.7417211Z   duration_ms: 0.862686
+2026-09-18T18:58:40.7417947Z   ...
+2026-09-18T18:58:40.7418958Z # Subtest: filterNewsKeywords handles bad input without throwing
+2026-09-18T18:58:40.7420378Z ok 57 - filterNewsKeywords handles bad input without throwing
+2026-09-18T18:58:40.7421436Z   ---
+2026-09-18T18:58:40.7422131Z   duration_ms: 0.313414
+2026-09-18T18:58:40.7422852Z   ...
+2026-09-18T18:58:40.7424340Z # Subtest: classifyWhales: zero-address Transfer is a mint regardless of labels
+2026-09-18T18:58:40.7425894Z ok 58 - classifyWhales: zero-address Transfer is a mint regardless of labels
+2026-09-18T18:58:40.7427137Z   ---
+2026-09-18T18:58:40.7427785Z   duration_ms: 0.273289
+2026-09-18T18:58:40.7428513Z   ...
+2026-09-18T18:58:40.7429489Z # Subtest: classifyWhales: label-driven bridge and miner flows
+2026-09-18T18:58:40.7430758Z ok 59 - classifyWhales: label-driven bridge and miner flows
+2026-09-18T18:58:40.7431579Z   ---
+2026-09-18T18:58:40.7432173Z   duration_ms: 0.29509
+2026-09-18T18:58:40.7432852Z   ...
+2026-09-18T18:58:40.7433946Z # Subtest: interestingness: big mints outscore small ones; tiny bridges get dinged
+2026-09-18T18:58:40.7435421Z ok 60 - interestingness: big mints outscore small ones; tiny bridges get dinged
+2026-09-18T18:58:40.7436896Z   ---
+2026-09-18T18:58:40.7437505Z   duration_ms: 0.451942
+2026-09-18T18:58:40.7438206Z   ...
+2026-09-18T18:58:40.7439058Z # node:internal/modules/esm/translators:391
+2026-09-18T18:58:40.7440168Z #     throw new ERR_UNKNOWN_BUILTIN_MODULE(url);
+2026-09-18T18:58:40.7440993Z #           ^
+2026-09-18T18:58:40.7442051Z # Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: node:sqlite
+2026-09-18T18:58:40.7443673Z #     at ModuleLoader.builtinStrategy (node:internal/modules/esm/translators:391:11)
+2026-09-18T18:58:40.7445091Z #     at \#translate (node:internal/modules/esm/loader:497:12)
+2026-09-18T18:58:40.7446764Z #     at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:544:27) {
+2026-09-18T18:58:40.7448179Z #   code: 'ERR_UNKNOWN_BUILTIN_MODULE'
+2026-09-18T18:58:40.7448647Z # }
+2026-09-18T18:58:40.7449307Z # Node.js v20.20.2
+2026-09-18T18:58:40.7450481Z # Subtest: /home/runner/work/whalesignal/whalesignal/tests/scheduled.test.js
+2026-09-18T18:58:40.7451747Z not ok 7 - /home/runner/work/whalesignal/whalesignal/tests/scheduled.test.js
+2026-09-18T18:58:40.7452598Z   ---
+2026-09-18T18:58:40.7453156Z   duration_ms: 68.904259
+2026-09-18T18:58:40.7454189Z   location: '/home/runner/work/whalesignal/whalesignal/tests/scheduled.test.js:1:1'
+2026-09-18T18:58:40.7455292Z   failureType: 'testCodeFailure'
+2026-09-18T18:58:40.7456272Z   exitCode: 1
+2026-09-18T18:58:40.7456973Z   signal: ~
+2026-09-18T18:58:40.7457623Z   error: 'test failed'
+2026-09-18T18:58:40.7458323Z   code: 'ERR_TEST_FAILURE'
+2026-09-18T18:58:40.7459008Z   ...
+2026-09-18T18:58:40.7460141Z # Subtest: rsi: Wilder RSI on synthetic series
+2026-09-18T18:58:40.7461134Z ok 62 - rsi: Wilder RSI on synthetic series
+2026-09-18T18:58:40.7461885Z   ---
+2026-09-18T18:58:40.7462419Z   duration_ms: 2.189397
+2026-09-18T18:58:40.7463022Z   ...
+2026-09-18T18:58:40.7463780Z # Subtest: ema: constant series holds the level
+2026-09-18T18:58:40.7464636Z ok 63 - ema: constant series holds the level
+2026-09-18T18:58:40.7465309Z   ---
+2026-09-18T18:58:40.7465824Z   duration_ms: 0.436954
+2026-09-18T18:58:40.7466819Z   ...
+2026-09-18T18:58:40.7467626Z # Subtest: classifyRegime: trend, stretched, and choppy
+2026-09-18T18:58:40.7468623Z ok 64 - classifyRegime: trend, stretched, and choppy
+2026-09-18T18:58:40.7469379Z   ---
+2026-09-18T18:58:40.7469940Z   duration_ms: 0.368086
+2026-09-18T18:58:40.7470538Z   ...
+2026-09-18T18:58:40.7471391Z # Subtest: regimeAlignment: trend + mean-reversion alignment matrix
+2026-09-18T18:58:40.7472800Z ok 65 - regimeAlignment: trend + mean-reversion alignment matrix
+2026-09-18T18:58:40.7473659Z   ---
+2026-09-18T18:58:40.7474276Z   duration_ms: 0.377643
+2026-09-18T18:58:40.7474859Z   ...
+2026-09-18T18:58:40.7475638Z # Subtest: taSnapshot: full stack from a series
+2026-09-18T18:58:40.7476988Z ok 66 - taSnapshot: full stack from a series
+2026-09-18T18:58:40.7477619Z   ---
+2026-09-18T18:58:40.7478092Z   duration_ms: 0.454687
+2026-09-18T18:58:40.7478619Z   ...
+2026-09-18T18:58:40.7479458Z # Subtest: flowConfidence: base, clamps, and the huge-unlabeled cap
+2026-09-18T18:58:40.7480600Z ok 67 - flowConfidence: base, clamps, and the huge-unlabeled cap
+2026-09-18T18:58:40.7481358Z   ---
+2026-09-18T18:58:40.7482113Z   duration_ms: 1.287928
+2026-09-18T18:58:40.7482645Z   ...
+2026-09-18T18:58:40.7483430Z # Subtest: flowConfidence: derivatives crowding is contrarian
+2026-09-18T18:58:40.7484480Z ok 68 - flowConfidence: derivatives crowding is contrarian
+2026-09-18T18:58:40.7485146Z   ---
+2026-09-18T18:58:40.7485579Z   duration_ms: 0.498939
+2026-09-18T18:58:40.7486386Z   ...
+2026-09-18T18:58:40.7487384Z # Subtest: sanitizeWeights + adaptive loop: fitted weights override defaults safely
+2026-09-18T18:58:40.7488647Z ok 69 - sanitizeWeights + adaptive loop: fitted weights override defaults safely
+2026-09-18T18:58:40.7489486Z   ---
+2026-09-18T18:58:40.7489944Z   duration_ms: 0.519297
+2026-09-18T18:58:40.7490425Z   ...
+2026-09-18T18:58:40.7491284Z # Subtest: volThreshold: flat in calm markets, adaptive in violent ones
+2026-09-18T18:58:40.7492442Z ok 70 - volThreshold: flat in calm markets, adaptive in violent ones
+2026-09-18T18:58:40.7493206Z   ---
+2026-09-18T18:58:40.7493664Z   duration_ms: 3.082451
+2026-09-18T18:58:40.7494172Z   ...
+2026-09-18T18:58:40.7495089Z # Subtest: premium upsert SQL contract: fresh = 30d flat, renewal extends
+2026-09-18T18:58:40.7496595Z ok 71 - premium upsert SQL contract: fresh = 30d flat, renewal extends
+2026-09-18T18:58:40.7497422Z   ---
+2026-09-18T18:58:40.7497887Z   duration_ms: 0.399474
+2026-09-18T18:58:40.7498371Z   ...
+2026-09-18T18:58:41.2794561Z # clustering 24 BTC seed wallets (min co-spends 3, last 25 txs each)…
+2026-09-18T18:58:41.2795290Z #   Binance Cold Wallet: FAILED — HTTP 400
+2026-09-18T18:58:42.4870434Z #   Binance Cold Wallet 2: FAILED — HTTP 400
+2026-09-18T18:58:43.6925359Z #   OKX: FAILED — HTTP 400
+2026-09-18T18:58:44.8989539Z #   Bitfinex: FAILED — HTTP 400
+2026-09-18T18:58:46.1044413Z #   Kraken: FAILED — HTTP 400
+2026-09-18T18:58:47.3107935Z #   Coinbase: FAILED — HTTP 400
+2026-09-18T18:58:48.5160280Z #   Coinbase Old: FAILED — HTTP 400
+2026-09-18T18:58:50.8068528Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:58:53.4231845Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:58:55.7058806Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:58:58.0072621Z #   OKX (rich list, 2026-09-15): 25 txs, 1 co-spend candidates
+2026-09-18T18:59:00.4336257Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:02.7453737Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:05.0879575Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:07.2868833Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:09.6047394Z #   Bitfinex (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:11.8458620Z #   OKX (rich list, 2026-09-15): 25 txs, 81 co-spend candidates
+2026-09-18T18:59:15.8183191Z #   Binance (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:18.1046614Z #   OKX (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:20.4561279Z #   Gate.io (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:23.0454183Z #   OKX (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:25.8596835Z #   HTX (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:28.1824210Z #   Gate.io (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:30.5234292Z #   OKX (rich list, 2026-09-15): 25 txs, 0 co-spend candidates
+2026-09-18T18:59:31.6252205Z # {
+2026-09-18T18:59:31.6252897Z #   "wallets_discovered": 19,
+2026-09-18T18:59:31.6253976Z #   "sql_file": "/home/runner/work/whalesignal/whalesignal/label_expansion.sql",
+2026-09-18T18:59:31.6254761Z #   "summary": [
+2026-09-18T18:59:31.6255411Z #     {
+2026-09-18T18:59:31.6256347Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6257560Z #       "addr": "bc1qmtl499lclce4gvjcgn38gehmmkh2kekywkc273ghhmcfl2s93jzq3wt9w4",
+2026-09-18T18:59:31.6258476Z #       "co_spends": 10,
+2026-09-18T18:59:31.6259144Z #       "type": "exchange"
+2026-09-18T18:59:31.6260163Z #     },
+2026-09-18T18:59:31.6260670Z #     {
+2026-09-18T18:59:31.6261332Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6262317Z #       "addr": "3HPBGLDJWw6efKMLSDjWcGUpa2suZ8HF8y",
+2026-09-18T18:59:31.6262982Z #       "co_spends": 7,
+2026-09-18T18:59:31.6263633Z #       "type": "exchange"
+2026-09-18T18:59:31.6264242Z #     },
+2026-09-18T18:59:31.6264713Z #     {
+2026-09-18T18:59:31.6265336Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6266283Z #       "addr": "3FupZp77ySr7jwoLYEJ9mwzJpvoNBXsBnE",
+2026-09-18T18:59:31.6266866Z #       "co_spends": 17,
+2026-09-18T18:59:31.6267481Z #       "type": "exchange"
+2026-09-18T18:59:31.6268014Z #     },
+2026-09-18T18:59:31.6268448Z #     {
+2026-09-18T18:59:31.6268946Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6269540Z #       "addr": "bc1qmtl499lclce4gvjcgn38gehmmkh2kekywkc273ghhmcfl2s93jzq3wt9w4",
+2026-09-18T18:59:31.6269987Z #       "co_spends": 15,
+2026-09-18T18:59:31.6270276Z #       "type": "exchange"
+2026-09-18T18:59:31.6270500Z #     },
+2026-09-18T18:59:31.6270683Z #     {
+2026-09-18T18:59:31.6270949Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6271344Z #       "addr": "33uCkeQWfhWGKbyWQVWP5Kc4Bb1xrcpMCt",
+2026-09-18T18:59:31.6271903Z #       "co_spends": 2,
+2026-09-18T18:59:31.6272484Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6273060Z #     },
+2026-09-18T18:59:31.6273497Z #     {
+2026-09-18T18:59:31.6273976Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6274698Z #       "addr": "3JmxvMqm35aLDUHXDbESy6rQz4M8MBQD32",
+2026-09-18T18:59:31.6275121Z #       "co_spends": 8,
+2026-09-18T18:59:31.6275586Z #       "type": "exchange"
+2026-09-18T18:59:31.6286828Z #     },
+2026-09-18T18:59:31.6306803Z #     {
+2026-09-18T18:59:31.6307633Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6308630Z #       "addr": "379LMxuAQhEeKK6AtVqtoGCNSwChahhjvv",
+2026-09-18T18:59:31.6309401Z #       "co_spends": 3,
+2026-09-18T18:59:31.6310060Z #       "type": "exchange"
+2026-09-18T18:59:31.6310642Z #     },
+2026-09-18T18:59:31.6311125Z #     {
+2026-09-18T18:59:31.6311766Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6312715Z #       "addr": "3FWgqDjLAhCguUSBCBbhVwngqRwqv5g7q5",
+2026-09-18T18:59:31.6313599Z #       "co_spends": 2,
+2026-09-18T18:59:31.6314335Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6315470Z #     },
+2026-09-18T18:59:31.6315977Z #     {
+2026-09-18T18:59:31.6316940Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6317852Z #       "addr": "37UswEdhZuHDyknPN9FfH73qkZNR2cqnso",
+2026-09-18T18:59:31.6318654Z #       "co_spends": 13,
+2026-09-18T18:59:31.6319283Z #       "type": "exchange"
+2026-09-18T18:59:31.6319909Z #     },
+2026-09-18T18:59:31.6320462Z #     {
+2026-09-18T18:59:31.6321202Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6322239Z #       "addr": "324NM6N1zwUkuY4guY8TYmMPBcu88uqPUK",
+2026-09-18T18:59:31.6323050Z #       "co_spends": 4,
+2026-09-18T18:59:31.6323661Z #       "type": "exchange"
+2026-09-18T18:59:31.6324243Z #     },
+2026-09-18T18:59:31.6324803Z #     {
+2026-09-18T18:59:31.6325485Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6326680Z #       "addr": "32yu2i6H7j66Mfwmp8vuzV9u1PSvt5iL8R",
+2026-09-18T18:59:31.6327487Z #       "co_spends": 2,
+2026-09-18T18:59:31.6328195Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6328834Z #     },
+2026-09-18T18:59:31.6329339Z #     {
+2026-09-18T18:59:31.6329991Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6330887Z #       "addr": "3JW5epbunsamNo2qcM788kuJ54kjkmrAJ8",
+2026-09-18T18:59:31.6331669Z #       "co_spends": 2,
+2026-09-18T18:59:31.6332425Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6333150Z #     },
+2026-09-18T18:59:31.6333669Z #     {
+2026-09-18T18:59:31.6334342Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6335313Z #       "addr": "3Ddbnth3KX7MfE9gv5PW5SamoQAy5wPeqJ",
+2026-09-18T18:59:31.6336737Z #       "co_spends": 17,
+2026-09-18T18:59:31.6337513Z #       "type": "exchange"
+2026-09-18T18:59:31.6338146Z #     },
+2026-09-18T18:59:31.6338681Z #     {
+2026-09-18T18:59:31.6339377Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6340294Z #       "addr": "3EeXcWKx1gwYgH1LQNUPkB3a95Qqp3YbwX",
+2026-09-18T18:59:31.6341146Z #       "co_spends": 11,
+2026-09-18T18:59:31.6341825Z #       "type": "exchange"
+2026-09-18T18:59:31.6342466Z #     },
+2026-09-18T18:59:31.6343015Z #     {
+2026-09-18T18:59:31.6343718Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6344671Z #       "addr": "3JxUKJx9nmw2JuVcDJyDMkhAyj8rrk6Y7W",
+2026-09-18T18:59:31.6345478Z #       "co_spends": 2,
+2026-09-18T18:59:31.6346430Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6347180Z #     },
+2026-09-18T18:59:31.6347669Z #     {
+2026-09-18T18:59:31.6348360Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6349240Z #       "addr": "3GwLwQsyXjiydHYD8Mmy6huAj1JiuAdhYm",
+2026-09-18T18:59:31.6350021Z #       "co_spends": 2,
+2026-09-18T18:59:31.6350706Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6351346Z #     },
+2026-09-18T18:59:31.6351830Z #     {
+2026-09-18T18:59:31.6352473Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6353366Z #       "addr": "3EJFFLAvoWUEQgVuJazXNgz6au1ALtrQMG",
+2026-09-18T18:59:31.6354192Z #       "co_spends": 3,
+2026-09-18T18:59:31.6354801Z #       "type": "exchange"
+2026-09-18T18:59:31.6355443Z #     },
+2026-09-18T18:59:31.6356002Z #     {
+2026-09-18T18:59:31.6356989Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6357975Z #       "addr": "3FJFzEoGPWYpWKLxgqqrpmQfmrvEtQnHS5",
+2026-09-18T18:59:31.6358876Z #       "co_spends": 2,
+2026-09-18T18:59:31.6359650Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6360358Z #     },
+2026-09-18T18:59:31.6360932Z #     {
+2026-09-18T18:59:31.6361646Z #       "seed": "OKX (rich list, 2026-09-15)",
+2026-09-18T18:59:31.6362604Z #       "addr": "3MbDQfQgMRPtp9jCbQNEzram86pmgzBE4p",
+2026-09-18T18:59:31.6363448Z #       "co_spends": 2,
+2026-09-18T18:59:31.6364155Z #       "type": "exchange_candidate"
+2026-09-18T18:59:31.6364793Z #     }
+2026-09-18T18:59:31.6365282Z #   ]
+2026-09-18T18:59:31.6365765Z # }
+2026-09-18T18:59:31.6366948Z # review /home/runner/work/whalesignal/whalesignal/label_expansion.sql, then:
+2026-09-18T18:59:31.6368646Z #   npx wrangler d1 execute whalesignal-db --remote --file label_expansion.sql -y
+2026-09-18T18:59:31.6369958Z # Subtest: spot parsers: each source's real response shape
+2026-09-18T18:59:31.6371032Z ok 72 - spot parsers: each source's real response shape
+2026-09-18T18:59:31.6371780Z   ---
+2026-09-18T18:59:31.6372314Z   duration_ms: 1.022222
+2026-09-18T18:59:31.6372870Z   ...
+2026-09-18T18:59:31.6373812Z # Subtest: pickConsensusPrice: median is outlier-resistant, agreement is strict
+2026-09-18T18:59:31.6375187Z ok 73 - pickConsensusPrice: median is outlier-resistant, agreement is strict
+2026-09-18T18:59:31.6376482Z   ---
+2026-09-18T18:59:31.6377097Z   duration_ms: 0.74182
+2026-09-18T18:59:31.6377705Z   ...
+2026-09-18T18:59:31.6378605Z # Subtest: rssStartIndex: rotates every 5-minute slot across all feeds
+2026-09-18T18:59:31.6379812Z ok 74 - rssStartIndex: rotates every 5-minute slot across all feeds
+2026-09-18T18:59:31.6380662Z   ---
+2026-09-18T18:59:31.6381239Z   duration_ms: 0.153576
+2026-09-18T18:59:31.6381953Z   ...
+2026-09-18T18:59:31.6383051Z # Subtest: normalizeMempoolBlock: satoshi values kept, shape matches extractCandidatesBTC
+2026-09-18T18:59:31.6384637Z ok 75 - normalizeMempoolBlock: satoshi values kept, shape matches extractCandidatesBTC
+2026-09-18T18:59:31.6385669Z   ---
+2026-09-18T18:59:31.6386509Z   duration_ms: 0.27396
+2026-09-18T18:59:31.6387174Z   ...
+2026-09-18T18:59:31.6388007Z # Subtest: parseGdeltTitles: artlist shape, tolerant of garbage
+2026-09-18T18:59:31.6389129Z ok 76 - parseGdeltTitles: artlist shape, tolerant of garbage
+2026-09-18T18:59:31.6389989Z   ---
+2026-09-18T18:59:31.6390613Z   duration_ms: 0.202917
+2026-09-18T18:59:31.6391454Z   ...
+2026-09-18T18:59:31.6392329Z # Subtest: coSpendsFromTxs: common-input-ownership heuristic
+2026-09-18T18:59:31.6393394Z ok 77 - coSpendsFromTxs: common-input-ownership heuristic
+2026-09-18T18:59:31.6394178Z   ---
+2026-09-18T18:59:31.6394742Z   duration_ms: 0.205392
+2026-09-18T18:59:31.6395348Z   ...
+2026-09-18T18:59:31.6545762Z # Subtest: computeInterestingness: $100M BTC exchange inflow from known whale = high score
+2026-09-18T18:59:31.6577255Z ok 78 - computeInterestingness: $100M BTC exchange inflow from known whale = high score
+2026-09-18T18:59:31.6596929Z   ---
+2026-09-18T18:59:31.6627212Z   duration_ms: 2.058373
+2026-09-18T18:59:31.6627850Z   ...
+2026-09-18T18:59:31.6628952Z # Subtest: computeInterestingness: $600K USDT wallet-to-wallet from unknown wallet = low score
+2026-09-18T18:59:31.6630465Z ok 79 - computeInterestingness: $600K USDT wallet-to-wallet from unknown wallet = low score
+2026-09-18T18:59:31.6631461Z   ---
+2026-09-18T18:59:31.6631975Z   duration_ms: 0.26351
+2026-09-18T18:59:31.6632557Z   ...
+2026-09-18T18:59:31.6633337Z # Subtest: computeInterestingness: dormant wallet reactivation gets dormancy bonus
+2026-09-18T18:59:31.6634118Z ok 80 - computeInterestingness: dormant wallet reactivation gets dormancy bonus
+2026-09-18T18:59:31.6634637Z   ---
+2026-09-18T18:59:31.6634914Z   duration_ms: 0.212696
+2026-09-18T18:59:31.6635207Z   ...
+2026-09-18T18:59:31.6635744Z # Subtest: computeInterestingness: spam penalty for many txs from same wallet in 24h
+2026-09-18T18:59:31.6637083Z ok 81 - computeInterestingness: spam penalty for many txs from same wallet in 24h
+2026-09-18T18:59:31.6637786Z   ---
+2026-09-18T18:59:31.6639167Z   duration_ms: 0.342417
+2026-09-18T18:59:31.6639550Z   ...
+2026-09-18T18:59:31.6640080Z # Subtest: computeInterestingness: clamps to 0-100
+2026-09-18T18:59:31.6642912Z ok 82 - computeInterestingness: clamps to 0-100
+2026-09-18T18:59:31.6643474Z   ---
+2026-09-18T18:59:31.6643823Z   duration_ms: 0.224548
+2026-09-18T18:59:31.6644200Z   ...
+2026-09-18T18:59:31.6644980Z # Subtest: computeInterestingness: stablecoin penalty only applies under $50M
+2026-09-18T18:59:31.6646479Z ok 83 - computeInterestingness: stablecoin penalty only applies under $50M
+2026-09-18T18:59:31.6647222Z   ---
+2026-09-18T18:59:31.6647584Z   duration_ms: 0.227093
+2026-09-18T18:59:31.6647977Z   ...
+2026-09-18T18:59:31.6648566Z # Subtest: marketRegime classifies Fear & Greed correctly
+2026-09-18T18:59:31.6649929Z ok 84 - marketRegime classifies Fear & Greed correctly
+2026-09-18T18:59:31.6650458Z   ---
+2026-09-18T18:59:31.6650775Z   duration_ms: 0.251539
+2026-09-18T18:59:31.6651130Z   ...
+2026-09-18T18:59:31.6651639Z # Subtest: walletBehavior detects distribution pattern
+2026-09-18T18:59:31.6652377Z ok 85 - walletBehavior detects distribution pattern
+2026-09-18T18:59:31.6652888Z   ---
+2026-09-18T18:59:31.6653212Z   duration_ms: 0.341816
+2026-09-18T18:59:31.6653576Z   ...
+2026-09-18T18:59:31.6654101Z # Subtest: walletBehavior detects accumulation pattern
+2026-09-18T18:59:31.6654837Z ok 86 - walletBehavior detects accumulation pattern
+2026-09-18T18:59:31.6655349Z   ---
+2026-09-18T18:59:31.6655746Z   duration_ms: 0.33828
+2026-09-18T18:59:31.6656350Z   ...
+2026-09-18T18:59:31.6656945Z # Subtest: walletBehavior returns unknown for no/empty history
+2026-09-18T18:59:31.6657770Z ok 87 - walletBehavior returns unknown for no/empty history
+2026-09-18T18:59:31.6658314Z   ---
+2026-09-18T18:59:31.6658641Z   duration_ms: 0.298215
+2026-09-18T18:59:31.6658984Z   ...
+2026-09-18T18:59:31.6659586Z # Subtest: walletBehavior returns mixed for balanced inflow/outflow
+2026-09-18T18:59:31.6660476Z ok 88 - walletBehavior returns mixed for balanced inflow/outflow
+2026-09-18T18:59:31.6661073Z   ---
+2026-09-18T18:59:31.6661398Z   duration_ms: 0.2095
+2026-09-18T18:59:31.6661753Z   ...
+2026-09-18T18:59:31.6662679Z # Subtest: templateAnalysis: exchange_inflow during fear → bearish
+2026-09-18T18:59:31.6663699Z ok 89 - templateAnalysis: exchange_inflow during fear → bearish
+2026-09-18T18:59:31.6664274Z   ---
+2026-09-18T18:59:31.6664852Z   duration_ms: 1.100158
+2026-09-18T18:59:31.6665235Z   ...
+2026-09-18T18:59:31.6666258Z # Subtest: templateAnalysis: exchange_outflow during greed → bullish
+2026-09-18T18:59:31.6667415Z ok 90 - templateAnalysis: exchange_outflow during greed → bullish
+2026-09-18T18:59:31.6668068Z   ---
+2026-09-18T18:59:31.6668444Z   duration_ms: 0.287164
+2026-09-18T18:59:31.6668873Z   ...
+2026-09-18T18:59:31.6669780Z # Subtest: templateAnalysis: exchange_internal → neutral, high confidence
+2026-09-18T18:59:31.6671038Z ok 91 - templateAnalysis: exchange_internal → neutral, high confidence
+2026-09-18T18:59:31.6671744Z   ---
+2026-09-18T18:59:31.6672102Z   duration_ms: 0.316118
+2026-09-18T18:59:31.6672507Z   ...
+2026-09-18T18:59:31.6673362Z # Subtest: templateAnalysis: small stablecoin wallet-to-wallet → neutral
+2026-09-18T18:59:31.6674547Z ok 92 - templateAnalysis: small stablecoin wallet-to-wallet → neutral
+2026-09-18T18:59:31.6675221Z   ---
+2026-09-18T18:59:31.6675576Z   duration_ms: 0.216773
+2026-09-18T18:59:31.6675974Z   ...
+2026-09-18T18:59:31.6677205Z # Subtest: templateAnalysis: ambiguous wallet-to-wwallet BTC → null (needs Gemini)
+2026-09-18T18:59:31.6678550Z ok 93 - templateAnalysis: ambiguous wallet-to-wwallet BTC → null (needs Gemini)
+2026-09-18T18:59:31.6679285Z   ---
+2026-09-18T18:59:31.6679635Z   duration_ms: 0.254894
+2026-09-18T18:59:31.6680033Z   ...
+2026-09-18T18:59:31.6681258Z # Subtest: templateAnalysis: inflow in neutral market with unknown wallet → bearish (direction is the evidence)
+2026-09-18T18:59:31.6683051Z ok 94 - templateAnalysis: inflow in neutral market with unknown wallet → bearish (direction is the evidence)
+2026-09-18T18:59:31.6683955Z   ---
+2026-09-18T18:59:31.6684297Z   duration_ms: 0.249555
+2026-09-18T18:59:31.6684678Z   ...
+2026-09-18T18:59:31.6685538Z # Subtest: templateAnalysis: conflicting context dampens confidence without flipping signal
+2026-09-18T18:59:31.6687232Z ok 95 - templateAnalysis: conflicting context dampens confidence without flipping signal
+2026-09-18T18:59:31.6688055Z   ---
+2026-09-18T18:59:31.6688424Z   duration_ms: 0.497035
+2026-09-18T18:59:31.6688823Z   ...
+2026-09-18T18:59:31.6689962Z # Subtest: templateAnalysis: inflow with prior distribution history → bearish even in neutral market
+2026-09-18T18:59:31.6691601Z ok 96 - templateAnalysis: inflow with prior distribution history → bearish even in neutral market
+2026-09-18T18:59:31.6692800Z   ---
+2026-09-18T18:59:31.6693158Z   duration_ms: 0.270854
+2026-09-18T18:59:31.6693552Z   ...
+2026-09-18T18:59:31.6694140Z # Subtest: buildPrompt includes STRUCTURED FACTS section
+2026-09-18T18:59:31.6694953Z ok 97 - buildPrompt includes STRUCTURED FACTS section
+2026-09-18T18:59:31.6695519Z   ---
+2026-09-18T18:59:31.6695889Z   duration_ms: 23.723487
+2026-09-18T18:59:31.6696506Z   ...
+2026-09-18T18:59:31.6697058Z # Subtest: buildPrompt includes anti-speculation rules
+2026-09-18T18:59:31.6697798Z ok 98 - buildPrompt includes anti-speculation rules
+2026-09-18T18:59:31.6698311Z   ---
+2026-09-18T18:59:31.6698630Z   duration_ms: 0.441072
+2026-09-18T18:59:31.6699013Z   ...
+2026-09-18T18:59:31.6699734Z # Subtest: buildPrompt includes confidence guard rule (3+ facts for >0.7)
+2026-09-18T18:59:31.6700789Z ok 99 - buildPrompt includes confidence guard rule (3+ facts for >0.7)
+2026-09-18T18:59:31.6701398Z   ---
+2026-09-18T18:59:31.6701709Z   duration_ms: 0.296643
+2026-09-18T18:59:31.6702046Z   ...
+2026-09-18T18:59:31.6702670Z # Subtest: buildPrompt handles missing market + history gracefully
+2026-09-18T18:59:31.6703537Z ok 100 - buildPrompt handles missing market + history gracefully
+2026-09-18T18:59:31.6704093Z   ---
+2026-09-18T18:59:31.6704398Z   duration_ms: 0.348489
+2026-09-18T18:59:31.6704744Z   ...
+2026-09-18T18:59:31.6705310Z # Subtest: buildPrompt counts prior events from history length
+2026-09-18T18:59:31.6706376Z ok 101 - buildPrompt counts prior events from history length
+2026-09-18T18:59:31.6706916Z   ---
+2026-09-18T18:59:31.6707228Z   duration_ms: 0.67646
+2026-09-18T18:59:31.6707579Z   ...
+2026-09-18T18:59:31.6708451Z # Subtest: templateAnalysis: mint states supply fact, stays neutral
+2026-09-18T18:59:31.6709370Z ok 102 - templateAnalysis: mint states supply fact, stays neutral
+2026-09-18T18:59:31.6709976Z   ---
+2026-09-18T18:59:31.6710300Z   duration_ms: 0.248603
+2026-09-18T18:59:31.6710664Z   ...
+2026-09-18T18:59:31.6711250Z # Subtest: templateAnalysis: burn and bridge and miner branches
+2026-09-18T18:59:31.6737178Z ok 103 - templateAnalysis: burn and bridge and miner branches
+2026-09-18T18:59:31.6737774Z   ---
+2026-09-18T18:59:31.6738106Z   duration_ms: 0.27915
+2026-09-18T18:59:31.6738476Z   ...
+2026-09-18T18:59:31.6739358Z # Subtest: patternFor: fresh_stealth — first-day wallet deposits to exchange
+2026-09-18T18:59:31.6740548Z ok 104 - patternFor: fresh_stealth — first-day wallet deposits to exchange
+2026-09-18T18:59:31.6741217Z   ---
+2026-09-18T18:59:31.6741562Z   duration_ms: 0.267989
+2026-09-18T18:59:31.6741937Z   ...
+2026-09-18T18:59:31.6742799Z # Subtest: patternFor: frequent_depositor — 2 prior deposits + current deposit
+2026-09-18T18:59:31.6744027Z ok 105 - patternFor: frequent_depositor — 2 prior deposits + current deposit
+2026-09-18T18:59:31.6744691Z   ---
+2026-09-18T18:59:31.6745005Z   duration_ms: 0.253552
+2026-09-18T18:59:31.6745361Z   ...
+2026-09-18T18:59:31.6746449Z # Subtest: patternFor: accumulator — 3 withdrawals in 30d regardless of current
+2026-09-18T18:59:31.6747675Z ok 106 - patternFor: accumulator — 3 withdrawals in 30d regardless of current
+2026-09-18T18:59:31.6748360Z   ---
+2026-09-18T18:59:31.6748687Z   duration_ms: 0.202877
+2026-09-18T18:59:31.6749070Z   ...
+2026-09-18T18:59:31.6749670Z # Subtest: patternFor: stale history outside 30d does not count
+2026-09-18T18:59:31.6750525Z ok 107 - patternFor: stale history outside 30d does not count
+2026-09-18T18:59:31.6751095Z   ---
+2026-09-18T18:59:31.6751417Z   duration_ms: 0.196676
+2026-09-18T18:59:31.6751777Z   ...
+2026-09-18T18:59:31.6752551Z # Subtest: patternFor: dumper — long history landing on exchanges again
+2026-09-18T18:59:31.6753637Z ok 108 - patternFor: dumper — long history landing on exchanges again
+2026-09-18T18:59:31.6754254Z   ---
+2026-09-18T18:59:31.6754582Z   duration_ms: 1.501627
+2026-09-18T18:59:31.6754935Z   ...
+2026-09-18T18:59:31.6755489Z # Subtest: buildPrompt embeds the behavioral tag when given
+2026-09-18T18:59:31.6756589Z ok 109 - buildPrompt embeds the behavioral tag when given
+2026-09-18T18:59:31.6757129Z   ---
+2026-09-18T18:59:31.6757726Z   duration_ms: 0.290912
+2026-09-18T18:59:31.6758096Z   ...
+2026-09-18T18:59:31.6758840Z # Subtest: parseAnalysis: missing or garbage context_relevance defaults to medium
+2026-09-18T18:59:31.6760023Z ok 110 - parseAnalysis: missing or garbage context_relevance defaults to medium
+2026-09-18T18:59:31.6760753Z   ---
+2026-09-18T18:59:31.6761090Z   duration_ms: 0.605928
+2026-09-18T18:59:31.6761462Z   ...
+2026-09-18T18:59:31.6762164Z # Subtest: formatAlert: high relevance promotes with fire, low gets muted
+2026-09-18T18:59:31.6763197Z ok 111 - formatAlert: high relevance promotes with fire, low gets muted
+2026-09-18T18:59:31.6763854Z   ---
+2026-09-18T18:59:31.6764186Z   duration_ms: 0.820678
+2026-09-18T18:59:31.6764560Z   ...
+2026-09-18T18:59:31.6765143Z # Subtest: renderStatsJSON builds the full stats payload
+2026-09-18T18:59:31.6765929Z ok 112 - renderStatsJSON builds the full stats payload
+2026-09-18T18:59:31.6787129Z   ---
+2026-09-18T18:59:31.6787482Z   duration_ms: 2.55611
+2026-09-18T18:59:31.6787865Z   ...
+2026-09-18T18:59:31.6788436Z # Subtest: renderStatsJSON handles empty stats (ok=false)
+2026-09-18T18:59:31.6789240Z ok 113 - renderStatsJSON handles empty stats (ok=false)
+2026-09-18T18:59:31.6789781Z   ---
+2026-09-18T18:59:31.6790105Z   duration_ms: 0.309647
+2026-09-18T18:59:31.6790464Z   ...
+2026-09-18T18:59:31.6790955Z # Subtest: renderStatsJSON tolerates null inputs
+2026-09-18T18:59:31.6791644Z ok 114 - renderStatsJSON tolerates null inputs
+2026-09-18T18:59:31.6792129Z   ---
+2026-09-18T18:59:31.6792467Z   duration_ms: 0.260105
+2026-09-18T18:59:31.6792827Z   ...
+2026-09-18T18:59:31.6793624Z # Subtest: renderHistoryJSON builds paginated payload
+2026-09-18T18:59:31.6794382Z ok 115 - renderHistoryJSON builds paginated payload
+2026-09-18T18:59:31.6794893Z   ---
+2026-09-18T18:59:31.6795212Z   duration_ms: 0.491124
+2026-09-18T18:59:31.6795579Z   ...
+2026-09-18T18:59:31.6796299Z # Subtest: renderHistoryJSON handles empty rows
+2026-09-18T18:59:31.6796981Z ok 116 - renderHistoryJSON handles empty rows
+2026-09-18T18:59:31.6797473Z   ---
+2026-09-18T18:59:31.6797792Z   duration_ms: 0.271115
+2026-09-18T18:59:31.6798165Z   ...
+2026-09-18T18:59:31.6798767Z # Subtest: renderHistoryJSON clamps page/limit to valid ranges
+2026-09-18T18:59:31.6799652Z ok 117 - renderHistoryJSON clamps page/limit to valid ranges
+2026-09-18T18:59:31.6800212Z   ---
+2026-09-18T18:59:31.6800540Z   duration_ms: 0.220902
+2026-09-18T18:59:31.6800893Z   ...
+2026-09-18T18:59:31.6801418Z # Subtest: renderWalletJSON builds full wallet profile
+2026-09-18T18:59:31.6802153Z ok 118 - renderWalletJSON builds full wallet profile
+2026-09-18T18:59:31.6802669Z   ---
+2026-09-18T18:59:31.6802994Z   duration_ms: 0.736462
+2026-09-18T18:59:31.6803356Z   ...
+2026-09-18T18:59:31.6803972Z # Subtest: renderWalletJSON handles null profile (not in database)
+2026-09-18T18:59:31.6804874Z ok 119 - renderWalletJSON handles null profile (not in database)
+2026-09-18T18:59:31.6805449Z   ---
+2026-09-18T18:59:31.6805775Z   duration_ms: 0.232393
+2026-09-18T18:59:31.6806363Z   ...
+2026-09-18T18:59:31.6806993Z # Subtest: renderWalletJSON handles profile with null/missing fields
+2026-09-18T18:59:31.6807932Z ok 120 - renderWalletJSON handles profile with null/missing fields
+2026-09-18T18:59:31.6808538Z   ---
+2026-09-18T18:59:31.6808855Z   duration_ms: 0.38098
+2026-09-18T18:59:31.6809223Z   ...
+2026-09-18T18:59:31.6809715Z # Subtest: GET /stats returns 200 with CORS+JSON
+2026-09-18T18:59:31.6810105Z ok 121 - GET /stats returns 200 with CORS+JSON
+2026-09-18T18:59:31.6810418Z   ---
+2026-09-18T18:59:31.6810609Z   duration_ms: 45.472556
+2026-09-18T18:59:31.6810823Z   ...
+2026-09-18T18:59:31.6811156Z # Subtest: GET /history returns 200 with paginated alerts
+2026-09-18T18:59:31.6811593Z ok 122 - GET /history returns 200 with paginated alerts
+2026-09-18T18:59:31.6811884Z   ---
+2026-09-18T18:59:31.6812065Z   duration_ms: 1.764486
+2026-09-18T18:59:31.6812267Z   ...
+2026-09-18T18:59:31.6812572Z # Subtest: GET /wallet/0xABC returns 200 when wallet exists
+2026-09-18T18:59:31.6813077Z ok 123 - GET /wallet/0xABC returns 200 when wallet exists
+2026-09-18T18:59:31.6813672Z   ---
+2026-09-18T18:59:31.6813860Z   duration_ms: 1.677303
+2026-09-18T18:59:31.6814092Z   ...
+2026-09-18T18:59:31.6814460Z # Subtest: GET /wallet/0xUNKNOWN returns 404 when wallet not found
+2026-09-18T18:59:31.6814986Z ok 124 - GET /wallet/0xUNKNOWN returns 404 when wallet not found
+2026-09-18T18:59:31.6815343Z   ---
+2026-09-18T18:59:31.6815533Z   duration_ms: 1.112772
+2026-09-18T18:59:31.6815754Z   ...
+2026-09-18T18:59:31.6816197Z # Subtest: GET /stats handles DB error with 500
+2026-09-18T18:59:31.6816792Z ok 125 - GET /stats handles DB error with 500
+2026-09-18T18:59:31.6817093Z   ---
+2026-09-18T18:59:31.6817294Z   duration_ms: 1.434351
+2026-09-18T18:59:31.6817523Z   ...
+2026-09-18T18:59:31.6817836Z # Subtest: GET /latest still works after adding new routes
+2026-09-18T18:59:31.6818285Z ok 126 - GET /latest still works after adding new routes
+2026-09-18T18:59:31.6818610Z   ---
+2026-09-18T18:59:31.6818830Z   duration_ms: 1.30468
+2026-09-18T18:59:31.6819041Z   ...
+2026-09-18T18:59:31.6819403Z # Subtest: formatClusterNote: returns null for 0 (no cluster)
+2026-09-18T18:59:31.6819924Z ok 127 - formatClusterNote: returns null for 0 (no cluster)
+2026-09-18T18:59:31.6820253Z   ---
+2026-09-18T18:59:31.6820460Z   duration_ms: 2.122101
+2026-09-18T18:59:31.6820700Z   ...
+2026-09-18T18:59:31.6821053Z # Subtest: formatClusterNote: returns null for undefined/null
+2026-09-18T18:59:31.6821621Z ok 128 - formatClusterNote: returns null for undefined/null
+2026-09-18T18:59:31.6821939Z   ---
+2026-09-18T18:59:31.6822123Z   duration_ms: 0.191126
+2026-09-18T18:59:31.6822343Z   ...
+2026-09-18T18:59:31.6823043Z # Subtest: formatClusterNote: count=1 → singular 'transfer'
+2026-09-18T18:59:31.6823831Z ok 129 - formatClusterNote: count=1 → singular 'transfer'
+2026-09-18T18:59:31.6824359Z   ---
+2026-09-18T18:59:31.6824690Z   duration_ms: 0.177711
+2026-09-18T18:59:31.6825024Z   ...
+2026-09-18T18:59:31.6825705Z # Subtest: formatClusterNote: count=4 → plural 'transfers'
+2026-09-18T18:59:31.6826567Z ok 130 - formatClusterNote: count=4 → plural 'transfers'
+2026-09-18T18:59:31.6826880Z   ---
+2026-09-18T18:59:31.6827068Z   duration_ms: 0.167893
+2026-09-18T18:59:31.6827281Z   ...
+2026-09-18T18:59:31.6827595Z # Subtest: formatClusterNote: includes emoji and timeframe
+2026-09-18T18:59:31.6828039Z ok 131 - formatClusterNote: includes emoji and timeframe
+2026-09-18T18:59:31.6828339Z   ---
+2026-09-18T18:59:31.6828527Z   duration_ms: 0.280292
+2026-09-18T18:59:31.6828730Z   ...
+2026-09-18T18:59:31.6829043Z # Subtest: renderStatsJSON: accuracy null when no eval data
+2026-09-18T18:59:31.6829492Z ok 132 - renderStatsJSON: accuracy null when no eval data
+2026-09-18T18:59:31.6829791Z   ---
+2026-09-18T18:59:31.6829970Z   duration_ms: 0.285552
+2026-09-18T18:59:31.6830169Z   ...
+2026-09-18T18:59:31.6830518Z # Subtest: renderStatsJSON: accuracy populated when eval data exists
+2026-09-18T18:59:31.6831036Z ok 133 - renderStatsJSON: accuracy populated when eval data exists
+2026-09-18T18:59:31.6831373Z   ---
+2026-09-18T18:59:31.6831548Z   duration_ms: 0.956661
+2026-09-18T18:59:31.6831747Z   ...
+2026-09-18T18:59:31.6832058Z # Subtest: renderStatsJSON: accuracy rate=100 when all correct
+2026-09-18T18:59:31.6832514Z ok 134 - renderStatsJSON: accuracy rate=100 when all correct
+2026-09-18T18:59:31.6832816Z   ---
+2026-09-18T18:59:31.6832998Z   duration_ms: 0.281464
+2026-09-18T18:59:31.6833193Z   ...
+2026-09-18T18:59:31.6833502Z # Subtest: renderStatsJSON: accuracy rate=0 when none correct
+2026-09-18T18:59:31.6833943Z ok 135 - renderStatsJSON: accuracy rate=0 when none correct
+2026-09-18T18:59:31.6834242Z   ---
+2026-09-18T18:59:31.6834425Z   duration_ms: 0.357065
+2026-09-18T18:59:31.6834628Z   ...
+2026-09-18T18:59:31.6834900Z # Subtest: eval logic: bullish + price up = correct
+2026-09-18T18:59:31.6835284Z ok 136 - eval logic: bullish + price up = correct
+2026-09-18T18:59:31.6835564Z   ---
+2026-09-18T18:59:31.6835742Z   duration_ms: 0.33311
+2026-09-18T18:59:31.6835942Z   ...
+2026-09-18T18:59:31.6836707Z # Subtest: eval logic: bullish + price down = wrong
+2026-09-18T18:59:31.6837097Z ok 137 - eval logic: bullish + price down = wrong
+2026-09-18T18:59:31.6837375Z   ---
+2026-09-18T18:59:31.6837557Z   duration_ms: 0.23087
+2026-09-18T18:59:31.6837762Z   ...
+2026-09-18T18:59:31.6838039Z # Subtest: eval logic: bearish + price down = correct
+2026-09-18T18:59:31.6838430Z ok 138 - eval logic: bearish + price down = correct
+2026-09-18T18:59:31.6838702Z   ---
+2026-09-18T18:59:31.6838880Z   duration_ms: 0.176208
+2026-09-18T18:59:31.6839081Z   ...
+2026-09-18T18:59:31.6839363Z # Subtest: eval logic: bearish + price up = wrong
+2026-09-18T18:59:31.6839736Z ok 139 - eval logic: bearish + price up = wrong
+2026-09-18T18:59:31.6840008Z   ---
+2026-09-18T18:59:31.6840327Z   duration_ms: 0.238344
+2026-09-18T18:59:31.6840663Z   ...
+2026-09-18T18:59:31.6841155Z # Subtest: eval logic: movement under threshold = neutral
+2026-09-18T18:59:31.6841871Z ok 140 - eval logic: movement under threshold = neutral
+2026-09-18T18:59:31.6842377Z   ---
+2026-09-18T18:59:31.6842704Z   duration_ms: 0.217626
+2026-09-18T18:59:31.6843063Z   ...
+2026-09-18T18:59:31.6843591Z # Subtest: eval logic: neutral signal = always neutral
+2026-09-18T18:59:31.6844324Z ok 141 - eval logic: neutral signal = always neutral
+2026-09-18T18:59:31.6844898Z   ---
+2026-09-18T18:59:31.6845162Z   duration_ms: 0.270564
+2026-09-18T18:59:31.6845372Z   ...
+2026-09-18T18:59:31.6845849Z # Subtest: eval logic: missing prices = no_data
+2026-09-18T18:59:31.6847421Z ok 142 - eval logic: missing prices = no_data
+2026-09-18T18:59:31.6847721Z   ---
+2026-09-18T18:59:31.6847917Z   duration_ms: 0.252931
+2026-09-18T18:59:31.6848151Z   ...
+2026-09-18T18:59:31.6849144Z # Subtest: dropPlumbing: drops exchange_internal under the floor, keeps everything else
+2026-09-18T18:59:31.6849850Z ok 143 - dropPlumbing: drops exchange_internal under the floor, keeps everything else
+2026-09-18T18:59:31.6850259Z   ---
+2026-09-18T18:59:31.6850446Z   duration_ms: 2.488064
+2026-09-18T18:59:31.6850654Z   ...
+2026-09-18T18:59:31.6851048Z # Subtest: dropPlumbing: floor=0 disables the valve; missing usd treated as 0
+2026-09-18T18:59:31.6851639Z ok 144 - dropPlumbing: floor=0 disables the valve; missing usd treated as 0
+2026-09-18T18:59:31.6852022Z   ---
+2026-09-18T18:59:31.6852204Z   duration_ms: 0.246218
+2026-09-18T18:59:31.6852409Z   ...
+2026-09-18T18:59:31.6853059Z # Subtest: extractCandidatesBTC: exchange sweep with many outputs yields ONE candidate per leg, not a fake giant
+2026-09-18T18:59:31.6853928Z ok 145 - extractCandidatesBTC: exchange sweep with many outputs yields ONE candidate per leg, not a fake giant
+2026-09-18T18:59:31.6854533Z   ---
+2026-09-18T18:59:31.6854855Z   duration_ms: 0.501224
+2026-09-18T18:59:31.6855202Z   ...
+2026-09-18T18:59:31.6856318Z # Subtest: renderNetflowJSON: net inflow > 5% of gross → bearish_pressure
+2026-09-18T18:59:31.6857395Z ok 146 - renderNetflowJSON: net inflow > 5% of gross → bearish_pressure
+2026-09-18T18:59:31.6857966Z   ---
+2026-09-18T18:59:31.6858271Z   duration_ms: 0.782988
+2026-09-18T18:59:31.6858618Z   ...
+2026-09-18T18:59:31.6859247Z # Subtest: renderNetflowJSON: net outflow → bullish_pressure
+2026-09-18T18:59:31.6860126Z ok 147 - renderNetflowJSON: net outflow → bullish_pressure
+2026-09-18T18:59:31.6860645Z   ---
+2026-09-18T18:59:31.6860949Z   duration_ms: 0.336236
+2026-09-18T18:59:31.6861279Z   ...
+2026-09-18T18:59:31.6862101Z # Subtest: renderNetflowJSON: balanced when |net| under 5% of gross; empty window handled
+2026-09-18T18:59:31.6863244Z ok 148 - renderNetflowJSON: balanced when |net| under 5% of gross; empty window handled
+2026-09-18T18:59:31.6863916Z   ---
+2026-09-18T18:59:31.6864219Z   duration_ms: 0.384576
+2026-09-18T18:59:31.6864573Z   ...
+2026-09-18T18:59:31.6865309Z # Subtest: renderNetflowJSON: merges per-exchange legs and reports net per exchange
+2026-09-18T18:59:31.6866597Z ok 149 - renderNetflowJSON: merges per-exchange legs and reports net per exchange
+2026-09-18T18:59:31.6867268Z   ---
+2026-09-18T18:59:31.6867573Z   duration_ms: 1.649161
+2026-09-18T18:59:31.6868122Z   ...
+2026-09-18T18:59:31.6868828Z # Subtest: renderGraphJSON: builds chain-scoped nodes with labels and aggregated edges
+2026-09-18T18:59:31.6869491Z ok 150 - renderGraphJSON: builds chain-scoped nodes with labels and aggregated edges
+2026-09-18T18:59:31.6869898Z   ---
+2026-09-18T18:59:31.6870079Z   duration_ms: 0.804027
+2026-09-18T18:59:31.6870280Z   ...
+2026-09-18T18:59:31.6870636Z # Subtest: renderGraphJSON: empty window still returns a valid payload
+2026-09-18T18:59:31.6871342Z ok 151 - renderGraphJSON: empty window still returns a valid payload
+2026-09-18T18:59:31.6871985Z   ---
+2026-09-18T18:59:31.6872291Z   duration_ms: 0.373225
+2026-09-18T18:59:31.6872609Z   ...
+2026-09-18T18:59:31.6873225Z # Subtest: flowDirection: accumulator / distributor / balanced / null
+2026-09-18T18:59:31.6873905Z ok 152 - flowDirection: accumulator / distributor / balanced / null
+2026-09-18T18:59:31.6874245Z   ---
+2026-09-18T18:59:31.6874429Z   duration_ms: 0.432726
+2026-09-18T18:59:31.6874640Z   ...
+2026-09-18T18:59:31.6875005Z # Subtest: renderWalletJSON: additive flow + top_counterparties fields
+2026-09-18T18:59:31.6875535Z ok 153 - renderWalletJSON: additive flow + top_counterparties fields
+2026-09-18T18:59:31.6875874Z   ---
+2026-09-18T18:59:31.6876318Z   duration_ms: 0.421415
+2026-09-18T18:59:31.6876535Z   ...
+2026-09-18T18:59:31.6876985Z # Subtest: templateAnalysis: every exchange inflow/outflow now yields a directional signal
+2026-09-18T18:59:31.6877667Z ok 154 - templateAnalysis: every exchange inflow/outflow now yields a directional signal
+2026-09-18T18:59:31.6878079Z   ---
+2026-09-18T18:59:31.6878260Z   duration_ms: 0.808786
+2026-09-18T18:59:31.6878640Z   ...
+2026-09-18T18:59:31.6879052Z # Subtest: cachedPayload: first call computes, second within TTL serves the cache
+2026-09-18T18:59:31.6879668Z ok 155 - cachedPayload: first call computes, second within TTL serves the cache
+2026-09-18T18:59:31.6880046Z   ---
+2026-09-18T18:59:31.6880229Z   duration_ms: 0.814688
+2026-09-18T18:59:31.6880431Z   ...
+2026-09-18T18:59:31.6880779Z # Subtest: cachedPayload: after TTL it recomputes and overwrites
+2026-09-18T18:59:31.6881269Z ok 156 - cachedPayload: after TTL it recomputes and overwrites
+2026-09-18T18:59:31.6881597Z   ---
+2026-09-18T18:59:31.6881785Z   duration_ms: 18.357722
+2026-09-18T18:59:31.6881993Z   ...
+2026-09-18T18:59:31.6882413Z # Subtest: cachedPayload: when compute throws, stale cache is served instead of failing
+2026-09-18T18:59:31.6883055Z ok 157 - cachedPayload: when compute throws, stale cache is served instead of failing
+2026-09-18T18:59:31.6883455Z   ---
+2026-09-18T18:59:31.6883633Z   duration_ms: 5.441945
+2026-09-18T18:59:31.6883833Z   ...
+2026-09-18T18:59:31.6884291Z # Subtest: quantizeWindow: arbitrary values snap to fixed tiers so cache keys can't explode
+2026-09-18T18:59:31.6884980Z ok 158 - quantizeWindow: arbitrary values snap to fixed tiers so cache keys can't explode
+2026-09-18T18:59:31.6885398Z   ---
+2026-09-18T18:59:31.6885593Z   duration_ms: 0.380819
+2026-09-18T18:59:31.6885801Z   ...
+2026-09-18T18:59:31.6886394Z # Subtest: quantizeGraphParams: min_usd and limit snap to tiers
+2026-09-18T18:59:31.6886892Z ok 159 - quantizeGraphParams: min_usd and limit snap to tiers
+2026-09-18T18:59:31.6887209Z   ---
+2026-09-18T18:59:31.6887395Z   duration_ms: 0.374538
+2026-09-18T18:59:31.6887601Z   ...
+2026-09-18T18:59:31.6888002Z # Subtest: autoPauseState: guard pause active until until-passes, then expired
+2026-09-18T18:59:31.6888616Z ok 160 - autoPauseState: guard pause active until until-passes, then expired
+2026-09-18T18:59:31.6889006Z   ---
+2026-09-18T18:59:31.6889197Z   duration_ms: 0.505141
+2026-09-18T18:59:31.6889404Z   ...
+2026-09-18T18:59:31.6889767Z # Subtest: accWhale: totals, hourly buckets, and per-symbol counters
+2026-09-18T18:59:31.6890294Z ok 161 - accWhale: totals, hourly buckets, and per-symbol counters
+2026-09-18T18:59:31.6890636Z   ---
+2026-09-18T18:59:31.6890823Z   duration_ms: 1.50356
+2026-09-18T18:59:31.6891028Z   ...
+2026-09-18T18:59:31.6891460Z # Subtest: accWhale: exchange flow buckets use the label, edges fold inflow/outflow flags
+2026-09-18T18:59:31.6892269Z ok 162 - accWhale: exchange flow buckets use the label, edges fold inflow/outflow flags
+2026-09-18T18:59:31.6892668Z   ---
+2026-09-18T18:59:31.6892856Z   duration_ms: 0.249274
+2026-09-18T18:59:31.6893060Z   ...
+2026-09-18T18:59:31.6893444Z # Subtest: accWhale: unlabeled exchange flow falls back to a truncated address
+2026-09-18T18:59:31.6894025Z ok 163 - accWhale: unlabeled exchange flow falls back to a truncated address
+2026-09-18T18:59:31.6894399Z   ---
+2026-09-18T18:59:31.6894582Z   duration_ms: 0.235288
+2026-09-18T18:59:31.6894789Z   ...
+2026-09-18T18:59:31.6895203Z # Subtest: rollupStatements: one batch with counters, hours, exflows, edges, symbols
+2026-09-18T18:59:31.6895833Z ok 164 - rollupStatements: one batch with counters, hours, exflows, edges, symbols
+2026-09-18T18:59:31.6896517Z   ---
+2026-09-18T18:59:31.6896712Z   duration_ms: 0.9936
+2026-09-18T18:59:31.6896914Z   ...
+2026-09-18T18:59:31.6897302Z # Subtest: autoPauseState: guard pause active until until-passes, then expired
+2026-09-18T18:59:31.6897896Z ok 165 - autoPauseState: guard pause active until until-passes, then expired
+2026-09-18T18:59:31.6898271Z   ---
+2026-09-18T18:59:31.6898452Z   duration_ms: 0.211574
+2026-09-18T18:59:31.6898664Z   ...
+2026-09-18T18:59:31.6899093Z # Subtest: gradeSignal: bullish/bearish × move direction matrix
+2026-09-18T18:59:31.6899617Z ok 166 - gradeSignal: bullish/bearish × move direction matrix
+2026-09-18T18:59:31.6899932Z   ---
+2026-09-18T18:59:31.6900114Z   duration_ms: 0.237092
+2026-09-18T18:59:31.6900317Z   ...
+2026-09-18T18:59:31.6900828Z # Subtest: confidenceBucket: high ≥0.75, mid ≥0.60, low below
+2026-09-18T18:59:31.6901342Z ok 167 - confidenceBucket: high ≥0.75, mid ≥0.60, low below
+2026-09-18T18:59:31.6901646Z   ---
+2026-09-18T18:59:31.6901829Z   duration_ms: 0.235719
+2026-09-18T18:59:31.6902031Z   ...
+2026-09-18T18:59:31.6902370Z # Subtest: renderScoreboard: rates, calls, and the honesty footer
+2026-09-18T18:59:31.6902849Z ok 168 - renderScoreboard: rates, calls, and the honesty footer
+2026-09-18T18:59:31.6903184Z   ---
+2026-09-18T18:59:31.6903366Z   duration_ms: 0.382412
+2026-09-18T18:59:31.6903567Z   ...
+2026-09-18T18:59:31.6903945Z # Subtest: renderWalletJSON: track_record appears once graded, absent at 0
+2026-09-18T18:59:31.6904505Z ok 169 - renderWalletJSON: track_record appears once graded, absent at 0
+2026-09-18T18:59:31.6904859Z   ---
+2026-09-18T18:59:31.6905049Z   duration_ms: 0.475004
+2026-09-18T18:59:31.6905249Z   ...
+2026-09-18T18:59:31.6905684Z # Subtest: buildMarketCache: coingecko data wins, coinbase fills gaps, nulls never clobber
+2026-09-18T18:59:31.6906625Z ok 170 - buildMarketCache: coingecko data wins, coinbase fills gaps, nulls never clobber
+2026-09-18T18:59:31.6907035Z   ---
+2026-09-18T18:59:31.6907218Z   duration_ms: 0.401277
+2026-09-18T18:59:31.6907490Z   ...
+2026-09-18T18:59:31.6907919Z # Subtest: extractRssTitles: items, CDATA, entities, atom entries
+2026-09-18T18:59:31.6908491Z ok 171 - extractRssTitles: items, CDATA, entities, atom entries
+2026-09-18T18:59:31.6909064Z   ---
+2026-09-18T18:59:31.6909345Z   duration_ms: 0.835305
+2026-09-18T18:59:31.6909625Z   ...
+2026-09-18T18:59:31.6910191Z # Subtest: relatedHeadlines: asset + directional match, capped at 2, honest empty
+2026-09-18T18:59:31.6966754Z ok 172 - relatedHeadlines: asset + directional match, capped at 2, honest empty
+2026-09-18T18:59:31.6967307Z   ---
+2026-09-18T18:59:31.6967519Z   duration_ms: 0.663646
+2026-09-18T18:59:31.6967742Z   ...
+2026-09-18T18:59:31.6968200Z # Subtest: formatAlert: related headlines block renders between analysis and market footer
+2026-09-18T18:59:31.6968894Z ok 173 - formatAlert: related headlines block renders between analysis and market footer
+2026-09-18T18:59:31.6969308Z   ---
+2026-09-18T18:59:31.6969503Z   duration_ms: 14.280733
+2026-09-18T18:59:31.6969724Z   ...
+2026-09-18T18:59:31.6970168Z # Subtest: templateAnalysis: huge unlabeled-source flows get capped confidence + caveat
+2026-09-18T18:59:31.6970850Z ok 174 - templateAnalysis: huge unlabeled-source flows get capped confidence + caveat
+2026-09-18T18:59:31.6971456Z   ---
+2026-09-18T18:59:31.6971644Z   duration_ms: 0.905075
+2026-09-18T18:59:31.6971860Z   ...
+2026-09-18T18:59:31.6972305Z # Subtest: backtest: priceAt picks nearest-before; gradeEvent mirrors the worker semantics
+2026-09-18T18:59:31.6972996Z ok 175 - backtest: priceAt picks nearest-before; gradeEvent mirrors the worker semantics
+2026-09-18T18:59:31.6973407Z   ---
+2026-09-18T18:59:31.6973595Z   duration_ms: 0.411947
+2026-09-18T18:59:31.6973801Z   ...
+2026-09-18T18:59:31.6974246Z # Subtest: backtest: summarize buckets by confidence/signal/symbol and flags small samples
+2026-09-18T18:59:31.6974929Z ok 176 - backtest: summarize buckets by confidence/signal/symbol and flags small samples
+2026-09-18T18:59:31.6975338Z   ---
+2026-09-18T18:59:31.6975523Z   duration_ms: 0.60137
+2026-09-18T18:59:31.6975727Z   ...
+2026-09-18T18:59:31.6976302Z # Subtest: news helpers: symbol matcher + stable headline hash
+2026-09-18T18:59:31.6976793Z ok 177 - news helpers: symbol matcher + stable headline hash
+2026-09-18T18:59:31.6977104Z   ---
+2026-09-18T18:59:31.6977292Z   duration_ms: 0.815298
+2026-09-18T18:59:31.6977495Z   ...
+2026-09-18T18:59:31.6977823Z # Subtest: headlineSentiment: lexicon, conservative on overlap
+2026-09-18T18:59:31.6978285Z ok 178 - headlineSentiment: lexicon, conservative on overlap
+2026-09-18T18:59:31.6978599Z   ---
+2026-09-18T18:59:31.6978780Z   duration_ms: 1.079199
+2026-09-18T18:59:31.6978982Z   ...
+2026-09-18T18:59:31.6979295Z # Subtest: sizeVsHistory: ratio vs wallet's own recent average
+2026-09-18T18:59:31.6979875Z ok 179 - sizeVsHistory: ratio vs wallet's own recent average
+2026-09-18T18:59:31.6980189Z   ---
+2026-09-18T18:59:31.6980379Z   duration_ms: 0.212155
+2026-09-18T18:59:31.6980580Z   ...
+2026-09-18T18:59:31.6980992Z # Subtest: STABLECOIN INVERSION: USDT inflow is bullish (dry powder), outflow bearish
+2026-09-18T18:59:31.6981623Z ok 180 - STABLECOIN INVERSION: USDT inflow is bullish (dry powder), outflow bearish
+2026-09-18T18:59:31.6982018Z   ---
+2026-09-18T18:59:31.6982207Z   duration_ms: 0.355572
+2026-09-18T18:59:31.6982416Z   ...
+2026-09-18T18:59:31.6982757Z # Subtest: size-vs-history modulation: unusual size moves confidence
+2026-09-18T18:59:31.6983267Z ok 181 - size-vs-history modulation: unusual size moves confidence
+2026-09-18T18:59:31.6983596Z   ---
+2026-09-18T18:59:31.6983774Z   duration_ms: 1.11154
+2026-09-18T18:59:31.6983977Z   ...
+2026-09-18T18:59:31.6984369Z # Subtest: netflow baseline: bias requires loud-vs-history when baseline exists
+2026-09-18T18:59:31.6984953Z ok 182 - netflow baseline: bias requires loud-vs-history when baseline exists
+2026-09-18T18:59:31.6985322Z   ---
+2026-09-18T18:59:31.6985509Z   duration_ms: 0.436223
+2026-09-18T18:59:31.6985716Z   ...
+2026-09-18T18:59:31.6986337Z # Subtest: netflow stablecoin split: inverted bias, kept out of the native totals
+2026-09-18T18:59:31.6986975Z ok 183 - netflow stablecoin split: inverted bias, kept out of the native totals
+2026-09-18T18:59:31.6987364Z   ---
+2026-09-18T18:59:31.6987549Z   duration_ms: 0.251198
+2026-09-18T18:59:31.6987753Z   ...
+2026-09-18T18:59:31.6988125Z # Subtest: gradeWindowCheck: only 24-36h-old calls are honestly gradeable
+2026-09-18T18:59:31.6988672Z ok 184 - gradeWindowCheck: only 24-36h-old calls are honestly gradeable
+2026-09-18T18:59:31.6989031Z   ---
+2026-09-18T18:59:31.6989215Z   duration_ms: 0.153316
+2026-09-18T18:59:31.6989419Z   ...
+2026-09-18T18:59:31.6989738Z # Subtest: channelAllows: all/directional/high gating matrix
+2026-09-18T18:59:31.6990207Z ok 185 - channelAllows: all/directional/high gating matrix
+2026-09-18T18:59:31.6990518Z   ---
+2026-09-18T18:59:31.6990716Z   duration_ms: 0.151102
+2026-09-18T18:59:31.6990920Z   ...
+2026-09-18T18:59:31.6991350Z # Subtest: directional bonus: $1M native exchange flow reaches the ledger, stables do not
+2026-09-18T18:59:31.6992005Z ok 186 - directional bonus: $1M native exchange flow reaches the ledger, stables do not
+2026-09-18T18:59:31.6992399Z   ---
+2026-09-18T18:59:31.6992720Z   duration_ms: 0.279801
+2026-09-18T18:59:31.6992930Z   ...
+2026-09-18T18:59:31.6993264Z # Subtest: derivatives parsers: basis, LSR, taker, Bybit fallback
+2026-09-18T18:59:31.6993747Z ok 187 - derivatives parsers: basis, LSR, taker, Bybit fallback
+2026-09-18T18:59:31.6994064Z   ---
+2026-09-18T18:59:31.6994247Z   duration_ms: 0.339463
+2026-09-18T18:59:31.6994455Z   ...
+2026-09-18T18:59:31.6994851Z # Subtest: netflow stablecoin supply context: rotation vs fresh capital reads
+2026-09-18T18:59:31.6995434Z ok 188 - netflow stablecoin supply context: rotation vs fresh capital reads
+2026-09-18T18:59:31.6995800Z   ---
+2026-09-18T18:59:31.6996273Z   duration_ms: 0.192599
+2026-09-18T18:59:31.6996497Z   ...
+2026-09-18T18:59:31.6996761Z # Subtest: shortAddr truncates long evm addrs
+2026-09-18T18:59:31.6997114Z ok 189 - shortAddr truncates long evm addrs
+2026-09-18T18:59:31.6997379Z   ---
+2026-09-18T18:59:31.6997558Z   duration_ms: 1.284191
+2026-09-18T18:59:31.6997758Z   ...
+2026-09-18T18:59:31.6998043Z # Subtest: buildWalletMap dedupes by lowercase for evm
+2026-09-18T18:59:31.6998456Z ok 190 - buildWalletMap dedupes by lowercase for evm
+2026-09-18T18:59:31.6998749Z   ---
+2026-09-18T18:59:31.6998929Z   duration_ms: 0.22536
+2026-09-18T18:59:31.6999129Z   ...
+2026-09-18T18:59:31.6999481Z # Subtest: labelFor looks up via the map (case-insensitive for evm)
+2026-09-18T18:59:31.6999987Z ok 191 - labelFor looks up via the map (case-insensitive for evm)
+2026-09-18T18:59:31.7000312Z   ---
+2026-09-18T18:59:31.7000497Z   duration_ms: 0.188431
+2026-09-18T18:59:31.7000701Z   ...
+2026-09-18T18:59:31.7001014Z # Subtest: classifyTx pairs from/to exchange types correctly
+2026-09-18T18:59:31.7001589Z ok 192 - classifyTx pairs from/to exchange types correctly
+2026-09-18T18:59:31.7001901Z   ---
+2026-09-18T18:59:31.7002081Z   duration_ms: 1.058782
+2026-09-18T18:59:31.7002281Z   ...
+2026-09-18T18:59:31.7002637Z # Subtest: usdValue uses cached price, returns NaN when price missing
+2026-09-18T18:59:31.7003152Z ok 193 - usdValue uses cached price, returns NaN when price missing
+2026-09-18T18:59:31.7003488Z   ---
+2026-09-18T18:59:31.7003671Z   duration_ms: 0.294368
+2026-09-18T18:59:31.7003874Z   ...
+2026-09-18T18:59:31.7004103Z # Subtest: fmtUSD handles K/M/B
+2026-09-18T18:59:31.7004384Z ok 194 - fmtUSD handles K/M/B
+2026-09-18T18:59:31.7004612Z   ---
+2026-09-18T18:59:31.7004794Z   duration_ms: 0.184053
+2026-09-18T18:59:31.7004995Z   ...
+2026-09-18T18:59:31.7005353Z # Subtest: mdEscape escapes asterisks/underscores for telegram markdown
+2026-09-18T18:59:31.7005881Z ok 195 - mdEscape escapes asterisks/underscores for telegram markdown
+2026-09-18T18:59:31.7006453Z   ---
+2026-09-18T18:59:31.7006643Z   duration_ms: 0.275152
+2026-09-18T18:59:31.7006845Z   ...
+2026-09-18T18:59:31.7007204Z # Subtest: classifyTx: treasury prints and burns outrank exchange logic
+2026-09-18T18:59:31.7007729Z ok 196 - classifyTx: treasury prints and burns outrank exchange logic
+2026-09-18T18:59:31.7008073Z   ---
+2026-09-18T18:59:31.7008265Z   duration_ms: 0.149468
+2026-09-18T18:59:31.7008474Z   ...
+2026-09-18T18:59:31.7008736Z # Subtest: classifyTx: bridge and miner flows
+2026-09-18T18:59:31.7009085Z ok 197 - classifyTx: bridge and miner flows
+2026-09-18T18:59:31.7009351Z   ---
+2026-09-18T18:59:31.7009535Z   duration_ms: 0.255205
+2026-09-18T18:59:31.7009738Z   ...
+2026-09-18T18:59:31.7010088Z # Subtest: isBurnSink: zero address and dEaD variants, case-tolerant
+2026-09-18T18:59:31.7010596Z ok 198 - isBurnSink: zero address and dEaD variants, case-tolerant
+2026-09-18T18:59:31.7010934Z   ---
+2026-09-18T18:59:31.7011116Z   duration_ms: 0.312662
+2026-09-18T18:59:31.7011317Z   ...
+2026-09-18T18:59:31.7011492Z 1..198
+2026-09-18T18:59:31.7011686Z # tests 198
+2026-09-18T18:59:31.7011868Z # suites 0
+2026-09-18T18:59:31.7012050Z # pass 196
+2026-09-18T18:59:31.7012227Z # fail 2
+2026-09-18T18:59:31.7012407Z # cancelled 0
+2026-09-18T18:59:31.7012597Z # skipped 0
+2026-09-18T18:59:31.7012778Z # todo 0
+2026-09-18T18:59:31.7012990Z # duration_ms 51251.584492
+2026-09-18T18:59:31.7025527Z ##[error]Process completed with exit code 1.
+2026-09-18T18:59:31.7173554Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-18T18:59:31.7174815Z Post job cleanup.
+2026-09-18T18:59:31.8063270Z [command]/usr/bin/git version
+2026-09-18T18:59:31.8111078Z git version 2.55.0
+2026-09-18T18:59:31.8153045Z Temporarily overriding HOME='/home/runner/work/_temp/b301296e-234d-4786-b8df-e3a60011d0b3' before making global git config changes
+2026-09-18T18:59:31.8154504Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-18T18:59:31.8159610Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/whalesignal/whalesignal
+2026-09-18T18:59:31.8199192Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-18T18:59:31.8239478Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-18T18:59:31.8494034Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-18T18:59:31.8528738Z http.https://github.com/.extraheader
+2026-09-18T18:59:31.8544143Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-09-18T18:59:31.8579980Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-18T18:59:31.8853760Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-18T18:59:31.8895765Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-18T18:59:31.9320665Z Cleaning up orphan processes
+2026-09-18T18:59:31.9647711Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -21,6 +21,7 @@ import sqlite3
 from trading_loop.memory import (
     recent_trades_for_whale, whale_beliefs, global_beliefs, whale_score,
     new_signals, mark_processed, record_trade, open_trades, close_trade,
+    update_whale_score_after_close,
 )
 from trading_loop.risk_manager import (
     check as risk_check, Decision as RiskDecision, RiskState,
@@ -250,7 +251,7 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
     # Record trade
     record_trade(db, {
         "signal_id": signal["id"],
-        "tp_pct": decision.tp_pct,
+        "tp_pct": decision.get("tp_pct"),
         "sl_pct": check_result.adjusted["sl_pct"],
         "qty": qty,
         "whale": whale,
