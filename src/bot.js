@@ -2181,10 +2181,6 @@ async function postPublicAlert(env, whaleId) {
   // Fire GitHub Actions (triggers trade.yml via repository_dispatch)
   if (alertJSON) await fireGitHubDispatch(env, alertJSON);
 
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
-  ).bind(whaleId, chatId, Date.now()).run();
-
   // premium DM delivery: instant copy to active subscribers (channel gets
   // the same post; subscribers get it seconds earlier, before pacing)
   try {
@@ -2199,6 +2195,11 @@ async function postPublicAlert(env, whaleId) {
   } catch (e) {
     console.warn("[bot] premium DM delivery failed:", e.message);
   }
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
+  ).bind(whaleId, chatId, Date.now()).run();
+
+
 }
 
 // ─── default export (entry) ──────────────────────────────────────────
@@ -2238,8 +2239,12 @@ export default {
           await env.DB.prepare("DELETE FROM hourly_stats WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM exchange_netflow_hourly WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM flow_edges_hourly WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
-          await env.DB.prepare("DELETE FROM news WHERE first_seen < ?").bind(Date.now() - 30 * 86_400_000).run();
+          // keep LLM-scored headlines for 90d (research value); unscored at 30d
+          await env.DB.prepare("DELETE FROM news WHERE first_seen < ? AND llm_sentiment IS NULL").bind(Date.now() - 30 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM news WHERE first_seen < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM webhook_seen WHERE seen_at < ?").bind(Date.now() - 7 * 86_400_000).run();
+          // reconcile counter drift from failed rollup flushes
+          await env.DB.prepare("UPDATE counters SET v = (SELECT COUNT(*) FROM whales) WHERE k = 'total_whales'").run();
           await env.DB.prepare("DELETE FROM delivered WHERE delivered_at < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM price_history WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM alert_feedback WHERE created_at < ?").bind(Date.now() - 90 * 86_400_000).run();
