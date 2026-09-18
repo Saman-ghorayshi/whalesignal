@@ -289,11 +289,12 @@ def check_and_close_trades(db, hl, dry_run=False):
                 continue
         else:
             # dry-run: simulate price drift (entry +- 1%)
+            # guard against entry_price=0 (missing market data at trade time)
             if entry == 0:
-            close_trade(db, t["id"], 0, 0, "no_price", now)
-            db.commit()
-            continue
-        current_price = entry * 1.01 if side == "long" else entry * 0.99
+                close_trade(db, t["id"], 0, 0, "no_price", now)
+                db.commit()
+                continue
+            current_price = entry * 1.01 if side == "long" else entry * 0.99
 
         if current_price == 0:
             continue
