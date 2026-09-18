@@ -334,3 +334,12 @@ CREATE TABLE IF NOT EXISTS subscribers (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_subscribers_expiry ON subscribers(expires_at);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5i — news LLM-scoring columns (lost from this file during a
+-- restore; production had them via direct wrangler ALTERs since Sep 18).
+-- ─────────────────────────────────────────────────────────────────────
+ALTER TABLE news ADD COLUMN llm_sentiment INTEGER;
+ALTER TABLE news ADD COLUMN llm_event TEXT;
+ALTER TABLE news ADD COLUMN scored_at INTEGER;
+CREATE INDEX IF NOT EXISTS idx_wallets_type ON wallets(type);

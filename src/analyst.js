@@ -817,6 +817,56 @@ export async function analyzeOne(env, msg) {
 }
 
 
+// ─── daily LLM news scoring (one batched call; lexicon = fallback) ────
+//
+// The lexicon can't tell "SEC approves ETF" from "SEC delays ETF decision".
+// One LLM call scores up to 20 unscored headlines with sentiment + event
+// type; rows are marked so nothing is scored twice. Rebuilt Sep 18 — the
+// original block was lost in a file restore (see AUDIT.md).
+export function buildNewsScorePrompt(headlines) {
+  return "You are a crypto news classifier. For each headline output a JSON array item:\n" +
+    '  {"i": <index>, "s": <-1|0|1>, "e": "<regulation|hack|adoption|macro|etf|exchange|market|other>"}\n' +
+    "  s: -1 bearish, 0 neutral, 1 bullish FOR THE ASSET MENTIONED (crypto-wide news counts for both BTC and ETH). Judge the headline's own content, not vibes.\n" +
+    "  HEADLINES:\n" +
+    headlines.map((h, i) => (i + 1) + ". " + h.title).join("\n") +
+    "\n  Return ONLY the JSON array.";
+}
+
+export function parseNewsScores(text) {
+  if (!text) return null;
+  const s = String(text).replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const first = s.indexOf("["), last = s.lastIndexOf("]");
+  if (first < 0 || last <= first) return null;
+  try {
+    const arr = JSON.parse(s.slice(first, last + 1));
+    if (!Array.isArray(arr)) return null;
+    return arr.filter((it) => it && Number.isFinite(it.i) && [-1, 0, 1].includes(it.s))
+      .map((it) => ({ i: it.i, s: it.s, e: String(it.e || "other").slice(0, 24) }));
+  } catch { return null; }
+}
+
+export async function scorePendingNews(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, title FROM news WHERE scored_at IS NULL ORDER BY first_seen ASC LIMIT 20"
+  ).all();
+  if (!results || results.length < 10) return { scored: 0, skipped: "fewer than 10 unscored" };
+  const prompt = buildNewsScorePrompt(results);
+  let parsed = null;
+  try { parsed = parseNewsScores(await callLLM(env, prompt)); }
+  catch (e) { return { scored: 0, skipped: e.message }; }
+  if (!parsed) return { scored: 0, skipped: "unparseable" };
+  const stmts = parsed.map((it) => {
+    const row = results[it.i];
+    if (!row) return null;
+    return env.DB.prepare(
+      "UPDATE news SET llm_sentiment = ?, llm_event = ?, scored_at = ? WHERE id = ? AND scored_at IS NULL"
+    ).bind(it.s, it.e, Date.now(), row.id);
+  }).filter(Boolean);
+  if (stmts.length) await env.DB.batch(stmts);
+  return { scored: stmts.length };
+}
+
+
 // ─── daily market brief (LLM narrative, generated once per day) ──────
 //
 // The analyst composes the brief from rollup context (regime, netflow,
@@ -871,6 +921,21 @@ export async function generateDailyBrief(env) {
 }
 
 export default {
+  // Hourly cron: score pending news headlines (one batched LLM call when
+  // enough accumulated) + generate the daily market brief. NOTE: this
+  // handler was silently missing from the export for a full day — the cron
+  // fired, Cloudflare called nothing, and llm_scored stayed 0. Found by the
+  // scheduled e2e test, not by any deploy log.
+  async scheduled(event, env, ctx) {
+    try {
+      const r = await scorePendingNews(env);
+      console.log("[analyst] news scoring:", JSON.stringify(r));
+      const br = await generateDailyBrief(env);
+      console.log("[analyst] daily brief:", JSON.stringify(br));
+    } catch (e) {
+      console.error("[analyst] scheduled failed:", e.message);
+    }
+  },
   // Cloudflare Queues: batch messages arrive — ack each by awaiting.
   async queue(batch, env) {
     const out = [];

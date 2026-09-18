@@ -31,6 +31,10 @@ export function makeWorld() {
   for (const sql of seedWallets) DB.prepare(sql).run();
 
   const KV = new MockKV({
+    news_cache: JSON.stringify({ headlines: [
+      { title: "Binance resumes ETH withdrawals after brief pause" },
+      { title: "Bitcoin ETF inflows hit 3-month high" },
+    ], source: "test", updated_at: Date.now() }),
     market_cache: JSON.stringify({
       btc: { price: 100000, change_24h: 1.2 },
       eth: { price: 3500, change_24h: -0.5 },
@@ -160,19 +164,28 @@ function makeFetches() {
         'Recipe of the week: avocado toast',
       ]) }) },
 
-    // Gemini — returns a well-formed JSON analysis for any prompt
+    // Gemini — branches by prompt: news-classifier prompts get a score array,
+    // whale-analysis prompts get the JSON analysis
     { match: "https://generativelanguage.googleapis.com",
-      handler: () => ({
-        json: { candidates: [{ content: { parts: [{ text:
-          JSON.stringify({
-            headline: "Whale moves 500 BTC to Binance during neutral sentiment",
-            interpretation: "Likely a sell-side liquidity move, but small in size — not a strong directional signal.",
-            signal: "neutral",
-            confidence: 0.62,
-            related_factor: "exchange inflow during neutral sentiment",
-          })
-        }] } }] },
-      }) },
+      handler: (url, init) => {
+        const body = JSON.parse(init.body);
+        const prompt = body.contents?.[0]?.parts?.[0]?.text || "";
+        if (prompt.includes("daily brief writer")) {
+          return { json: { candidates: [{ content: { parts: [{ text: "BTC tape: choppy (RSI14 52). Netflow balanced. What to watch: funding rates and the next ETF flow print." }] } }] } };
+        }
+        if (prompt.includes("crypto news classifier")) {
+          const scores = JSON.stringify([{ i: 0, s: 1, e: "etf" }, { i: 1, s: -1, e: "hack" }, { i: 2, s: 0, e: "market" }, { i: 3, s: 1, e: "adoption" }, { i: 4, s: -1, e: "regulation" }]);
+          return { json: { candidates: [{ content: { parts: [{ text: scores }] } }] } };
+        }
+        const whale = JSON.stringify({
+          headline: "Whale moves 500 BTC to Binance during neutral sentiment",
+          interpretation: "Likely a sell-side liquidity move, but small in size — not a strong directional signal.",
+          signal: "neutral",
+          confidence: 0.62,
+          related_factor: "exchange inflow during neutral sentiment",
+        });
+        return { json: { candidates: [{ content: { parts: [{ text: whale }] } }] } };
+      } },
 
     // Telegram sendMessage — record the call so tests can assert on it
     { match: "https://api.telegram.org/botTEST_TOKEN_123/sendMessage",
