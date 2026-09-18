@@ -1,0 +1,8 @@
+name = "cryptopay"
+main = "cryptopay/worker_fixed.js"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cryptopay"
+database_id = "de90f5d2-bf53-4a42-a63b-d21d78e239c8"
