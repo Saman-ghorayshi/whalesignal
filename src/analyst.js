@@ -935,6 +935,10 @@ export default {
       await env.DB.prepare(
         "UPDATE subscribers SET status = 'expired' WHERE status = 'active' AND expires_at < ?"
       ).bind(Date.now()).run();
+      // clean abandoned payment invoices (7 days to pay or lose the spot)
+      await env.DB.prepare(
+        "DELETE FROM subscribers WHERE status = 'awaiting_payment' AND updated_at < ?"
+      ).bind(Date.now() - 7 * 86_400_000).run();
       console.log("[analyst] daily brief:", JSON.stringify(br));
     } catch (e) {
       console.error("[analyst] scheduled failed:", e.message);

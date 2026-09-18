@@ -336,7 +336,7 @@ export function rollupStatements(acc) {
  */
 async function flushRollups(env, acc) {
   const stmts = rollupStatements(acc);
-  if (!stmts.length) return;
+  if (!stmts.length || acc.totals.whales === 0) return;
   try {
     await env.DB.batch(stmts.map((s) => env.DB.prepare(s.sql).bind(...s.binds)));
   } catch (e) {
@@ -1252,20 +1252,23 @@ export async function refreshMarketCache(env) {
   cache.funding = derivs?.btc?.funding != null ? derivs : null;
   await env.KV.put("market_cache", JSON.stringify(cache));
 
-  // hourly price snapshots for the TA regime engine (INSERT OR IGNORE dedupes
-  // by hour bucket — 2 writes/hour whatever the refresh cadence)
+  // hourly price snapshots — gated on hour change to avoid ~1,150 no-op
+  // INSERT OR IGNORE attempts/day (each costs 1 D1 read checking the PK)
   try {
     const hourBucket = Math.floor(Date.now() / 3600000) * 3600000;
-    const rows = [];
-    for (const coin of ["btc", "eth"]) {
-      const p = cache[coin]?.price;
-      if (p != null) {
-        rows.push(env.DB.prepare(
-          "INSERT OR IGNORE INTO price_history (coin, hour_bucket, price) VALUES (?, ?, ?)"
-        ).bind(coin, hourBucket, p));
+    if (hourBucket !== (cache._last_price_hour || 0)) {
+      const rows = [];
+      for (const coin of ["btc", "eth"]) {
+        const p = cache[coin]?.price;
+        if (p != null) {
+          rows.push(env.DB.prepare(
+            "INSERT OR IGNORE INTO price_history (coin, hour_bucket, price) VALUES (?, ?, ?)"
+          ).bind(coin, hourBucket, p));
+        }
       }
+      if (rows.length) await env.DB.batch(rows);
+      cache._last_price_hour = hourBucket;
     }
-    if (rows.length) await env.DB.batch(rows);
   } catch (e) {
     console.warn("price_history write failed (TA regimes will lag): " + e.message);
   }
@@ -1549,8 +1552,12 @@ export async function scanChain(env, chain, market) {
       whales = dropPlumbing(whales, internalFloor);
 
       // wallet attributes only for THIS tick's candidates (indexed IN query)
-      const candAddrs = whales.flatMap((w) => [w.from_address, w.to_address]).filter(Boolean);
-      const walletInfos = await fetchWalletInfos(env, candAddrs, chain);
+      // skipped entirely when no whales — saves a D1 round trip per empty tick
+      let walletInfos = new Map();
+      if (whales.length) {
+        const candAddrs = whales.flatMap((w) => [w.from_address, w.to_address]).filter(Boolean);
+        walletInfos = await fetchWalletInfos(env, candAddrs, chain);
+      }
       lastWalletInfos = walletInfos.size;
 
       for (const w of whales) {

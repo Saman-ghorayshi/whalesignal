@@ -739,7 +739,8 @@ async function exportRows(env, { limit, sinceId }) {
       if (reaction === "up" || reaction === "down") {
         const reactor = "tg:" + (cq.from?.id ?? cq.message?.message_id ?? "anon");
         await env.DB.prepare(
-          "INSERT OR IGNORE INTO alert_feedback (whale_id, reactor, reaction, created_at) VALUES (?, ?, ?, ?)"
+          "INSERT INTO alert_feedback (whale_id, reactor, reaction, created_at) VALUES (?, ?, ?, ?)"
+          + " ON CONFLICT(whale_id, reactor) DO UPDATE SET reaction = excluded.reaction, created_at = excluded.created_at"
         ).bind(parseInt(idStr, 10) || 0, reactor, reaction, Date.now()).run();
         await env.DB.prepare(
           "INSERT INTO counters (k, v) VALUES (?, 1) ON CONFLICT(k) DO UPDATE SET v = v + 1"
