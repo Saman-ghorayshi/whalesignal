@@ -135,6 +135,17 @@ problem today — WhaleSignal was, and the fix landed.**
 
 ---
 
+## CoinGecko quota math (why 2-3 keys is the right number)
+
+- Demo key: ~10K calls/month ≈ 333/day. Price refresh = 288/day. One key
+  covers the scanner with ~15% headroom — zero margin for the laptop tools
+  (backtest 2 calls/run, research 2 calls/run) or retries.
+- 2 keys: ~55% utilization each with tools. 3 keys: ~37%. The rotation
+  picks randomly per call, so usage spreads evenly — add keys to CG_KEYS
+  comma-separated and the scanner picks them up on the next deploy.
+- The real 429 driver was SHARED-IP throttle (no key), not quota — the
+  demo key eliminates it. 3 keys = safe ceiling; more is waste.
+
 ## Cross-cutting recommendations for the whole account
 
 1. **Account isolation**: WhaleSignal competes with 5 databases for the shared

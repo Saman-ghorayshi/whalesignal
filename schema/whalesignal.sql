@@ -343,3 +343,7 @@ ALTER TABLE news ADD COLUMN llm_sentiment INTEGER;
 ALTER TABLE news ADD COLUMN llm_event TEXT;
 ALTER TABLE news ADD COLUMN scored_at INTEGER;
 CREATE INDEX IF NOT EXISTS idx_wallets_type ON wallets(type);
+
+-- bare detected_at index: the expired-grading cleanup and any time-window
+-- query without a chain prefix needs this to avoid full scans
+CREATE INDEX IF NOT EXISTS idx_whales_detected ON whales(detected_at);
