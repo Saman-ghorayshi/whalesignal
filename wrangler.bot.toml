@@ -59,3 +59,9 @@ id = "786f5d23d25d46d58558341c6029d89b"
 # at 18:00 UTC. Both handled by `scheduled()` in src/bot.js.
 [triggers]
 crons = ["*/15 * * * *", "0 18 * * *"]
+
+# Service binding to cryptopay — worker-to-worker premium payment calls,
+# no public URL needed (cryptopay's workers.dev route is disabled)
+[[services]]
+binding = "CRYPTOPAY"
+service = "cryptopay"

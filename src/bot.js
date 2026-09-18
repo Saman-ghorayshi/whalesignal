@@ -339,15 +339,18 @@ function cryptopayConfigured(env) {
 }
 
 async function cryptopayCall(env, path, body) {
+  const payload = JSON.stringify(body);
+  const headers = { "content-type": "application/json", "X-Pay-Secret": env.PAY_SECRET };
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), 8000);
   try {
-    const res = await fetch(env.CRYPTOPAY_URL + path, {
-      method: "POST",
-      headers: { "content-type": "application/json", "X-Pay-Secret": env.PAY_SECRET },
-      body: JSON.stringify(body),
-      signal: ctl.signal,
-    });
+    let res;
+    if (env.CRYPTOPAY) {
+      // service binding: worker-to-worker, no public URL involved
+      res = await env.CRYPTOPAY.fetch("https://cryptopay" + path, { method: "POST", headers, body: payload });
+    } else {
+      res = await fetch(env.CRYPTOPAY_URL + path, { method: "POST", headers, body: payload, signal: ctl.signal });
+    }
     return await res.json();
   } finally {
     clearTimeout(tid);
