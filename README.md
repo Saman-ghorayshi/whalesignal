@@ -1,6 +1,6 @@
 # WhaleSignal 🐳
 
-[![tests](https://github.com/Samsha/whalesignal/actions/workflows/test.yml/badge.svg)](https://github.com/Samsha/whalesignal/actions/workflows/test.yml)
+[![tests](https://github.com/Saman-ghorayshi/whalesignal/actions/workflows/test.yml/badge.svg)](https://github.com/Saman-ghorayshi/whalesignal/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 AI-powered whale-intelligence for crypto. Detects large on-chain BTC/ETH moves,
