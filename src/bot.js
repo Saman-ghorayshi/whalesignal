@@ -1692,50 +1692,32 @@ export function flowDirection(stats) {
  * this address (as sender or receiver). Two queries, one round trip each.
  */
 export async function walletProfile(env, address, chain = null) {
-  // BTC addresses are case-sensitive — try exact match first, then lowercase
-  const addrExact = String(address || "");
-  const addr = addrExact.toLowerCase();
-  let sql = "SELECT address, chain, label, type, reputation, tx_count, total_volume, first_seen, last_seen FROM wallets WHERE address = ? OR address = ?";
-  const profile = await env.DB.prepare(sql).bind(addrExact, addr).first();
+  const addr = String(address || "").toLowerCase();
+  let sql = "SELECT address, chain, label, type, reputation, tx_count, total_volume, first_seen, last_seen FROM wallets WHERE address = ?";
+  const binds = [addr];
+  if (chain) { sql += " AND chain = ?"; binds.push(chain.toLowerCase()); }
+  sql += " LIMIT 1";
+  const profile = await env.DB.prepare(sql).bind(...binds).first();
 
-  // UNION ALL instead of OR: each branch seeks its own index
-  const txsFrom = await env.DB.prepare(
+  // Recent txs involving this wallet (as from or to), joined with analysis.
+  const txs = await env.DB.prepare(
     "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
     "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
     "a.signal, a.headline, a.confidence " +
     "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
-    "WHERE w.from_address IN (?, ?) " + (chain ? "AND w.chain = ? " : "") +
+    "WHERE (w.from_address = ? OR w.to_address = ?) " +
+    (chain ? "AND w.chain = ? " : "") +
     "ORDER BY w.detected_at DESC LIMIT 20"
-  ).bind(...(chain ? [addrExact, addr, chain.toLowerCase()] : [addrExact, addr])).all();
-  const txsTo = await env.DB.prepare(
-    "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
-    "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
-    "a.signal, a.headline, a.confidence " +
-    "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
-    "WHERE w.to_address IN (?, ?) " + (chain ? "AND w.chain = ? " : "") +
-    "ORDER BY w.detected_at DESC LIMIT 20"
-  ).bind(...(chain ? [addrExact, addr, chain.toLowerCase()] : [addrExact, addr])).all();
-  // merge + dedupe by id
-  const seen = new Set();
-  const txs = { results: [] };
-  for (const r of [...(txsFrom?.results || []), ...(txsTo?.results || [])]) {
-    if (seen.has(r.id)) continue;
-    seen.add(r.id);
-    txs.results.push(r);
-  }
-  txs.results.sort((x, y) => y.detected_at - x.detected_at);
-  txs.results = txs.results.slice(0, 20);
+  ).bind(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr]).all();
 
-  // use the ACTUAL stored address (may differ in case from the input)
-  const storedAddr = profile ? profile.address : addrExact;
-  const flow = await walletFlowStats(env, storedAddr, chain);
-  const counterparties = await walletCounterparties(env, storedAddr, chain);
+  const flow = await walletFlowStats(env, addr, chain);
+  const counterparties = await walletCounterparties(env, addr, chain);
   // track record: graded vs correct directional calls involving this wallet
   let track = null;
   if (profile) {
     track = await env.DB.prepare(
       "SELECT graded, correct FROM wallet_stats WHERE address = ? AND chain = ?"
-    ).bind(profile.address, profile.chain).first().catch(() => null);
+    ).bind(profile.address, profile.chain || "unknown").first().catch(() => null);
   }
 
   return { profile, txs: txs?.results || [], flow, counterparties, track };
