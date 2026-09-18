@@ -1,6 +1,7 @@
 INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('bc1qmtl499lclce4gvjcgn38gehmmkh2kekywkc273ghhmcfl2s93jzq3wt9w4', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×10)', 'exchange');
-INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('bc1qmtl499lclce4gvjcgn38gehmmkh2kekywkc273ghhmcfl2s93jzq3wt9w4', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×13)', 'exchange');
-INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('3FupZp77ySr7jwoLYEJ9mwzJpvoNBXsBnE', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×15)', 'exchange');
+INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('3HPBGLDJWw6efKMLSDjWcGUpa2suZ8HF8y', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×7)', 'exchange');
+INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('3FupZp77ySr7jwoLYEJ9mwzJpvoNBXsBnE', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×17)', 'exchange');
+INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('bc1qmtl499lclce4gvjcgn38gehmmkh2kekywkc273ghhmcfl2s93jzq3wt9w4', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×15)', 'exchange');
 INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('33uCkeQWfhWGKbyWQVWP5Kc4Bb1xrcpMCt', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×2)', 'exchange_candidate');
 INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('3JmxvMqm35aLDUHXDbESy6rQz4M8MBQD32', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×8)', 'exchange');
 INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES ('379LMxuAQhEeKK6AtVqtoGCNSwChahhjvv', 'btc', 'OKX (rich list, 2026-09-15) cluster (co-spend ×3)', 'exchange');

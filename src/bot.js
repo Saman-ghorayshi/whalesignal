@@ -749,6 +749,37 @@ async function exportRows(env, { limit, sinceId }) {
       }
       if (lc === "/premium") {
         try {
+          if (cryptopayConfigured(env)) {
+            if (await isActiveSubscriber(env, chatId)) {
+              await tgSendMessage(env.BOT_TOKEN, chatId, "⭐ Your premium is already active. Thank you!");
+              return okJson({ ok: true, handled: "premium_active" });
+            }
+            if (lc.startsWith("/premium ")) {
+              // /premium <txid> — verify the payment
+              const txid = txt.slice(9).trim();
+              const msg = await handlePremiumPayment(env, chatId, txid);
+              await tgSendMessage(env.BOT_TOKEN, chatId, msg);
+              return okJson({ ok: true, handled: "premium_paid" });
+            }
+            // create the invoice via cryptopay
+            const inv = await cryptopayCall(env, "/invoice", { user_id: parseInt(chatId, 10) || 0, pkg: "whalesignal_premium", usd: PREMIUM_PRICE_USD });
+            await env.DB.prepare(
+              `INSERT INTO subscribers (chat_id, plan, status, invoice, created_at, updated_at)
+               VALUES (?, 'premium', 'awaiting_payment', ?, ?, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET status = 'awaiting_payment', invoice = excluded.invoice, updated_at = excluded.updated_at`
+            ).bind(chatId, JSON.stringify(inv), Date.now(), Date.now()).run();
+            const lines = ["⭐ WhaleSignal Premium — " + PREMIUM_PRICE_USD + " USD / " + PREMIUM_DAYS + " days", ""];
+            for (const c of inv.chains || []) {
+              lines.push("Send " + c.amount + " " + c.symbol + " to:");
+              lines.push(c.wallet);
+              lines.push("");
+            }
+            lines.push("After paying, send me: /premium <your transaction hash>");
+            lines.push("Instant DM alerts · before the channel · cancels anytime.");
+            await tgSendMessage(env.BOT_TOKEN, chatId, lines.join("\n"));
+            return okJson({ ok: true, handled: "premium_invoice" });
+          }
+          // cryptopay not configured — waitlist mode
           await env.DB.prepare(
             "INSERT OR IGNORE INTO waitlist (chat_id, joined_at) VALUES (?, ?)"
           ).bind(chatId, Date.now()).run();
@@ -2056,6 +2087,21 @@ async function postPublicAlert(env, whaleId) {
   await env.DB.prepare(
     "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
   ).bind(whaleId, chatId, Date.now()).run();
+
+  // premium DM delivery: instant copy to active subscribers (channel gets
+  // the same post; subscribers get it seconds earlier, before pacing)
+  try {
+    const subs = await env.DB.prepare(
+      "SELECT chat_id FROM subscribers WHERE status = 'active' AND expires_at > ?"
+    ).bind(Date.now()).all();
+    for (const sub of subs?.results || []) {
+      try {
+        await tgSendMessage(env.BOT_TOKEN, sub.chat_id, "⚡ PREMIUM — before the channel:\n\n" + text, { parse_mode: "" });
+      } catch { /* blocked bot / dead chat — skip */ }
+    }
+  } catch (e) {
+    console.warn("[bot] premium DM delivery failed:", e.message);
+  }
 }
 
 // ─── default export (entry) ──────────────────────────────────────────

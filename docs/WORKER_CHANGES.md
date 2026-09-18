@@ -53,6 +53,17 @@ this Cloudflare account.
 | Wallet API upgrade | `/wallet/:addr` adds lifetime flow stats, accumulator/distributor direction, track record (graded/correct), top counterparties | — |
 | Instrumentation | queueHandler batches log rows_read when > 500 | — |
 
+### Premium × cryptopay integration (bot, Sep 18)
+
+The portfolio glue:  now creates a cryptopay invoice (all 20
+chains), the user pays on-chain, sends , the bot calls
+cryptopay  server-to-server, and the  row flips
+active for 30 days. Active subscribers receive every directional alert
+**by DM seconds before the channel** (postPublicAlert fan-out). Pull-based
+by design: cryptopay never calls us, so the public bot has no webhook
+secret surface. Only activates when CRYPTOPAY_URL + PAY_SECRET secrets
+are set on the bot worker; otherwise /premium stays in waitlist mode.
+
 ### whalesignal-admin
 
 | Change | Detail |

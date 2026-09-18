@@ -314,3 +314,23 @@ CREATE TABLE IF NOT EXISTS alert_feedback (
 -- can't seek the (chain, from_address, ...) composite without a chain bind.
 CREATE INDEX IF NOT EXISTS idx_whales_from ON whales(from_address);
 CREATE INDEX IF NOT EXISTS idx_whales_to   ON whales(to_address);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Sprint 5j — premium subscriptions paid via cryptopay. Flow:
+-- /premium → bot calls cryptopay /invoice → user gets address+amount →
+-- user pays on-chain → user sends /paid <txid> → bot calls cryptopay
+-- /verify → on success the subscriber row flips active until expiry.
+-- The bot consumes cryptopay; cryptopay never calls us (pull, not push —
+-- no webhook secret surface on the public bot).
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS subscribers (
+  chat_id    TEXT PRIMARY KEY,
+  plan       TEXT    NOT NULL,
+  txid       TEXT,
+  status     TEXT    NOT NULL DEFAULT 'awaiting_payment',
+  invoice    TEXT,
+  expires_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subscribers_expiry ON subscribers(expires_at);
