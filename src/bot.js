@@ -2171,7 +2171,7 @@ async function postPublicAlert(env, whaleId) {
   // the same post; subscribers get it seconds earlier, before pacing)
   try {
     const subs = await env.DB.prepare(
-      "SELECT chat_id FROM subscribers WHERE status = 'active' AND expires_at > ?"
+      "SELECT chat_id FROM subscribers WHERE status = 'active' AND expires_at > ? LIMIT 50"
     ).bind(Date.now()).all();
     for (const sub of subs?.results || []) {
       try {
@@ -2217,6 +2217,11 @@ export default {
         try {
           const keepMs = 545 * 86_400_000;
           const r = await env.DB.prepare("DELETE FROM whales WHERE detected_at < ?").bind(Date.now() - keepMs).run();
+          await env.DB.prepare("DELETE FROM hourly_stats WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM exchange_netflow_hourly WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM flow_edges_hourly WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM news WHERE first_seen < ?").bind(Date.now() - 30 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM webhook_seen WHERE seen_at < ?").bind(Date.now() - 7 * 86_400_000).run();
           console.log(`[bot] retention prune: ${r.meta?.changes ?? 0} raw rows`);
         } catch (e) { console.warn("[bot] prune failed:", e.message); }
       }

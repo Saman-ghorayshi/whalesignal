@@ -82,18 +82,18 @@ async function collectCounts(env) {
   const windows = await env.DB.prepare(
     "SELECT SUM(CASE WHEN hour_bucket > ? THEN events ELSE 0 END) AS c24 FROM hourly_stats"
   ).bind(Date.now() - 86_400_000).first();
-  const status = {};
-  for (const k of ["done", "failed", "pending", "skipped"]) {
-    const v = counters.get("status:" + k);
-    if (v != null) status[k] = v;
-  }
+  const analysis = await env.DB.prepare(
+    "SELECT analysis_status AS status, COUNT(*) AS n FROM whales GROUP BY analysis_status"
+  ).all();
+  const byStatus = {};
+  for (const r of analysis.results || []) byStatus[r.status] = r.n;
   return {
     whales: {
       total: counters.get("total_whales") || 0,
       last_24h: windows?.c24 || 0,
       volume: counters.get("total_volume") || 0,
     },
-    analysis: status,
+    analysis: byStatus,
   };
 }
 

@@ -931,6 +931,10 @@ export default {
       const r = await scorePendingNews(env);
       console.log("[analyst] news scoring:", JSON.stringify(r));
       const br = await generateDailyBrief(env);
+      // expire stale subscriptions
+      await env.DB.prepare(
+        "UPDATE subscribers SET status = 'expired' WHERE status = 'active' AND expires_at < ?"
+      ).bind(Date.now()).run();
       console.log("[analyst] daily brief:", JSON.stringify(br));
     } catch (e) {
       console.error("[analyst] scheduled failed:", e.message);
