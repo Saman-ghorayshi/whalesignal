@@ -55,14 +55,26 @@ this Cloudflare account.
 
 ### Premium × cryptopay integration (bot, Sep 18)
 
-The portfolio glue:  now creates a cryptopay invoice (all 20
-chains), the user pays on-chain, sends , the bot calls
-cryptopay  server-to-server, and the  row flips
+The portfolio glue: `/premium` now creates a cryptopay invoice (all 20
+chains), the user pays on-chain, sends `/premium <txid>`, the bot calls
+cryptopay `/verify` server-to-server, and the `subscribers` row flips
 active for 30 days. Active subscribers receive every directional alert
 **by DM seconds before the channel** (postPublicAlert fan-out). Pull-based
 by design: cryptopay never calls us, so the public bot has no webhook
 secret surface. Only activates when CRYPTOPAY_URL + PAY_SECRET secrets
 are set on the bot worker; otherwise /premium stays in waitlist mode.
+
+**REQUIRED cryptopay-side config**: a  package in
+cryptopay's PRICING constant (price_usd: 10) — /verify looks the package up
+there and fails closed when absent. Without it, /premium <txid> replies
+"not verified yet" forever.
+
+Crash fix (Sep 18): the helper functions (cryptopayConfigured,
+cryptopayCall, isActiveSubscriber, handlePremiumPayment) were declared in
+a patch variable but never written to the file — /premium crashed the
+handler while tests passed (nothing exercised the DM path). Also fixed:
+60-day first-term bug (MAX+30d formula), 8s timeout on cryptopay calls,
+explicit user replies on invoice failure.
 
 ### whalesignal-admin
 

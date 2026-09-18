@@ -325,6 +325,71 @@ export async function cachedPayload(env, key, compute, ttlMs = CACHE_TTL_MS) {
   }
 }
 
+// ─── premium subscriptions via cryptopay (pull-based) ────────────────
+//
+// Only activates when CRYPTOPAY_URL + PAY_SECRET secrets exist on the bot
+// worker. Until then /premium stays in waitlist mode — graceful degradation.
+// REQUIRES a matching "whalesignal_premium" package in cryptopay's PRICING
+// config (price_usd: 10) — /verify looks the package up there.
+const PREMIUM_PRICE_USD = 10;
+const PREMIUM_DAYS = 30;
+
+function cryptopayConfigured(env) {
+  return !!(env.CRYPTOPAY_URL && env.PAY_SECRET);
+}
+
+async function cryptopayCall(env, path, body) {
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const res = await fetch(env.CRYPTOPAY_URL + path, {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-Pay-Secret": env.PAY_SECRET },
+      body: JSON.stringify(body),
+      signal: ctl.signal,
+    });
+    return await res.json();
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+async function isActiveSubscriber(env, chatId) {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT 1 FROM subscribers WHERE chat_id = ? AND status = 'active' AND expires_at > ?"
+    ).bind(chatId, Date.now()).first();
+    return !!row;
+  } catch { return false; }
+}
+
+async function handlePremiumPayment(env, chatId, txid) {
+  const result = await cryptopayCall(env, "/verify", {
+    txid, user_id: parseInt(chatId, 10) || 0,
+    pkg: "whalesignal_premium",
+    idempotency_key: "ws-prem-" + txid.slice(0, 40),
+  });
+  if (!result.ok || !result.verified) {
+    return "❌ Payment not verified yet. If the transaction just landed, try again in a few minutes (confirmations take time).";
+  }
+  const now = Date.now();
+  const periodEnd = now + PREMIUM_DAYS * 86_400_000;
+  // renewal extends from the LATER of (remaining expiry, now); a fresh
+  // subscriber gets exactly 30 days — the old MAX()+30d formula handed
+  // first-timers a accidental 60-day term.
+  await env.DB.prepare(
+    `INSERT INTO subscribers (chat_id, plan, txid, status, expires_at, created_at, updated_at)
+     VALUES (?, 'premium', ?, 'active', ?, ?, ?)
+     ON CONFLICT(chat_id) DO UPDATE SET
+       status = 'active', txid = excluded.txid, updated_at = excluded.updated_at,
+       expires_at = CASE
+         WHEN subscribers.status = 'active' AND subscribers.expires_at > ?2
+           THEN subscribers.expires_at + ${PREMIUM_DAYS} * 86400000
+         ELSE ?2 END`
+  ).bind(chatId, txid, periodEnd, now, now, now).run();
+  return "✅ Premium active for 30 days. You now receive every directional alert instantly by DM — before the channel, before clustering.";
+}
+
 // ─── fetch (Telegram webhook) ─────────────────────────────────────────
 
 export async function fetchHandler(request, env, ctx) {
@@ -761,8 +826,19 @@ async function exportRows(env, { limit, sinceId }) {
               await tgSendMessage(env.BOT_TOKEN, chatId, msg);
               return okJson({ ok: true, handled: "premium_paid" });
             }
-            // create the invoice via cryptopay
-            const inv = await cryptopayCall(env, "/invoice", { user_id: parseInt(chatId, 10) || 0, pkg: "whalesignal_premium", usd: PREMIUM_PRICE_USD });
+            // create the invoice via cryptopay (failure → explicit user reply,
+            // never a silent ACK — the outer catch would leave them hanging)
+            let inv = null;
+            try {
+              inv = await cryptopayCall(env, "/invoice", { user_id: parseInt(chatId, 10) || 0, pkg: "whalesignal_premium", usd: PREMIUM_PRICE_USD });
+            } catch (e) {
+              await tgSendMessage(env.BOT_TOKEN, chatId, "⚠️ Payment system is unavailable right now — try /premium again in a few minutes.");
+              return okJson({ ok: true, handled: "premium_invoice_error" });
+            }
+            if (!inv?.ok && !inv?.chains?.length) {
+              await tgSendMessage(env.BOT_TOKEN, chatId, "⚠️ Could not create a payment invoice right now — try /premium again shortly.");
+              return okJson({ ok: true, handled: "premium_invoice_failed" });
+            }
             await env.DB.prepare(
               `INSERT INTO subscribers (chat_id, plan, status, invoice, created_at, updated_at)
                VALUES (?, 'premium', 'awaiting_payment', ?, ?, ?)
