@@ -36,3 +36,10 @@ binding = "KV"
 id = "786f5d23d25d46d58558341c6029d89b"
 
 # Secret: wrangler secret put GEMINI_KEY  (set once, with a Gemini API key)
+
+# Hourly cron: news scoring (scorePendingNews) + daily brief generation
+# (generateDailyBrief) — see src/analyst.js scheduled handler.
+# NOTE: this block was lost once during a file restore — verify after every
+# deploy via /accounts/{id}/workers/scripts/whalesignal-analyst/schedules.
+[triggers]
+crons = ["7 * * * *"]
