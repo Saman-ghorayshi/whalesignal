@@ -1699,16 +1699,34 @@ export async function walletProfile(env, address, chain = null) {
   sql += " LIMIT 1";
   const profile = await env.DB.prepare(sql).bind(...binds).first();
 
-  // Recent txs involving this wallet (as from or to), joined with analysis.
-  const txs = await env.DB.prepare(
+  // UNION ALL instead of OR: each branch seeks its own index (idx_whales_from_time
+  // / idx_whales_to_time). The OR version can\'t use either index on 110K rows.
+  const txsFrom = await env.DB.prepare(
     "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
     "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
     "a.signal, a.headline, a.confidence " +
     "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
-    "WHERE (w.from_address = ? OR w.to_address = ?) " +
-    (chain ? "AND w.chain = ? " : "") +
+    "WHERE w.from_address = ? " + (chain ? "AND w.chain = ? " : "") +
     "ORDER BY w.detected_at DESC LIMIT 20"
-  ).bind(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr]).all();
+  ).bind(chain ? [addr, chain.toLowerCase()] : [addr]).all();
+  const txsTo = await env.DB.prepare(
+    "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
+    "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
+    "a.signal, a.headline, a.confidence " +
+    "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
+    "WHERE w.to_address = ? " + (chain ? "AND w.chain = ? " : "") +
+    "ORDER BY w.detected_at DESC LIMIT 20"
+  ).bind(chain ? [addr, chain.toLowerCase()] : [addr]).all();
+  // merge + dedupe by id
+  const seen = new Set();
+  const txs = { results: [] };
+  for (const r of [...(txsFrom?.results || []), ...(txsTo?.results || [])]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    txs.results.push(r);
+  }
+  txs.results.sort((x, y) => y.detected_at - x.detected_at);
+  txs.results = txs.results.slice(0, 20);
 
   const flow = await walletFlowStats(env, addr, chain);
   const counterparties = await walletCounterparties(env, addr, chain);
@@ -2175,7 +2193,7 @@ async function postPublicAlert(env, whaleId) {
     ).bind(Date.now()).all();
     for (const sub of subs?.results || []) {
       try {
-        await tgSendMessage(env.BOT_TOKEN, sub.chat_id, "⚡ PREMIUM — before the channel:\n\n" + text, { parse_mode: "" });
+        await tgSendMessage(env.BOT_TOKEN, sub.chat_id, "⚡ PREMIUM:\n\n" + text, { parse_mode: "" });
       } catch { /* blocked bot / dead chat — skip */ }
     }
   } catch (e) {
@@ -2222,6 +2240,9 @@ export default {
           await env.DB.prepare("DELETE FROM flow_edges_hourly WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM news WHERE first_seen < ?").bind(Date.now() - 30 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM webhook_seen WHERE seen_at < ?").bind(Date.now() - 7 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM delivered WHERE delivered_at < ?").bind(Date.now() - 90 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM price_history WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM alert_feedback WHERE created_at < ?").bind(Date.now() - 90 * 86_400_000).run();
           console.log(`[bot] retention prune: ${r.meta?.changes ?? 0} raw rows`);
         } catch (e) { console.warn("[bot] prune failed:", e.message); }
       }
