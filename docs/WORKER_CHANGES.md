@@ -64,7 +64,7 @@ by design: cryptopay never calls us, so the public bot has no webhook
 secret surface. Only activates when CRYPTOPAY_URL + PAY_SECRET secrets
 are set on the bot worker; otherwise /premium stays in waitlist mode.
 
-**REQUIRED cryptopay-side config**: a  package in
+**REQUIRED cryptopay-side config**: a "whalesignal_premium" package in
 cryptopay's PRICING constant (price_usd: 10) — /verify looks the package up
 there and fails closed when absent. Without it, /premium <txid> replies
 "not verified yet" forever.
