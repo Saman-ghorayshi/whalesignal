@@ -87,3 +87,91 @@ numbers, a measured feedback loop.
 | Static model weights | adaptive loop (built this round) |
 | Single-chain depth (BTC/ETH) | etherscan V2 pattern extends to Base/L2s free — after ETH coverage matures |
 | No intraday OHLCV | CoinGecko hourly (have) + Binance klines (keyless, add when backtest needs candles) |
+
+---
+
+## 6. Sep 19 wave — four papers turned into live signal logic
+
+Each finding below ships in `src/signal_math.js` (pure + unit-tested) and is
+wired into the confluence model. Nothing here is decorative: every formula
+answers a question the grading ledger can later confirm or kill.
+
+### 6.1 Square-root law of market impact → the `√impact` feature
+
+**Research.** Expected price impact of a metaorder scales with √(Q/V):
+[A Million Metaorder Analysis of Market Impact on the Bitcoin](https://www.worldscientific.com)
+confirms the law on Bitcoin specifically across four decades of order sizes;
+[Tóth et al. 2016](https://www.cfm.com) extends it to options; the practitioner
+form is ΔP = c·σ·√(n/V) (Quant StackExchange). Recent microstructure work
+([The "double" square-root law](https://arxiv.org), Feb 2025) traces its
+mechanical origin.
+
+**Implementation.** `expectedImpactPct(ratio, dailyVolPct) = σ_daily·√(Q/V)` —
+at Q = one full day of volume the model predicts ~one daily vol of impact,
+matching the literature's calibration. The flow's expected impact is compared
+against **the same vol-adaptive bar the grading engine uses** (max(1%, half
+of daily vol)):
+
+- expected ≥ bar → `+W.size` — the flow alone can mechanically clear the bar
+- expected < bar/10 → `−W.size` — mechanically negligible, pure intent
+- in between → no adjustment (most honest alerts live here)
+
+An alert's interpretation now states the number: "Expected impact ≈0.31% vs
+the 1.00% move bar".
+
+**Honest limit.** With BTC's ~$30B daily volume, only a >$7B flow clears a
+1% bar — so the boost is rare and always collides with the $100M
+huge-unlabeled cap (treasury-migration guard). The damped/neutral zones are
+where this feature actually earns its keep.
+
+### 6.2 Time-of-day liquidity → the session factor
+
+**Research.** [Wang 2020, "Time-of-Day Periodicities of Trading Volume and
+Volatility in Bitcoin"](https://ideas.repec.org) documents strong intraday
+volume/variance cycles tied to traditional sessions; SSRN's ["When Markets
+Never Sleep"](https://papers.ssrn.com) finds crypto liquidity is mostly
+"volume in disguise" — depth tracks volume.
+
+**Implementation.** `liquidityHourFactor(ts)`: 1.15 in the thin 22:00–06:00
+UTC trough, 0.9 in the thick 13:00–21:00 UTC US session, 1.0 otherwise. The
+factor multiplies the expected-impact number before it's compared to the bar
+— the same flow is genuinely more consequential at 03:00 UTC.
+
+### 6.3 Dormancy / coin-days-destroyed → the reactivation feature
+
+**Research.** Glassnode's [CDD guide](https://docs.glassnode.com/further-information/metric-guides/coin-days-destroyed/cdd-coin-days-destroyed)
+and [Average Coin Dormancy](https://docs.glassnode.com/further-information/metric-guides/dormancy/average-coin-dormancy):
+long-dormant coins moving is a rare, high-conviction event, historically
+read as long-term-holder distribution when it lands on exchanges.
+
+**Implementation.** We can't see UTXO age, so the proxy is our own sighting
+gap: `dormancyDays(wallets.last_seen, detected_at)` — a wallet the scanner
+hasn't seen doing whale-sized things for N days reactivating. ≥30d quiet →
+`+W.history` (conviction behind the flow's own direction); ≥90d → the CDD
+literature's "rare event" tier. `dormancyDays` treats an unknown wallet as
+null, never as 1970-era dormancy (a `Number(null)=0` bug the unit test
+caught before it shipped).
+
+### 6.4 Ledger calibration → closing the accountability loop
+
+**Research.** Standard practice: raw priors should be shrunk toward realized
+accuracy with a Beta-Binomial posterior; the strength parameter encodes how
+much data you demand before trusting the empirical rate.
+
+**Implementation.** `calibrate(prior, {correct, wrong}, k=20)`:
+`(k·prior + correct) / (k + n)` using the grading ledger's
+`outcome:{bucket}:{outcome}` counters, bucketed by the confidence we
+CLAIMED (high/mid/low, same buckets the grader uses). Engages at n ≥ 10
+graded directional calls. `n` counts correct+wrong only — a no_move is a
+missed move, not a wrong direction. This is the mechanism that finally makes
+docs/SIGNAL_MODEL.md's "weights are priors until calibrated" true: a bad
+week drags every confidence down automatically until the weights are refit.
+
+### 6.5 Bonus fix the wave surfaced
+
+`getMarketContext` selected `price_history.ts` — a column that doesn't exist
+(the table has `hour_bucket`). The error was swallowed, so the **TA regime
+component never fired in production** despite 4,400 price rows sitting in
+the table. The same sweep caught the analysts' `price_history` reads being
+silent-failed in tests too, because MockD1 tolerated nothing — the fixture
+just never asserted `ta != null`. Both fixed; the fix ships with this wave.

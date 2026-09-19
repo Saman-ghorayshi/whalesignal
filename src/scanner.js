@@ -964,8 +964,8 @@ export function buildMarketCache({ cg = null, btcSpot = null, ethSpot = null, fg
   const eth = cgEth ?? ethSpot;
   if (btc == null && eth == null) return null;
   return {
-    btc: { price: btc, change_24h: (cg?.bitcoin || cg?.prices?.bitcoin)?.usd_24h_change ?? null },
-    eth: { price: eth, change_24h: (cg?.ethereum || cg?.prices?.ethereum)?.usd_24h_change ?? null },
+    btc: { price: btc, change_24h: (cg?.bitcoin || cg?.prices?.bitcoin)?.usd_24h_change ?? null, vol_24h: (cg?.bitcoin || cg?.prices?.bitcoin)?.usd_24h_vol ?? null },
+    eth: { price: eth, change_24h: (cg?.ethereum || cg?.prices?.ethereum)?.usd_24h_change ?? null, vol_24h: (cg?.ethereum || cg?.prices?.ethereum)?.usd_24h_vol ?? null },
     // stablecoins/WBTC aliases so usdValue() works for ERC20 candidates
     usdt: { price: 1, change_24h: 0 },
     usdc: { price: 1, change_24h: 0 },
@@ -1206,8 +1206,10 @@ export async function fetchDerivatives(coin, fetcher = fetchJSON) {
 /** Refresh the market_cache key in KV. CoinGecko primary, Coinbase fallback. */
 export async function refreshMarketCache(env) {
   const cgid = Math.floor(Date.now() / 1000);
+  // include_24hr_vol feeds the analyst's square-root impact model
+  // (expected impact ≈ σ_daily·√(Q/V)) — same payload, zero extra calls
   const cgUrl =
-    "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
+    "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true";
   let cg = null;
   try {
     cg = await fetchJSON(cgUrl, { timeoutMs: 6000, headers: await cgKeyHeader(env) });

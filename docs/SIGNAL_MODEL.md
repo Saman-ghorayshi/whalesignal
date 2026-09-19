@@ -95,3 +95,25 @@ every outcome with its confidence bucket; once ≥200 graded calls exist:
 - No order-book or derivatives data (funding, OI) — candidate for v2.
 - No UTXO age/SOPR — needs indexed chain data we don't have at free tier.
 - No ML scoring until the ledger can train and validate on ≥1,000 outcomes.
+
+## Sep 19 wave — impact, sessions, dormancy, live calibration
+
+Four research-backed feature lines joined the composite (full derivations
+and citations in docs/RESEARCH.md §6; math in src/signal_math.js):
+
+| Feature | Weight bucket | Effect |
+|---|---|---|
+| √impact — σ_daily·√(Q/V) vs the grading bar | size (±W.size) | Bar-clearing flows +; mechanically negligible (< bar/10) −; in between neutral |
+| Session factor — 1.15 thin 22–06 UTC, 0.9 thick 13–21 UTC | folded into expected impact | Same flow is worth more in thin hours |
+| Dormancy reactivation — wallet unseen ≥30d (90d tier) | history (+W.history) | CDD-proxy conviction behind the flow's direction |
+| Ledger calibration — Beta-Binomial (k=20) on the claimed bucket | posterior shrink | Engages at n≥10 graded calls; drags confidence toward realized accuracy |
+
+Interaction with the huge-unlabeled cap: only a monster flow (>25% of ADV
+at 2% daily vol) can clear a 1% bar, and such flows also trip the $100M
+unlabeled cap — the boost is visible in the feature list but the cap wins
+until counterparty labels improve. This is intended: mechanical impact
+alone doesn't make a $8B treasury migration a directional signal.
+
+The calibration line makes the "priors until calibrated" plan partially
+live NOW (bucket-level shrinkage), with the full logistic refit (step 2)
+still waiting on ≥200 graded calls.

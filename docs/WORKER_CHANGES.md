@@ -170,3 +170,6 @@ problem today — WhaleSignal was, and the fix landed.**
    literals before deploy.
 3. **Rotation legitimacy**: multi-key rotation (CG_KEYS, etherscan) is fine
    with a handful of real accounts; key farms violate ToS.
+| **√-law impact + session factor + dormancy (Sep 19)** | CoinGecko payload now requests `include_24hr_vol=true` → `market_cache[coin].vol_24h`; no extra API calls | Consumers of market_cache see a new optional field; nothing removed |
+| **Analyst: TA context actually computes (Sep 19)** | `getMarketContext` selected `price_history.ts` — a column that never existed; the catch swallowed it, so the TA regime component NEVER fired in prod. Fixed (`hour_bucket AS ts`) | After this deploy the tape line starts appearing on alerts once 51 hourly price rows exist |
+| **Analyst: impact/dormancy/calibration (Sep 19)** | New `src/signal_math.js` (pure, unit-tested): square-root impact law, intraday session factor, dormancy proxy, Beta-Binomial ledger calibration. `flowConfidence` gained optional `impact` + `calib` params; `templateAnalysis` returns `features`; per-event one extra PK point lookup for the wallet's `last_seen` | Research citations in RESEARCH.md §6; model card updated. Calibration only engages at n≥10 ledger rows |

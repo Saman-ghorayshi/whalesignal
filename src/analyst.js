@@ -21,6 +21,10 @@
 
 import { fetchJSON, fmtUSD, shortAddr } from "./worker-utils.js";
 import { taSnapshot, regimeAlignment } from "./ta.js";
+import {
+  impactRatio, expectedImpactPct, liquidityHourFactor,
+  dormancyDays, gradingThresholdPct, calibrate, bucketFor,
+} from "./signal_math.js";
 
 // ─── confluence model (docs/SIGNAL_MODEL.md) ──────────────────────────
 
@@ -49,13 +53,19 @@ export async function getMarketContext(env, chain, symbol) {
   const hit = ctxCache.get(coin);
   if (hit && Date.now() - hit.ts < CTX_TTL_MS) return hit.ctx;
   let ta = null;
+  let volPct = null;
   try {
+    // hour_bucket aliased as ts — price_history has no `ts` column, and the
+    // old `SELECT ts, price` failed with "no such column" that the catch
+    // swallowed, so the TA regime component NEVER fired in production
+    // (found by the Sep 19 sweep).
     const { results } = await env.DB.prepare(
-      "SELECT ts, price FROM price_history WHERE coin = ? ORDER BY ts DESC LIMIT 400"
+      "SELECT hour_bucket AS ts, price FROM price_history WHERE coin = ? ORDER BY hour_bucket DESC LIMIT 400"
     ).bind(coin).all();
     if (results && results.length >= 51) {
       ta = taSnapshot(results.slice().reverse());
     }
+    volPct = dailyizedVolPct(results || []);
   } catch { /* no price history yet */ }
   let newsSent = null;
   try {
@@ -67,8 +77,32 @@ export async function getMarketContext(env, chain, symbol) {
       if (row && row.n > 0 && row.s != null) newsSent = { sum: row.s, n: row.n };
     }
   } catch { /* no news yet */ }
-  const out = { ta, newsSent };
+  // realized accuracy per confidence bucket from the grading ledger — the
+  // calibration loop (signal_math.calibrate). One small counters read per
+  // 60s cache window.
+  let calib = null;
+  try {
+    const { results: ck } = await env.DB.prepare(
+      "SELECT k, v FROM counters WHERE k LIKE 'outcome:%' AND (k LIKE '%:correct' OR k LIKE '%:wrong')"
+    ).all();
+    calib = calibByBucket(ck || []);
+  } catch { /* no ledger yet */ }
+  const out = { ta, newsSent, volPct, calib };
   ctxCache.set(coin, { ctx: out, ts: Date.now() });
+  return out;
+}
+
+/** Fold outcome:{bucket}:{outcome} counter rows into per-bucket
+ *  { correct, wrong } for the calibrator. Pure. */
+export function calibByBucket(counterRows) {
+  const out = {};
+  for (const { k, v } of counterRows || []) {
+    const m = /^outcome:(high|mid|low):(correct|wrong)$/.exec(String(k));
+    if (!m) continue;
+    const [, bucket, outcome] = m;
+    out[bucket] = out[bucket] || { correct: 0, wrong: 0 };
+    out[bucket][outcome] += Number(v) || 0;
+  }
   return out;
 }
 
@@ -105,6 +139,7 @@ export function sanitizeWeights(w) {
 export function flowConfidence({
   bullish, fgRegime = null, behavior = null, sizeRatio = null,
   taRegime = null, newsSent = null, derivs = null, hugeUnlabeled = false, weights = null,
+  impact = null, calib = null,
 }) {
   const W = { ...DEFAULT_WEIGHTS, ...sanitizeWeights(weights) };
   const adj = [];
@@ -143,6 +178,42 @@ export function flowConfidence({
     } else if (f < -0.0003) {
       if (bullish) { c += 0.05; adj.push("shorts crowded +0.05"); }
       else { c -= 0.05; adj.push("crowded shorts \u22120.05"); }
+    }
+  }
+
+  // market impact (square-root law, see signal_math.js / RESEARCH.md): a
+  // flow only matters if the market that must absorb it can actually move.
+  // expectedPct = σ_daily·√(Q/V) (composed with the session hour factor by
+  // the caller). Zones vs the grader's own vol-adaptive bar t: ≥ t → the
+  // flow alone can clear the grading bar (+); < t/10 → mechanically
+  // negligible, pure-intent noise (−); in between → the flow itself doesn't
+  // decide it, so no adjustment (most honest alerts live here).
+  if (impact && impact.expectedPct != null && impact.thresholdPct != null) {
+    const e = impact.expectedPct, t = impact.thresholdPct;
+    if (e >= t) { c += W.size; adj.push(`√impact ${e.toFixed(2)}% ≥ ${t.toFixed(2)}% bar +${W.size}`); }
+    else if (e < t / 10) { c -= W.size; adj.push(`√impact ${e.toFixed(2)}% ≪ ${t.toFixed(2)}% bar −${W.size}`); }
+  }
+
+  // dormancy reactivation (coin-days-destroyed proxy): a wallet unseen for
+  // 30d+ suddenly routing coins is the rare event the CDD literature flags —
+  // conviction behind the flow's own direction. Same history weight bucket
+  // as behavior (it IS wallet behavior — just very long-range).
+  if (impact && impact.dormancyDays != null && impact.dormancyDays >= 30) {
+    c += W.history;
+    adj.push(`dormancy ${Math.round(impact.dormancyDays)}d reactivation +${W.history}`);
+  }
+
+  // ledger calibration (Beta-Binomial, strength 20): shrink the composed
+  // prior toward realized directional accuracy for its confidence bucket.
+  // Only engages once the ledger has ≥10 graded directional calls; small
+  // samples barely move the prior.
+  if (calib) {
+    const b = bucketFor(Math.max(0.50, Math.min(0.85, c)));
+    const row = calib[b];
+    if (row && row.correct + row.wrong >= 10) {
+      const { confidence: cal, acc } = calibrate(c, row);
+      adj.push(`ledger-calibrated (n=${row.correct + row.wrong}, acc=${Math.round(acc * 100)}%)`);
+      c = cal;
     }
   }
 
@@ -246,6 +317,25 @@ export function templateAnalysis(whale, market, history, ctx = null) {
     const bullish = isStable ? isIn : !isIn;
     const sizeRatio = sizeVsHistory(usd, history);
     const hugeUnlabeled = usd >= 100_000_000;
+
+    // Square-root impact model (signal_math.js; RESEARCH.md Sep 19 wave).
+    // Native assets only — stablecoin flows are a "dry powder" signal, not a
+    // price-impact story about the stable itself. Expected impact =
+    // σ_daily·√(Q/V), scaled by the intraday session factor (thin hours hit
+    // harder), compared against the grader's own vol-adaptive bar so a
+    // "high-conviction" tag means "can actually clear the grading bar".
+    const impactCoin = sym === "WBTC" ? "btc" : String(whale.chain || "").toLowerCase();
+    const vol24h = isStable ? NaN : Number(market?.[impactCoin]?.vol_24h);
+    const ratio = impactRatio(usd, vol24h);
+    const hourF = liquidityHourFactor(whale.detected_at || Date.now());
+    const expectedRaw = expectedImpactPct(ratio, ctx?.volPct ?? null);
+    const expectedPct = expectedRaw != null ? expectedRaw * hourF : null;
+    const thresholdPct = ctx?.volPct != null ? gradingThresholdPct(ctx.volPct) : null;
+    const dorm = dormancyDays(ctx?.fromLastSeen, whale.detected_at);
+    const impact = (expectedPct != null && thresholdPct != null) || dorm != null
+      ? { expectedPct, thresholdPct, dormancyDays: dorm }
+      : null;
+
     const { confidence, features } = flowConfidence({
       bullish,
       fgRegime: regime,
@@ -256,6 +346,8 @@ export function templateAnalysis(whale, market, history, ctx = null) {
       derivs: ctx?.derivs ?? null,
       weights: ctx?.weights ?? null,
       hugeUnlabeled,
+      impact,
+      calib: ctx?.calib ?? null,
     });
 
     const stableNote = isStable
@@ -267,15 +359,21 @@ export function templateAnalysis(whale, market, history, ctx = null) {
     const sizeNote = sizeRatio != null && sizeRatio >= 5 ? ` Transfer is ${sizeRatio.toFixed(1)}× this wallet's recent average — unusually large for it.` : "";
     const tapeNote = ctx?.ta?.regime && ctx.ta.regime !== "unknown"
       ? ` Tape: ${ctx.ta.regime} (RSI14 ${ctx.ta.rsi14}).` : "";
+    const impactNote = impact?.expectedPct != null && impact?.thresholdPct != null
+      ? ` Expected impact ≈${impact.expectedPct.toFixed(2)}% vs the ${impact.thresholdPct.toFixed(2)}% move bar${impact.expectedPct >= impact.thresholdPct ? " — this flow can move the market" : impact.expectedPct < impact.thresholdPct / 2 ? " — too small to move the market" : ""}.`
+      : "";
+    const dormNote = impact?.dormancyDays != null && impact.dormancyDays >= 30
+      ? ` This wallet has been quiet for ${Math.round(impact.dormancyDays)} days — a dormant-whale reactivation.` : "";
     const confluence = features.length ? ` Confluence: ${features.join("; ")}.` : "";
 
     return {
       headline: bullish
         ? `${fmtUSD(usd)} ${sym} ${isIn ? "staged on exchange" : "withdrawn from exchange"}`
         : `${fmtUSD(usd)} ${sym} ${isIn ? "deposited to exchange" : "withdrawn from exchange"}`,
-      interpretation: `Whale ${isIn ? "deposited" : "withdrew"} ${fmtUSD(usd)} ${sym} ${isIn ? "to" : "from"} an exchange.${stableNote}${sizeNote}${tapeNote}${caveat}${confluence}`,
+      interpretation: `Whale ${isIn ? "deposited" : "withdrew"} ${fmtUSD(usd)} ${sym} ${isIn ? "to" : "from"} an exchange.${stableNote}${sizeNote}${tapeNote}${impactNote}${dormNote}${caveat}${confluence}`,
       signal: bullish ? "bullish" : "bearish",
       confidence,
+      features,
       related_factor: `${isStable ? "Stablecoin" : sym} exchange ${isIn ? "inflow" : "outflow"} — ${features.length ? features[0] : "flow direction"}`,
     };
   }
@@ -791,6 +889,14 @@ export async function analyzeOne(env, msg) {
   // derivatives crowding context rides on the market cache (funding + OI)
   ctx.derivs = market?.funding?.[String(whale.chain).toLowerCase()] ?? null;
   ctx.weights = await loadFlowWeights(env);
+  // from-wallet sighting gap feeds the dormancy feature — one PK point
+  // lookup (the wallet row may not exist at all; null means no signal)
+  try {
+    const wr = await env.DB.prepare(
+      "SELECT last_seen FROM wallets WHERE address = ? AND chain = ?"
+    ).bind(String(whale.from_address || "").toLowerCase(), String(whale.chain || "").toLowerCase()).first();
+    ctx.fromLastSeen = wr?.last_seen ?? null;
+  } catch { ctx.fromLastSeen = null; }
   const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);
