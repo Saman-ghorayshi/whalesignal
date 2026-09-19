@@ -404,6 +404,25 @@ export async function fetchHandler(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
 
+  // ─── public GET / — landing page (KV-cached 5 min; ~0 D1 reads on hit) ─
+  if (request.method === "GET" && (path === "/" || path === "/index.html")) {
+    try {
+      let html = null;
+      try { html = await env.KV.get("landing_html"); } catch { /* KV hiccup → rebuild */ }
+      if (!html) {
+        const data = await landingData(env);
+        html = renderLandingHTML(data);
+        try { await env.KV.put("landing_html", html, { expirationTtl: 300 }); } catch { /* best effort */ }
+      }
+      return new Response(html, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=120" },
+      });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
   // ─── public GET /latest?limit=N  (Phase 3 of ship runbook) ───────────
   // NO auth. The alert row carries no secret — it's the same
   // content the bot posts to a public Telegram channel. Read-only, CORS
@@ -871,6 +890,7 @@ async function exportRows(env, { limit, sinceId }) {
             }
             lines.push("After paying, send me: /premium <your transaction hash>");
             lines.push("Instant DM alerts · before the channel · cancels anytime.");
+            lines.push("Educational on-chain data, not financial advice — every call is graded publicly, wins and losses.");
             await tgSendMessage(env.BOT_TOKEN, chatId, lines.join("\n"));
             return okJson({ ok: true, handled: "premium_invoice" });
           }
@@ -885,6 +905,8 @@ async function exportRows(env, { limit, sinceId }) {
             "Planned: instant DM alerts before channel clustering, full wallet track records, deeper flow graph windows, and the weekly edge report.",
             "",
             "It opens once our public accuracy ledger has enough graded predictions to be worth paying for. Waitlist members get the first month free.",
+            "",
+            "Educational on-chain data, not financial advice.",
           ].join("\n"));
         } catch (e) {
           await tgSendMessage(env.BOT_TOKEN, chatId, "Waitlist is unavailable right now — try again later.");
@@ -2076,6 +2098,135 @@ export async function postScoreboard(env) {
   try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch { /* best effort */ }
   return { posted: true, graded24 };
 }
+// ─── public landing page (the conversion asset) ───────────────────────
+//
+// GET / serves a server-rendered HTML page: the live accuracy record,
+// per-bucket calibration, and recent graded calls — the "no cherry-picking"
+// proof, as a page you can link anywhere. KV-cached 5 minutes so crawls and
+// traffic cost ~0 D1 reads; a rebuild is a handful of rollup reads.
+
+/** Assemble the landing page data. A handful of rollup reads; cached by the
+ *  caller. Bounded: every query is rollup- or index-backed. */
+export async function landingData(env) {
+  const counters = await readCounters(env);
+  const correct = counters.get("outcome:correct") || 0;
+  const wrong = counters.get("outcome:wrong") || 0;
+  const nomove = counters.get("outcome:no_move") || 0;
+  const totalWhales = counters.get("total_whales") || 0;
+  const now = Date.now();
+  const [outcomes24, bucketRows, recentQ] = await Promise.all([
+    env.DB.prepare(
+      "SELECT prediction_outcome, COUNT(*) AS n FROM analysis WHERE evaluated_at > ? AND prediction_outcome IS NOT NULL GROUP BY prediction_outcome"
+    ).bind(now - 86_400_000).all(),
+    env.DB.prepare(
+      "SELECT k, v FROM counters WHERE k LIKE 'outcome:%:correct' OR k LIKE 'outcome:%:wrong'"
+    ).all(),
+    env.DB.prepare(
+      `SELECT w.usd_value, w.symbol, a.signal, a.confidence, a.prediction_outcome, w.price_at_detect, a.price_at_eval, w.detected_at
+       FROM whales w JOIN analysis a ON a.whale_id = w.id
+       WHERE a.evaluated_at > ? AND a.prediction_outcome IN ('correct','wrong')
+       ORDER BY w.detected_at DESC LIMIT 6`
+    ).bind(now - 7 * 86_400_000).all(),
+  ]);
+  const byOutcome24 = new Map((outcomes24?.results || []).map((r) => [r.prediction_outcome, r.n]));
+  const buckets = {};
+  for (const b of ["high", "mid", "low"]) {
+    const c = Number((bucketRows.results || []).find((r) => r.k === `outcome:${b}:correct`)?.v) || 0;
+    const w = Number((bucketRows.results || []).find((r) => r.k === `outcome:${b}:wrong`)?.v) || 0;
+    if (c + w > 0) buckets[b] = { correct: c, wrong: w, n: c + w, acc: Math.round((c / (c + w)) * 100) };
+  }
+  const recent = (recentQ?.results || []).map((r) => {
+    const pct = r.price_at_detect > 0 && r.price_at_eval != null
+      ? ((r.price_at_eval - r.price_at_detect) / r.price_at_detect) * 100 : null;
+    return {
+      usd: r.usd_value, symbol: r.symbol, signal: r.signal, confidence: r.confidence,
+      outcome: r.prediction_outcome, pct: pct != null ? Math.round(pct * 10) / 10 : null,
+      when: r.detected_at,
+    };
+  });
+  let channelUrl = null;
+  if (typeof env.PUBLIC_CHANNEL === "string" && env.PUBLIC_CHANNEL.startsWith("@")) {
+    channelUrl = "https://t.me/" + env.PUBLIC_CHANNEL.slice(1);
+  }
+  return {
+    totalWhales,
+    correct, wrong, nomove,
+    acc: correct + wrong > 0 ? Math.round((correct / (correct + wrong)) * 100) : null,
+    graded24: (byOutcome24.get("correct") || 0) + (byOutcome24.get("wrong") || 0) + (byOutcome24.get("no_move") || 0),
+    correct24: byOutcome24.get("correct") || 0,
+    wrong24: byOutcome24.get("wrong") || 0,
+    nomove24: byOutcome24.get("no_move") || 0,
+    buckets, recent, channelUrl,
+  };
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Pure. Server-rendered landing page — inline CSS, no external assets. */
+export function renderLandingHTML(d) {
+  const accLine = d.acc != null
+    ? `${d.acc}%`
+    : "building — first grades land 24h after each call";
+  const stat = (label, value) => `<div class="stat"><div class="v">${esc(value)}</div><div class="l">${esc(label)}</div></div>`;
+  const bucketRows = Object.entries(d.buckets || {}).map(([b, v]) =>
+    `<tr><td>${esc(b)}</td><td>${v.n}</td><td>${v.acc}%</td></tr>`).join("");
+  const bucketTable = bucketRows
+    ? `<h3>Calibration by claimed confidence</h3><p class="dim">When we say high confidence, are we right more often? The ledger answers.</p>
+       <table><tr><th>bucket</th><th>graded calls</th><th>direction right</th></tr>${bucketRows}</table>`
+    : "";
+  const recentRows = (d.recent || []).map((r) => {
+    const dir = r.signal === "bullish" ? "🟢 bullish" : "🔴 bearish";
+    const move = r.pct != null ? `${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}% in 24h` : "—";
+    const mark = r.outcome === "correct" ? "✅" : "❌";
+    return `<tr><td>${esc(fmtUSD(r.usd))} ${esc(r.symbol)}</td><td>${dir}</td><td>${esc(move)}</td><td>${mark}</td></tr>`;
+  }).join("");
+  const recentTable = recentRows
+    ? `<h3>Recent graded calls</h3><table><tr><th>flow</th><th>call</th><th>price moved</th><th></th></tr>${recentRows}</table>`
+    : "";
+  const channel = d.channelUrl
+    ? `<a class="btn" href="${esc(d.channelUrl)}">Join the channel</a>`
+    : "";
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhaleSignal — whale flows, graded honestly</title>
+<style>
+  body{background:#0b0f14;color:#dbe4ee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:2rem 1rem;max-width:760px;margin-inline:auto;line-height:1.5}
+  h1{font-size:1.6rem;margin:0 0 .3rem} h3{margin:1.6rem 0 .4rem;font-size:1.05rem}
+  .tag{color:#7d93a8;margin:0 0 1.4rem}
+  .stats{display:flex;gap:1rem;flex-wrap:wrap;margin:1.2rem 0}
+  .stat{background:#121a24;border:1px solid #1f2c3a;border-radius:10px;padding:.8rem 1.1rem;min-width:110px}
+  .stat .v{font-size:1.35rem;font-weight:700} .stat .l{font-size:.75rem;color:#7d93a8;margin-top:.15rem}
+  table{width:100%;border-collapse:collapse;background:#121a24;border:1px solid #1f2c3a;border-radius:10px;overflow:hidden}
+  th,td{padding:.55rem .7rem;text-align:left;border-bottom:1px solid #1a2530;font-size:.92rem}
+  th{color:#7d93a8;font-weight:600} tr:last-child td{border-bottom:none}
+  .dim{color:#7d93a8;font-size:.9rem;margin:.2rem 0 .6rem}
+  .btn{display:inline-block;background:#1d4ed8;color:#fff;text-decoration:none;padding:.65rem 1.2rem;border-radius:8px;font-weight:600;margin:1rem .5rem 0 0}
+  .btn.alt{background:#1f2c3a}
+  .foot{margin-top:2rem;color:#5d7185;font-size:.8rem;border-top:1px solid #1a2530;padding-top:1rem}
+</style></head><body>
+<h1>🐋 WhaleSignal</h1>
+<p class="tag">On-chain whale flows, analyzed and <b>graded honestly</b> — every directional call is scored 24h later against real prices, wins and losses.</p>
+<div class="stats">
+  ${stat("directional accuracy", accLine)}
+  ${stat("graded calls", d.correct + d.wrong + d.nomove)}
+  ${stat("whales tracked", Number(d.totalWhales || 0).toLocaleString())}
+  ${stat("graded last 24h", d.graded24)}
+</div>
+<p class="dim">✅ ${d.correct} right · ❌ ${d.wrong} wrong · ➖ ${d.nomove} no-move (lifetime). No cherry-picking: the ledger is the product.</p>
+${bucketTable}
+${recentTable}
+<h3>Get the alerts</h3>
+<p class="dim">The channel is free. Premium moves alerts to instant DMs, before the channel.</p>
+${channel}<a class="btn alt" href="https://t.me/whalesignal_bot">Open the bot → /premium</a>
+<h3>Raw data</h3>
+<p class="dim">Everything the channel shows is also machine-readable: <a href="/stats">/stats</a> · <a href="/latest">/latest</a> · <a href="/history">/history</a> · <a href="/netflow">/netflow</a> · <a href="/feed.xml">/feed.xml</a></p>
+<p class="foot">Educational on-chain data — not financial advice. Outcomes are graded by an automated ledger against a vol-adaptive threshold; past accuracy does not predict future results. WhaleSignal is not affiliated with any exchange.</p>
+</body></html>`;
+}
+
 // ─── event clustering ─────────────────────────────────────────────────
 
 /**
