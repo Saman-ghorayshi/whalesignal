@@ -24,6 +24,13 @@ max_retries = 3
 binding = "BOTQ"
 queue = "whalesignal-bot-q"
 
+# Orphan recovery: the hourly cron re-enqueues whales stuck 'pending' after
+# an outage killed their queue messages (a worker may produce to the same
+# queue it consumes)
+[[queues.producers]]
+binding = "ANALYSTQ"
+queue = "whalesignal-q"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "whalesignal-db"

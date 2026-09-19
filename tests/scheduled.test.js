@@ -51,3 +51,39 @@ test("analyst scheduled: second run same day skips brief regeneration", async ()
   const after = await w.env.KV.get("daily_brief");
   assert.equal(before, after, "brief not regenerated on the same day");
 });
+
+test("analyst scheduled: orphaned pending whales are requeued (outage recovery)", async () => {
+  const w = makeWorld();
+  const now = Date.now();
+  // orphan: pending, older than the 30-min grace — its queue message died
+  // mid-outage (D1 cap / deploy). fresh: pending but within the grace window
+  // (still owned by a live queue message). done: never eligible.
+  for (const [tx, ageMin, status] of [
+    ["orphan-old", 120, "pending"],
+    ["fresh-msg", 5, "pending"],
+    ["already-done", 120, "done"],
+  ]) {
+    const r = w.DB.prepare(
+      "INSERT INTO whales (chain, tx_hash, from_address, to_address, amount, symbol, usd_value, tx_type, block_number, detected_at, analysis_status, interesting_score) " +
+      "VALUES ('btc', ?, '0xfrom', '0xto', 1, 'BTC', 1000000, 'wallet_to_wallet', 800000, ?, ?, 10)"
+    ).bind("tx-" + tx, now - ageMin * 60_000, status).run();
+    if (status === "done") {
+      w.DB.prepare("INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, context_relevance, created_at, prediction_outcome) VALUES (?, 'h', 'i', 'neutral', 0.5, 'rel', 'medium', ?, 'no_signal')")
+        .bind(Number(r.meta.last_row_id), now).run();
+    }
+  }
+
+  await w.harness.scheduled(analyst.default, Date.now(), "7 * * * *");
+
+  const sent = w.ANALYSTQ.sent.map((m) => {
+    const body = typeof m.body === "string" ? JSON.parse(m.body) : m.body;
+    return body.whale_id;
+  });
+  assert.equal(sent.length, 1, `exactly the orphan gets requeued, got: ${JSON.stringify(sent)}`);
+  const orphanId = w.DB.prepare("SELECT id FROM whales WHERE tx_hash = 'tx-orphan-old'").first();
+  assert.equal(sent[0], orphanId.id, "the requeued whale is the orphaned one");
+  // and the orphan itself is untouched — still pending until the analyst
+  // actually re-processes it (queue message just re-sent)
+  const st = w.DB.prepare("SELECT analysis_status FROM whales WHERE tx_hash = 'tx-orphan-old'").first();
+  assert.equal(st.analysis_status, "pending");
+});

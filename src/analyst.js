@@ -937,6 +937,23 @@ export default {
   // scheduled e2e test, not by any deploy log.
   async scheduled(event, env, ctx) {
     try {
+      // Orphan recovery: whales stuck 'pending' with no live queue message.
+      // Happens when a queue batch dies inside a longer outage (D1 read cap,
+      // deploy, provider outage) — the queue's 3 retries exhaust in minutes
+      // but the outage lasts hours, and nothing else ever re-enqueues. Reads
+      // only the partial status index; ≤25/tick keeps the cron bounded.
+      // Self-terminating: saveAnalysis flips rows to 'done' (or markFailed on
+      // persistent LLM failures), so re-picked rows leave the pending set.
+      const { results: orphans } = await env.DB.prepare(
+        "SELECT id, chain FROM whales WHERE analysis_status = 'pending' AND detected_at < ? " +
+        "ORDER BY detected_at ASC LIMIT 25"
+      ).bind(Date.now() - 30 * 60_000).all();
+      if (orphans?.length && env.ANALYSTQ) {
+        for (const o of orphans) {
+          await env.ANALYSTQ.send(JSON.stringify({ whale_id: o.id, chain: o.chain ?? null }));
+        }
+        console.log(`[analyst] requeued ${orphans.length} orphaned pending whales`);
+      }
       const r = await scorePendingNews(env);
       console.log("[analyst] news scoring:", JSON.stringify(r));
       const br = await generateDailyBrief(env);
