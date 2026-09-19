@@ -545,6 +545,20 @@ export async function fetchHandler(request, env, ctx) {
     }
   }
 
+  // ─── per-IP rate limiting on expensive public endpoints ──────────────
+  // In-isolate rate limiter (zero D1 cost). Resets per isolate — good enough
+  // to stop scrapers; a distributed attacker would need Workers Rate Limiting.
+  const clientIP = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (!globalThis._rateLimits) globalThis._rateLimits = new Map();
+  const rlWindow = Math.floor(Date.now() / 60_000);
+  const rlKey = clientIP + ":" + rlWindow;
+  const rlCount = (globalThis._rateLimits.get(rlKey) || 0) + 1;
+  globalThis._rateLimits.set(rlKey, rlCount);
+  const EXPENSIVE_PATHS = ["/netflow", "/graph", "/market", "/alerts/export", "/feed.xml", "/news"];
+  if (EXPENSIVE_PATHS.some((p) => path.startsWith(p)) && rlCount > 10) {
+    return jsonResponse({ ok: false, reason: "rate_limited", retry_after: 60 }, 429);
+  }
+
   // ─── public GET /health — component status for ops ─────────────────
   if (request.method === "GET" && path === "/health") {
     try {
@@ -2139,6 +2153,20 @@ async function postPublicAlert(env, whaleId) {
   }, market, { related, volSpike });
   if (clusterNote) text = clusterNote + "\n" + text;
 
+  // premium DM fan-out BEFORE the channel: paid subscribers get it first
+  try {
+    const subs = await env.DB.prepare(
+      "SELECT chat_id FROM subscribers WHERE status = 'active' AND expires_at > ? LIMIT 50"
+    ).bind(Date.now()).all();
+    for (const sub of subs?.results || []) {
+      try {
+        await tgSendMessage(env.BOT_TOKEN, sub.chat_id, "⚡ PREMIUM:\n\n" + text, { parse_mode: "" });
+      } catch { /* blocked bot / dead chat — skip */ }
+    }
+  } catch (e) {
+    console.warn("[bot] premium DM delivery failed:", e.message);
+  }
+
   // Telegram bot pacing: ~1 msg/sec per chat and channels punish bursts
   // during whale clusters. Queue consumers can afford a small wait; enforce a
   // ≥3.5s gap between channel posts via a KV timestamp marker.
@@ -2164,20 +2192,6 @@ async function postPublicAlert(env, whaleId) {
   // Fire GitHub Actions (triggers trade.yml via repository_dispatch)
   if (alertJSON) await fireGitHubDispatch(env, alertJSON);
 
-  // premium DM delivery: instant copy to active subscribers (channel gets
-  // the same post; subscribers get it seconds earlier, before pacing)
-  try {
-    const subs = await env.DB.prepare(
-      "SELECT chat_id FROM subscribers WHERE status = 'active' AND expires_at > ? LIMIT 50"
-    ).bind(Date.now()).all();
-    for (const sub of subs?.results || []) {
-      try {
-        await tgSendMessage(env.BOT_TOKEN, sub.chat_id, "⚡ PREMIUM:\n\n" + text, { parse_mode: "" });
-      } catch { /* blocked bot / dead chat — skip */ }
-    }
-  } catch (e) {
-    console.warn("[bot] premium DM delivery failed:", e.message);
-  }
   await env.DB.prepare(
     "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
   ).bind(whaleId, chatId, Date.now()).run();
