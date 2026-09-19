@@ -1640,7 +1640,7 @@ export async function discoverSinkCandidates(env) {
       `SELECT chain, to_address AS addr, COUNT(DISTINCT from_address) AS senders,
               SUM(usd_value) AS volume
        FROM whales
-       WHERE detected_at > ? AND tx_type = "wallet_to_wallet" AND to_address != ""
+       WHERE detected_at > ? AND tx_type = 'wallet_to_wallet' AND to_address != ''
        GROUP BY chain, to_address
        HAVING senders >= 5 AND volume >= 10_000_000
        ORDER BY volume DESC LIMIT 50`
@@ -1795,6 +1795,20 @@ export default {
       }
     }
     console.log("[scanner] tick done:", JSON.stringify(results));
+
+    // Daily maintenance, self-gated by KV date markers (each runs at most
+    // once per day, ~0 cost the other 1439 ticks). These were EXPORTED BUT
+    // NEVER CALLED for the project's entire life — the bot's /netflow reads
+    // stablecoin_supply that nothing wrote, and sink auto-discovery never
+    // ran despite the docs claiming it was live. Found by call-site audit.
+    try {
+      const sc = await discoverSinkCandidates(env);
+      if (sc?.candidates) console.log(`[scanner] sink candidates: ${sc.candidates}`);
+    } catch (e) { console.warn("[scanner] sink discovery failed:", e.message); }
+    try {
+      const ss = await writeStablecoinSnapshot(env);
+      if (ss?.total_usd) console.log(`[scanner] stablecoin snapshot: $${ss.total_usd}`);
+    } catch (e) { console.warn("[scanner] stablecoin snapshot failed:", e.message); }
     return results;
   },
 };

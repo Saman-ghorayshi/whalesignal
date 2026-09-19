@@ -155,6 +155,13 @@ function makeFetches() {
     { match: "https://api.alternative.me/fng/",
       handler: () => ({ json: { data: [{ value: "50", value_classification: "Neutral" }] } }) },
 
+    // DefiLlama stablecoin supply (the scanner's daily snapshot job)
+    { match: "https://stablecoins.llama.fi/stablecoinchains",
+      handler: () => ({ json: [
+        { totalCirculatingUSD: { peggedUSD: 83_000_000_000 } },
+        { totalCirculatingUSD: { peggedUSD: 34_000_000_000 } },
+      ] }) },
+
     // CryptoPanic (Phase 3a / whale-reasoning Plan Ladder A — fills news_cache)
     // MockFetch matches by substring; the URL scanner builds is
     // https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot[&auth_token=...]
