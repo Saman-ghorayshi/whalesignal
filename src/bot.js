@@ -1186,16 +1186,18 @@ export function renderKeyStatus(s) {
   ].join("\n");
 }
 
-const HELP_TEXT = `🐋 WhaleSignal — AI whale alerts
+const HELP_TEXT = `🐋 WhaleSignal — whale alerts, graded honestly
 
-Phase 1 (MVP). Commands:
-  /ping    — health check
+Commands:
+  /latest  — recent whale moves
+  /premium — instant DM alerts, seconds before the channel ($10 / 30 days, 20 chains)
+  /id      — show your chat id (diagnostics)
   /help    — this message
-  /latest  — recently posted whale moves
-  /premium — join the premium waitlist
 
-We post AI-enhanced whale alerts to our channel. Real-time DMs come in Phase 2.
-Got a suggestion? Reply to this message.`;
+Every directional call we make is graded 24h later against real prices —
+wins and losses — and published on our public ledger. No cherry-picking.
+
+Educational on-chain data, not financial advice.`;
 
 // ─── /latest helper (shared by DM /latest and GET /latest route) ───────
 
