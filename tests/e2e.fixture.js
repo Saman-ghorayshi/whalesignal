@@ -15,7 +15,7 @@ import * as scanner from "../src/scanner.js";
 import * as analyst from "../src/analyst.js";
 import * as bot from "../src/bot.js";
 
-export function makeWorld() {
+export async function makeWorld() {
   const DB = new MockD1();
   DB.execFile("schema/whalesignal.sql");
 
@@ -28,7 +28,7 @@ export function makeWorld() {
     "INSERT INTO wallets (address, chain, label, type) VALUES ('16KaJxxxxxxxWhaleSource0000', 'btc', 'Whale Source', 'whale')",
     "INSERT INTO wallets (address, chain, label, type) VALUES ('0xWhaleSourceAddr0000000000000000000000abcd', 'eth', 'Whale Source', 'whale')",
   ];
-  for (const sql of seedWallets) DB.prepare(sql).run();
+  for (const sql of seedWallets) await DB.prepare(sql).run();
 
   const KV = new MockKV({
     news_cache: JSON.stringify({ headlines: [
@@ -286,7 +286,7 @@ function makeEthBlock(url) {
 
 export async function fullPipeline() {
   resetTelegramSent();
-  const { env, harness, fetches, ANALYSTQ, BOTQ, DB } = makeWorld();
+  const { env, harness, fetches, ANALYSTQ, BOTQ, DB } = await makeWorld();
 
   // Tick 1: primes last_block for both chains
   await harness.scheduled(scanner.default);
@@ -310,9 +310,9 @@ export async function fullPipeline() {
     botResults = await harness.queue(bot.default, BOTQ);
   }
 
-  const whales = DB.prepare("SELECT id, chain, tx_hash, amount, symbol, usd_value, tx_type, analysis_status FROM whales ORDER BY id").all().results;
-  const analyses = DB.prepare("SELECT whale_id, signal, confidence, headline, prediction_outcome FROM analysis").all().results;
-  const delivered = DB.prepare("SELECT whale_id, chat_id FROM delivered").all().results;
+  const whales = (await DB.prepare("SELECT id, chain, tx_hash, amount, symbol, usd_value, tx_type, analysis_status FROM whales ORDER BY id").all()).results;
+  const analyses = (await DB.prepare("SELECT whale_id, signal, confidence, headline, prediction_outcome FROM analysis").all()).results;
+  const delivered = (await DB.prepare("SELECT whale_id, chat_id FROM delivered").all()).results;
 
   // Return env.KV (the MockKV instance), not just its store, so callers can
   // assert cache keys were written (e.g. news_cache after Ladder A).

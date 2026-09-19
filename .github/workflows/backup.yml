@@ -1,0 +1,39 @@
+name: Weekly D1 Backup
+
+# D1 has NO automatic backups — export the whole database weekly and keep it
+# as a build artifact (90 days). Also manually triggerable before risky
+# changes. Needs the CLOUDFLARE_API_TOKEN repo secret (the same CF_ID value
+# used locally in .env; D1 read/export permission is enough).
+
+on:
+  schedule:
+    - cron: "0 4 * * 1" # Mondays 04:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Export D1 database
+        env:
+          CF_ID: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 676b8dc1e602b07651025cd852573949
+        run: bash tools/backup_d1.sh
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-backup
+          path: whalesignal_backup_*.sql
+          retention-days: 90
+          if-no-files-found: error

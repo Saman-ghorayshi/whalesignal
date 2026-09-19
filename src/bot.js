@@ -1715,6 +1715,9 @@ export async function walletProfile(env, address, chain = null) {
   const profile = await env.DB.prepare(sql).bind(...binds).first();
 
   // Recent txs involving this wallet (as from or to), joined with analysis.
+  // NOTE: bind is variadic — an array argument would bind as ONE value and
+  // D1 rejects it (D1_TYPE_ERROR); spread instead.
+  const txBinds = chain ? [addr, addr, chain.toLowerCase()] : [addr, addr];
   const txs = await env.DB.prepare(
     "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
     "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
@@ -1723,7 +1726,7 @@ export async function walletProfile(env, address, chain = null) {
     "WHERE (w.from_address = ? OR w.to_address = ?) " +
     (chain ? "AND w.chain = ? " : "") +
     "ORDER BY w.detected_at DESC LIMIT 20"
-  ).bind(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr]).all();
+  ).bind(...txBinds).all();
 
   const flow = await walletFlowStats(env, addr, chain);
   const counterparties = await walletCounterparties(env, addr, chain);
@@ -1887,8 +1890,12 @@ export const GRADE_PENDING_SQL = `SELECT whale_id, signal, confidence FROM analy
  */
 export async function gradePending(env, opts = {}) {
   const now = Date.now();
-  const minAgeHours = Number(opts.minAgeHours ?? 24);
-  const minAgeMs = (Number.isFinite(minAgeHours) && minAgeHours >= 0 ? minAgeHours : 24) * 3600_000;
+  // validated once — 0/negative/NaN all fall back to the honest default
+  const minAgeHours = Number.isFinite(Number(opts.minAgeHours)) && Number(opts.minAgeHours) >= 0
+    ? Number(opts.minAgeHours) : 24;
+  // the honest window is [minAgeHours, max(minAgeHours,24)+12] — 24..36h by
+  // default. max() keeps the lower bound at 24h even if minAge is tuned down.
+  const maxAgeHours = Math.max(minAgeHours, 24) + 12;
   let market = null;
   try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch { /* null */ }
   if (!market) return { graded: 0, skipped: "no_market_cache" };
@@ -1899,16 +1906,11 @@ export async function gradePending(env, opts = {}) {
   }
 
   const now0 = Date.now();
-  // rows past the honest window are closed as 'expired' so they never get
-  // graded against a price that isn't the 24h mark. minAgeMs is already in
-  // ms — the old Math.max(minAgeMs, 36) * 3_600_000 multiplied a ms value by
-  // 3.6M and NEVER matched anything (found by audit).
-  const maxAgeHours = Math.max(Number(opts.minAgeHours) || 24, 24) + 12;
   await env.DB.prepare(GRADE_EXPIRE_SQL).bind(now0, now0 - maxAgeHours * 3_600_000).run();
 
   const { results: pend } = await env.DB.prepare(GRADE_PENDING_SQL).all();
   const pending = pend || [];
-  if (pending.length === 0) return { graded: 0, considered: 0, expired: 0, pending: 0 };
+  if (pending.length === 0) return { graded: 0, considered: 0, expired: 0, no_data: 0, pending: 0 };
 
   // per-asset vol-adaptive thresholds (BTC/ETH) — a flat 1% is huge in quiet
   // markets and noise in violent ones. Only paid when there is something to
@@ -1933,17 +1935,16 @@ export async function gradePending(env, opts = {}) {
   ).bind(...ids).all();
   const whaleById = new Map((whaleRows || []).map((w) => [w.id, w]));
 
-  // Honest window in JS: 'young' rows wait for their 24h mark, rows detected
-  // past 36h are closed as 'expired' (never graded against a price that isn't
-  // the 24h mark — even if the analysis itself landed late via reanalysis).
-  const maxAgeMs = maxAgeHours * 3_600_000;
-  const minAgeCutoff = now - minAgeMs;
-  const maxAgeCutoff = now - maxAgeMs;
+  // Honest window via gradeWindowCheck (single source of truth): 'young'
+  // rows wait for their 24h mark; 'expired' rows are closed, never graded
+  // against a price that isn't the 24h mark — even when the analysis itself
+  // landed late via reanalysis.
   const rows = pending
     .map((p) => ({ ...p, w: whaleById.get(p.whale_id) }))
-    .filter((r) => r.w);
+    .filter((r) => r.w)
+    .map((r) => ({ ...r, window: gradeWindowCheck(r.w.detected_at, now, minAgeHours, maxAgeHours) }));
 
-  const stale = rows.filter((r) => r.w.detected_at < maxAgeCutoff).slice(0, 50);
+  const stale = rows.filter((r) => r.window === "expired").slice(0, 50);
   if (stale.length) {
     const stmts = stale.map((r) => env.DB.prepare(
       "UPDATE analysis SET prediction_outcome = 'expired', evaluated_at = ? WHERE whale_id = ? AND prediction_outcome IS NULL"
@@ -1953,13 +1954,14 @@ export async function gradePending(env, opts = {}) {
     }
   }
 
-  // due = inside the 24-36h window; grade oldest first, cap 50/tick
+  // due = inside the honest window; grade oldest first, cap 50/tick
   const due = rows
-    .filter((r) => r.w.detected_at >= maxAgeCutoff && r.w.detected_at < minAgeCutoff)
+    .filter((r) => r.window === "due")
     .sort((a, b) => a.w.detected_at - b.w.detected_at)
     .slice(0, 50);
 
   let graded = 0;
+  let noData = 0;
   for (const row of due) {
     const w = row.w;
     const priceNow = priceForSymbol(market, w.symbol);
@@ -1970,6 +1972,12 @@ export async function gradePending(env, opts = {}) {
        WHERE whale_id = ? AND prediction_outcome IS NULL`
     ).bind(outcome, priceNow, now, w.id).run();
     if (!upd.meta || upd.meta.changes === 0) continue; // someone else graded it
+
+    // no_data = we couldn't price the asset. The ledger row is closed, but it
+    // is NOT a graded call — counting it would pollute accuracy, calibration
+    // buckets, and the wallet's track record for something that isn't the
+    // call's fault.
+    if (outcome === "no_data") { noData++; continue; }
 
     const bucket = confidenceBucket(row.confidence);
     const stmts = [
@@ -1987,7 +1995,7 @@ export async function gradePending(env, opts = {}) {
     }
     graded++;
   }
-  return { graded, considered: due.length, expired: stale.length, pending: pending.length };
+  return { graded, considered: due.length, expired: stale.length, no_data: noData, pending: pending.length };
 }
 
 // ─── event clustering ─────────────────────────────────────────────────
@@ -2044,23 +2052,29 @@ export async function postScoreboard(env) {
     ).bind(since).all(),
     readCounters(env),
     env.DB.prepare(
-      `SELECT w.usd_value, w.symbol, a.signal, a.confidence, a.prediction_outcome, a.price_at_detect, a.price_at_eval
+      `SELECT w.usd_value, w.symbol, a.signal, a.confidence, a.prediction_outcome, w.price_at_detect, a.price_at_eval
        FROM whales w JOIN analysis a ON a.whale_id = w.id
        WHERE a.evaluated_at > ? AND a.prediction_outcome IN ('correct','wrong')
        ORDER BY w.usd_value DESC LIMIT 3`
     ).bind(since).all(),
   ]);
   const byOutcome = new Map((outcomes24?.results || []).map((r) => [r.prediction_outcome, r.n]));
-  const graded24 = [...byOutcome.values()].reduce((s, n) => s + n, 0);
+  // 'graded' means a real verdict: correct/wrong/no_move. 'expired' and
+  // 'no_data' rows are closed-ungraded — counting them made the scoreboard's
+  // own breakdown not add up.
+  const correct24 = byOutcome.get("correct") || 0;
+  const wrong24 = byOutcome.get("wrong") || 0;
+  const nomove24 = byOutcome.get("no_move") || 0;
+  const graded24 = correct24 + wrong24 + nomove24;
   if (graded24 === 0) return { skipped: "nothing_graded_yet" };
 
   const correct = counters.get("outcome:correct") || 0;
   const wrong = counters.get("outcome:wrong") || 0;
   const payload = {
     graded24,
-    correct24: byOutcome.get("correct") || 0,
-    wrong24: byOutcome.get("wrong") || 0,
-    nomove24: byOutcome.get("no_move") || 0,
+    correct24,
+    wrong24,
+    nomove24,
     accuracy: correct + wrong > 0 ? { total: correct + wrong, correct } : null,
     topCalls: topCallsQ?.results || [],
   };
@@ -2301,7 +2315,7 @@ export default {
         } catch (e) { console.warn("[bot] prune failed:", e.message); }
       }
 
-            // daily scoreboard to the public channel at 18:00 UTC (analyst
+      // daily scoreboard to the public channel at 18:00 UTC (analyst
       // generates the narrative brief; bot delivers — only bot touches TG)
       if (event.cron === "0 18 * * *") {
         const s = await postScoreboard(env);

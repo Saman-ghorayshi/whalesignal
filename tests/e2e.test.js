@@ -81,7 +81,7 @@ test("fullPipeline: scanner→analyst→bot posts one alert", async () => {
 });
 
 test("bot fetch handler: /ping replies via Telegram", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
   const req = new Request(`https://bot.test/tg/TEST_TOKEN_123`, {
     method: "POST",
     body: JSON.stringify({ message: { chat: { id: 42 }, from: { username: "samsha" }, text: "/ping" } }),
@@ -95,14 +95,14 @@ test("bot fetch handler: /ping replies via Telegram", async () => {
 });
 
 test("bot fetch handler: wrong path returns 404", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
   const req = new Request(`https://bot.test/wrong-path`, { method: "POST", body: "{}" });
   const res = await w.harness.fetch(bot.default, req);
   assert.equal(res.status, 404);
 });
 
 test("/history binds every SQL parameter (regression: real-D1 binding count bug)", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
   await w.DB.prepare(
     "INSERT INTO whales (chain, tx_hash, from_address, to_address, amount, symbol, " +
     "usd_value, tx_type, block_number, detected_at, analysis_status, interesting_score) " +
@@ -127,8 +127,33 @@ test("/history binds every SQL parameter (regression: real-D1 binding count bug)
   assert.ok(j.alerts.length >= 1, "filtered history returns the whale");
 });
 
+test("walletProfile binds every parameter variadic (regression: array bind = D1_TYPE_ERROR)", async () => {
+  const w = await makeWorld();
+  const now = Date.now();
+  await w.DB.prepare(
+    "INSERT INTO whales (chain, tx_hash, from_address, to_address, amount, symbol, usd_value, tx_type, block_number, detected_at, analysis_status, interesting_score) " +
+    "VALUES ('eth', '0xwp-tx-1', '0xaaa1111111111111', '0xbbb2222222222222', 1500, 'ETH', 5000000, 'exchange_inflow', 20000001, ?, 'done', 75)"
+  ).bind(now).run();
+  await w.DB.prepare(
+    "INSERT INTO wallets (address, chain, label, type) VALUES ('0xaaa1111111111111', 'eth', 'Test Whale', 'whale')"
+  ).run();
+
+  // with a chain filter (3 binds) — the old `.bind(chain ? [a,b,c] : [a,b])`
+  // passed ONE array argument where the SQL had 2-3 placeholders; SQLite
+  // treats an array as named params and throws
+  const withChain = await bot.walletProfile(w.env, "0xAAA1111111111111", "eth");
+  assert.ok(withChain.profile, "profile found with chain filter");
+  assert.equal(withChain.txs.length, 1, "txs query works with 3 variadic binds");
+
+  // without a chain filter (2 binds)
+  const noChain = await bot.walletProfile(w.env, "0xAAA1111111111111", null);
+  assert.ok(noChain.profile, "profile found without chain filter");
+  assert.equal(noChain.txs.length, 1, "txs query works with 2 variadic binds");
+  assert.equal(withChain.txs[0].tx_hash, "0xwp-tx-1");
+});
+
 test("webhook dedup: redelivered update_id is ACKed without replying again", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
   const mkReq = () => new Request(`https://bot.test/tg/TEST_TOKEN_123`, {
     method: "POST",
     body: JSON.stringify({
@@ -152,13 +177,13 @@ test("webhook dedup: redelivered update_id is ACKed without replying again", asy
 // proven implicitly by every other fetch test which sends multiple commands.
 
 test("scanner is idempotent across ticks (whales don't get re-inserted or re-queued)", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
   await w.harness.scheduled(scanner.default); // prime
   await w.harness.scheduled(scanner.default); // scan block (+1) — finds 2 whales
   assert.equal(w.ANALYSTQ.sent.length, 2, "2 sent on first real scan");
 
   // Manually mark those 2 as 'done' (simulating analyst finishing them) and clear queue.
-  w.DB.prepare("UPDATE whales SET analysis_status = 'done'").run();
+  await w.DB.prepare("UPDATE whales SET analysis_status = 'done'").run();
   w.ANALYSTQ.pending.length = 0;
 
   // Re-run another tick — same heights, fixture keeps incrementing, but our

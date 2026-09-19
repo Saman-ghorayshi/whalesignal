@@ -73,18 +73,21 @@ class _Stmt {
     this.binds = args;
     return this; // chainable
   }
-  all() {
+  // All three terminators return PROMISES like real D1 — worker code
+  // legitimately does `.first().catch(...)` / `.then(...)`, which crashes
+  // when these return plain values.
+  async all() {
     // prepare fresh each call — node:sqlite StatementSync is single-use-ish
     const stmt = this.db.prepare(this.sql);
     const rows = stmt.all(...this.binds);
     return { results: rows };
   }
-  first() {
+  async first() {
     const stmt = this.db.prepare(this.sql);
     const row = stmt.get(...this.binds);
     return row ?? null;
   }
-  run() {
+  async run() {
     const stmt = this.db.prepare(this.sql);
     const info = stmt.run(...this.binds);
     // D1 shape: { success, meta: { changes, last_row_id } }

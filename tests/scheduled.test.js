@@ -8,7 +8,7 @@ import { makeWorld } from "./e2e.fixture.js";
 import * as analyst from "../src/analyst.js";
 
 test("analyst scheduled: scores pending news + generates the daily brief", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
 
   // seed 10+ unscored headlines (scorePendingNews needs >= 10)
   for (let i = 0; i < 12; i++) {
@@ -28,7 +28,7 @@ test("analyst scheduled: scores pending news + generates the daily brief", async
   const r = await w.harness.scheduled(analyst.default, Date.now(), "7 * * * *");
 
   // news scoring wrote llm scores
-  const scored = w.DB.prepare("SELECT COUNT(*) AS n FROM news WHERE llm_sentiment IS NOT NULL").all();
+  const scored = await w.DB.prepare("SELECT COUNT(*) AS n FROM news WHERE llm_sentiment IS NOT NULL").all();
   assert.ok(scored.results[0].n > 0, "news rows must get llm_sentiment");
   // daily brief generated
   const brief = await w.env.KV.get("daily_brief");
@@ -41,7 +41,7 @@ test("analyst scheduled: scores pending news + generates the daily brief", async
 });
 
 test("analyst scheduled: second run same day skips brief regeneration", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
   await w.harness.scheduled(analyst.default, Date.now(), "7 * * * *");
   const marker = "brief:" + new Date().toISOString().slice(0, 10);
   assert.ok(await w.env.KV.get(marker), "marker exists after first run");
@@ -53,7 +53,7 @@ test("analyst scheduled: second run same day skips brief regeneration", async ()
 });
 
 test("analyst scheduled: orphaned pending whales are requeued (outage recovery)", async () => {
-  const w = makeWorld();
+  const w = await makeWorld();
   const now = Date.now();
   // orphan: pending, older than the 30-min grace — its queue message died
   // mid-outage (D1 cap / deploy). fresh: pending but within the grace window
@@ -63,12 +63,12 @@ test("analyst scheduled: orphaned pending whales are requeued (outage recovery)"
     ["fresh-msg", 5, "pending"],
     ["already-done", 120, "done"],
   ]) {
-    const r = w.DB.prepare(
+    const r = await w.DB.prepare(
       "INSERT INTO whales (chain, tx_hash, from_address, to_address, amount, symbol, usd_value, tx_type, block_number, detected_at, analysis_status, interesting_score) " +
       "VALUES ('btc', ?, '0xfrom', '0xto', 1, 'BTC', 1000000, 'wallet_to_wallet', 800000, ?, ?, 10)"
     ).bind("tx-" + tx, now - ageMin * 60_000, status).run();
     if (status === "done") {
-      w.DB.prepare("INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, context_relevance, created_at, prediction_outcome) VALUES (?, 'h', 'i', 'neutral', 0.5, 'rel', 'medium', ?, 'no_signal')")
+      await w.DB.prepare("INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, context_relevance, created_at, prediction_outcome) VALUES (?, 'h', 'i', 'neutral', 0.5, 'rel', 'medium', ?, 'no_signal')")
         .bind(Number(r.meta.last_row_id), now).run();
     }
   }
@@ -80,10 +80,10 @@ test("analyst scheduled: orphaned pending whales are requeued (outage recovery)"
     return body.whale_id;
   });
   assert.equal(sent.length, 1, `exactly the orphan gets requeued, got: ${JSON.stringify(sent)}`);
-  const orphanId = w.DB.prepare("SELECT id FROM whales WHERE tx_hash = 'tx-orphan-old'").first();
+  const orphanId = await w.DB.prepare("SELECT id FROM whales WHERE tx_hash = 'tx-orphan-old'").first();
   assert.equal(sent[0], orphanId.id, "the requeued whale is the orphaned one");
   // and the orphan itself is untouched — still pending until the analyst
   // actually re-processes it (queue message just re-sent)
-  const st = w.DB.prepare("SELECT analysis_status FROM whales WHERE tx_hash = 'tx-orphan-old'").first();
+  const st = await w.DB.prepare("SELECT analysis_status FROM whales WHERE tx_hash = 'tx-orphan-old'").first();
   assert.equal(st.analysis_status, "pending");
 });
