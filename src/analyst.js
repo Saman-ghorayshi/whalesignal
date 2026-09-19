@@ -1051,8 +1051,11 @@ export async function generateDailyBrief(env) {
   try { if (await env.KV.get(marker)) return { skipped: "already_generated" }; } catch {}
   const lines = [];
   try {
+    // hour_bucket aliased (no `ts` column) and LIMIT ≥ the 51-row requirement —
+    // the old query asked for 48 rows then required 51, so the tape line could
+    // never render even with the column fixed
     const { results: ph } = await env.DB.prepare(
-      "SELECT ts, price FROM price_history WHERE coin = 'btc' ORDER BY ts DESC LIMIT 48"
+      "SELECT hour_bucket AS ts, price FROM price_history WHERE coin = 'btc' ORDER BY hour_bucket DESC LIMIT 168"
     ).all();
     if (ph && ph.length >= 51) {
       const t = taSnapshot(ph.slice().reverse());

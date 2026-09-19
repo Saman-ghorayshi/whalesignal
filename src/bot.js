@@ -16,6 +16,7 @@ import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscap
 import { taSnapshot } from "./ta.js";
 import { volSpikeClass } from "./worker-utils.js";
 import { gradingThresholdPct, dailyizedVolPct, bucketFor } from "./signal_math.js";
+import { computeMarketState } from "./market_state.js";
 
 /** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
@@ -410,9 +411,19 @@ export async function fetchHandler(request, env, ctx) {
       let html = null;
       try { html = await env.KV.get("landing_html"); } catch { /* KV hiccup → rebuild */ }
       if (!html) {
-        const data = await landingData(env);
-        html = renderLandingHTML(data);
-        try { await env.KV.put("landing_html", html, { expirationTtl: 300 }); } catch { /* best effort */ }
+        try {
+          const data = await landingData(env);
+          html = renderLandingHTML(data);
+          try { await env.KV.put("landing_html", html, { expirationTtl: 300 }); } catch { /* best effort */ }
+        } catch (e) {
+          // rebuild failed (e.g. D1 daily cap) — never 500 a public page;
+          // a light self-refreshing page retries until the cache is warm
+          console.error("[bot] landing rebuild failed:", e.message);
+          html = `<!doctype html><html><head><meta charset="utf-8"><title>WhaleSignal</title><meta http-equiv="refresh" content="120"></head>
+<body style="background:#0b0f14;color:#dbe4ee;font-family:system-ui,sans-serif;text-align:center;padding:4rem 1rem">
+<h1>🐋 WhaleSignal</h1><p>The public ledger is rebuilding — this page retries automatically in 2 minutes.</p>
+<p><a style="color:#7fb0ff" href="https://t.me/whalesignal_bot">Open the bot</a></p></body></html>`;
+        }
       }
       return new Response(html, {
         status: 200,
@@ -693,8 +704,10 @@ export async function fetchHandler(request, env, ctx) {
         const out = { ok: true, generated_at: Date.now(), btc: null, eth: null, fear_greed: null, fear_greed_label: null };
         for (const coin of ["btc", "eth"]) {
           try {
+            // hour_bucket aliased — the table has no `ts` column; the old
+            // SELECT ts failed and the catch returned null TA forever
             const { results } = await env.DB.prepare(
-              "SELECT ts, price FROM price_history WHERE coin = ? ORDER BY ts DESC LIMIT 400"
+              "SELECT hour_bucket AS ts, price FROM price_history WHERE coin = ? ORDER BY hour_bucket DESC LIMIT 400"
             ).bind(coin).all();
             if (results && results.length >= 51) out[coin] = taSnapshot(results.slice().reverse());
           } catch { /* table empty */ }
@@ -704,6 +717,19 @@ export async function fetchHandler(request, env, ctx) {
           out.fear_greed = m?.fear_greed ?? null;
           out.fear_greed_label = m?.fear_greed_label ?? null;
           out.prices_from = m?.prices_from ?? null;
+          // the market-state gauge, actually computed (was test-only dead code)
+          try {
+            const netQ = await netflowTotals(env, Date.now() - 86_400_000);
+            const nativeNet = (netQ || []).reduce((s, r) => s + (r.inflow_usd || 0) - (r.outflow_usd || 0), 0);
+            out.market_state = computeMarketState({
+              taRegime: out.btc?.regime ?? null, rsi14: out.btc?.rsi14 ?? null,
+              ema20: out.btc?.ema20 ?? null, ema50: out.btc?.ema50 ?? null,
+              funding: m?.funding?.btc?.funding ?? null,
+              netInflow24h: netQ.length ? nativeNet : null,
+              fearGreed: m?.fear_greed ?? null,
+              newsSent: null,
+            });
+          } catch { /* gauge optional */ }
         } catch {}
         return out;
       });
@@ -2114,7 +2140,9 @@ export async function landingData(env) {
   const nomove = counters.get("outcome:no_move") || 0;
   const totalWhales = counters.get("total_whales") || 0;
   const now = Date.now();
-  const [outcomes24, bucketRows, recentQ] = await Promise.all([
+  let market = null;
+  try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch { /* null */ }
+  const [outcomes24, bucketRows, recentQ, netQ, headlineQ, sparkQ, taQ] = await Promise.all([
     env.DB.prepare(
       "SELECT prediction_outcome, COUNT(*) AS n FROM analysis WHERE evaluated_at > ? AND prediction_outcome IS NOT NULL GROUP BY prediction_outcome"
     ).bind(now - 86_400_000).all(),
@@ -2127,7 +2155,39 @@ export async function landingData(env) {
        WHERE a.evaluated_at > ? AND a.prediction_outcome IN ('correct','wrong')
        ORDER BY w.detected_at DESC LIMIT 6`
     ).bind(now - 7 * 86_400_000).all(),
+    // 24h native exchange netflow (stables tracked separately — inverted
+    // meaning, kept out of the market-state input)
+    netflowTotals(env, now - 86_400_000),
+    env.DB.prepare(
+      `SELECT title, source, sentiment, llm_sentiment, first_seen FROM news
+       WHERE first_seen > ? ORDER BY first_seen DESC LIMIT 8`
+    ).bind(now - 48 * 3_600_000).all(),
+    env.DB.prepare(
+      `SELECT hour_bucket, SUM(events) AS events, SUM(bullish) AS bull, SUM(bearish) AS bear
+       FROM hourly_stats WHERE hour_bucket > ? GROUP BY hour_bucket ORDER BY hour_bucket`
+    ).bind(now - 7 * 86_400_000).all(),
+    // BTC tape for the market-state score (same query shape as /market —
+    // hour_bucket aliased: the table has no `ts` column)
+    env.DB.prepare(
+      "SELECT hour_bucket AS ts, price FROM price_history WHERE coin = ? ORDER BY hour_bucket DESC LIMIT 400"
+    ).bind("btc").all(),
   ]);
+
+  // market-state gauge (market_state.js) — TA + funding + netflow + F&G + news
+  const taRow = (taQ.results || []).length >= 51 ? taSnapshot((taQ.results || []).slice().reverse()) : null;
+  const nativeNet = (netQ || []).reduce((s, r) => s + (r.inflow_usd || 0) - (r.outflow_usd || 0), 0);
+  const newsAgg = (headlineQ.results || []).reduce(
+    (acc, h) => { const s = h.llm_sentiment ?? h.sentiment; if (s != null) { acc.sum += s; acc.n++; } return acc; },
+    { sum: 0, n: 0 });
+  const funding = market?.funding?.btc?.funding ?? null;
+  const marketState = computeMarketState({
+    taRegime: taRow?.regime ?? null, rsi14: taRow?.rsi14 ?? null,
+    funding,
+    netInflow24h: netQ.length ? nativeNet : null,
+    fearGreed: market?.fear_greed ?? null,
+    newsSent: newsAgg.n > 0 ? newsAgg : null,
+  });
+
   const byOutcome24 = new Map((outcomes24?.results || []).map((r) => [r.prediction_outcome, r.n]));
   const buckets = {};
   for (const b of ["high", "mid", "low"]) {
@@ -2144,6 +2204,15 @@ export async function landingData(env) {
       when: r.detected_at,
     };
   });
+  const headlines = (headlineQ.results || []).map((h) => ({
+    title: h.title, source: h.source,
+    sent: h.llm_sentiment ?? h.sentiment ?? 0,
+    scored: h.llm_sentiment != null,
+    when: h.first_seen,
+  }));
+  const spark = (sparkQ.results || []).map((r) => ({
+    events: r.events || 0, bull: r.bull || 0, bear: r.bear || 0, hour: r.hour_bucket,
+  }));
   let channelUrl = null;
   if (typeof env.PUBLIC_CHANNEL === "string" && env.PUBLIC_CHANNEL.startsWith("@")) {
     channelUrl = "https://t.me/" + env.PUBLIC_CHANNEL.slice(1);
@@ -2157,11 +2226,35 @@ export async function landingData(env) {
     wrong24: byOutcome24.get("wrong") || 0,
     nomove24: byOutcome24.get("no_move") || 0,
     buckets, recent, channelUrl,
+    generatedAt: now,
+    market: {
+      btcPrice: market?.btc?.price ?? null, btcChange: market?.btc?.change_24h ?? null,
+      ethPrice: market?.eth?.price ?? null, ethChange: market?.eth?.change_24h ?? null,
+      fearGreed: market?.fear_greed ?? null, fearGreedLabel: market?.fear_greed_label ?? null,
+    },
+    marketState,
+    netflow24: { nativeNetUsd: Math.round(nativeNet) },
+    headlines,
+    spark,
   };
 }
 
 function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Pure. 7d event sparkline as a tiny SVG polyline. */
+function sparkSVG(spark) {
+  if (!spark || spark.length < 4) return "";
+  const W = 700, H = 56, PAD = 3;
+  const max = Math.max(...spark.map((s) => s.events), 1);
+  const step = (W - PAD * 2) / Math.max(spark.length - 1, 1);
+  const pts = spark.map((s, i) =>
+    `${(PAD + i * step).toFixed(1)},${(H - PAD - (s.events / max) * (H - PAD * 2)).toFixed(1)}`);
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:56px;display:block" role="img" aria-label="whale events per hour, last 7 days">
+    <polyline points="0,${H} ${pts.join(" ")} ${W},${H}" fill="#12315a" stroke="none" opacity="0.5"/>
+    <polyline points="${pts.join(" ")}" fill="none" stroke="#3b82f6" stroke-width="1.6"/>
+  </svg>`;
 }
 
 /** Pure. Server-rendered landing page — inline CSS, no external assets. */
@@ -2170,6 +2263,22 @@ export function renderLandingHTML(d) {
     ? `${d.acc}%`
     : "building — first grades land 24h after each call";
   const stat = (label, value) => `<div class="stat"><div class="v">${esc(value)}</div><div class="l">${esc(label)}</div></div>`;
+  const price = (p, chg) => p == null ? "—" : `$${Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 })} <span class="${chg >= 0 ? "up" : "down"}">${chg >= 0 ? "+" : ""}${chg != null ? Number(chg).toFixed(1) : "?"}%</span>`;
+  const m = d.market || {};
+  const ms = d.marketState || {};
+  const msChip = ms.bias != null && ms.confidence !== "none"
+    ? `<span class="chip ${ms.bias}">${ms.score}/100 · ${esc(ms.bias)}</span>`
+    : `<span class="chip neutral">gauge warming up</span>`;
+  const net = d.netflow24?.nativeNetUsd ?? null;
+  const netLine = net == null ? "" :
+    net > 1_000_000 ? `Net <b class="down">${fmtUSD(net)}</b> flowed into exchanges (24h) — historically sell-side supply.`
+    : net < -1_000_000 ? `Net <b class="up">${fmtUSD(-net)}</b> left exchanges (24h) — historically self-custody accumulation.`
+    : "Native exchange flows are balanced over the last 24h.";
+  const age = (t) => { const min = Math.round((d.generatedAt - t) / 60000); return min < 60 ? `${min}m ago` : `${Math.round(min / 60)}h ago`; };
+  const headRows = (d.headlines || []).map((h) => {
+    const dot = h.sent > 0 ? "🟢" : h.sent < 0 ? "🔴" : "⚪";
+    return `<li>${dot} ${esc(h.title)} <span class="dim">· ${esc(h.source || "?")} · ${esc(age(h.when))}${h.scored ? " · LLM-scored" : ""}</span></li>`;
+  }).join("");
   const bucketRows = Object.entries(d.buckets || {}).map(([b, v]) =>
     `<tr><td>${esc(b)}</td><td>${v.n}</td><td>${v.acc}%</td></tr>`).join("");
   const bucketTable = bucketRows
@@ -2188,10 +2297,21 @@ export function renderLandingHTML(d) {
   const channel = d.channelUrl
     ? `<a class="btn" href="${esc(d.channelUrl)}">Join the channel</a>`
     : "";
+  const sparkEl = sparkSVG(d.spark);
+  const sparkBlock = sparkEl
+    ? `<h3>Whale activity — events per hour, 7 days</h3>${sparkEl}
+       <p class="dim">${d.spark.length} hourly buckets · ${d.spark.reduce((s, x) => s + x.events, 0)} whale events</p>`
+    : "";
+  const headlinesBlock = headRows
+    ? `<h3>Market pulse — newest headlines</h3><ul class="news">${headRows}</ul>`
+    : "";
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WhaleSignal — whale flows, graded honestly</title>
+<meta property="og:title" content="WhaleSignal — whale flows, graded honestly">
+<meta property="og:description" content="Every directional call is graded 24h later against real prices. Live accuracy, calibration table, and the raw whale-flow ledger — wins and losses.">
+<meta property="og:type" content="website">
 <style>
   body{background:#0b0f14;color:#dbe4ee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:2rem 1rem;max-width:760px;margin-inline:auto;line-height:1.5}
   h1{font-size:1.6rem;margin:0 0 .3rem} h3{margin:1.6rem 0 .4rem;font-size:1.05rem}
@@ -2199,10 +2319,17 @@ export function renderLandingHTML(d) {
   .stats{display:flex;gap:1rem;flex-wrap:wrap;margin:1.2rem 0}
   .stat{background:#121a24;border:1px solid #1f2c3a;border-radius:10px;padding:.8rem 1.1rem;min-width:110px}
   .stat .v{font-size:1.35rem;font-weight:700} .stat .l{font-size:.75rem;color:#7d93a8;margin-top:.15rem}
+  .up{color:#34d399} .down{color:#f87171}
   table{width:100%;border-collapse:collapse;background:#121a24;border:1px solid #1f2c3a;border-radius:10px;overflow:hidden}
   th,td{padding:.55rem .7rem;text-align:left;border-bottom:1px solid #1a2530;font-size:.92rem}
   th{color:#7d93a8;font-weight:600} tr:last-child td{border-bottom:none}
   .dim{color:#7d93a8;font-size:.9rem;margin:.2rem 0 .6rem}
+  .gauge{background:#1f2c3a;border-radius:6px;height:10px;overflow:hidden;margin:.5rem 0}
+  .gauge > div{height:100%;background:#3b82f6}
+  .chip{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600;border:1px solid #1f2c3a}
+  .chip.bullish{background:#0d2b1e;color:#34d399} .chip.bearish{background:#2b1212;color:#f87171} .chip.neutral{color:#7d93a8}
+  ul.news{list-style:none;padding:0;margin:.4rem 0} ul.news li{padding:.45rem 0;border-bottom:1px solid #1a2530;font-size:.93rem}
+  ul.news li:last-child{border-bottom:none}
   .btn{display:inline-block;background:#1d4ed8;color:#fff;text-decoration:none;padding:.65rem 1.2rem;border-radius:8px;font-weight:600;margin:1rem .5rem 0 0}
   .btn.alt{background:#1f2c3a}
   .foot{margin-top:2rem;color:#5d7185;font-size:.8rem;border-top:1px solid #1a2530;padding-top:1rem}
@@ -2215,6 +2342,17 @@ export function renderLandingHTML(d) {
   ${stat("whales tracked", Number(d.totalWhales || 0).toLocaleString())}
   ${stat("graded last 24h", d.graded24)}
 </div>
+<h3>Market conditions <span class="dim" style="font-weight:400">· ${ms.confidence === "none" ? "gauge warming up" : `confidence: ${esc(ms.confidence)}`}</span></h3>
+<div class="stats">
+  ${stat("BTC", price(m.btcPrice, m.btcChange))}
+  ${stat("ETH", price(m.ethPrice, m.ethChange))}
+  ${stat("fear & greed", m.fearGreed != null ? `${m.fearGreed} ${esc(m.fearGreedLabel || "")}` : "—")}
+  ${stat("market state", ms.confidence === "none" ? "—" : `${ms.score}/100`)}
+</div>
+${msChip}
+<p class="dim">${esc(netLine)}</p>
+${sparkBlock}
+${headlinesBlock}
 <p class="dim">✅ ${d.correct} right · ❌ ${d.wrong} wrong · ➖ ${d.nomove} no-move (lifetime). No cherry-picking: the ledger is the product.</p>
 ${bucketTable}
 ${recentTable}
@@ -2222,8 +2360,8 @@ ${recentTable}
 <p class="dim">The channel is free. Premium moves alerts to instant DMs, before the channel.</p>
 ${channel}<a class="btn alt" href="https://t.me/whalesignal_bot">Open the bot → /premium</a>
 <h3>Raw data</h3>
-<p class="dim">Everything the channel shows is also machine-readable: <a href="/stats">/stats</a> · <a href="/latest">/latest</a> · <a href="/history">/history</a> · <a href="/netflow">/netflow</a> · <a href="/feed.xml">/feed.xml</a></p>
-<p class="foot">Educational on-chain data — not financial advice. Outcomes are graded by an automated ledger against a vol-adaptive threshold; past accuracy does not predict future results. WhaleSignal is not affiliated with any exchange.</p>
+<p class="dim">Everything the channel shows is also machine-readable: <a href="/stats">/stats</a> · <a href="/latest">/latest</a> · <a href="/history">/history</a> · <a href="/netflow">/netflow</a> · <a href="/market">/market</a> · <a href="/news">/news</a> · <a href="/feed.xml">/feed.xml</a></p>
+<p class="foot">Page rebuilt at ${new Date(d.generatedAt).toISOString().replace("T", " ").slice(0, 16)} UTC (cached 5 min) · Educational on-chain data — not financial advice. Outcomes are graded by an automated ledger against a vol-adaptive threshold; past accuracy does not predict future results. WhaleSignal is not affiliated with any exchange.</p>
 </body></html>`;
 }
 
