@@ -2238,10 +2238,12 @@ export default {
           await env.DB.prepare("DELETE FROM flow_edges_hourly WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
           // keep LLM-scored headlines for 90d (research value); unscored at 30d
           await env.DB.prepare("DELETE FROM news WHERE first_seen < ? AND llm_sentiment IS NULL").bind(Date.now() - 30 * 86_400_000).run();
-          await env.DB.prepare("DELETE FROM news WHERE first_seen < ?").bind(Date.now() - 90 * 86_400_000).run();
+          await env.DB.prepare("DELETE FROM news WHERE first_seen < ?").bind(Date.now() - 180 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM webhook_seen WHERE seen_at < ?").bind(Date.now() - 7 * 86_400_000).run();
           // reconcile counter drift from failed rollup flushes
           await env.DB.prepare("UPDATE counters SET v = (SELECT COUNT(*) FROM whales) WHERE k = 'total_whales'").run();
+          await env.DB.prepare("UPDATE counters SET v = (SELECT COALESCE(SUM(usd_value), 0) FROM whales) WHERE k = 'total_volume'").run();
+          await env.DB.prepare("UPDATE counters SET v = (SELECT COALESCE(MAX(usd_value), 0) FROM whales) WHERE k = 'largest_transfer'").run();
           await env.DB.prepare("DELETE FROM delivered WHERE delivered_at < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM price_history WHERE hour_bucket < ?").bind(Date.now() - 90 * 86_400_000).run();
           await env.DB.prepare("DELETE FROM alert_feedback WHERE created_at < ?").bind(Date.now() - 90 * 86_400_000).run();

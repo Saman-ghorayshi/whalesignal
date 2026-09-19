@@ -1565,7 +1565,19 @@ export async function scanChain(env, chain, market) {
           const fromKey = String(w.from_address).toLowerCase();
           const walletInfo = walletInfos.get(fromKey) ?? walletMap.get(fromKey) ?? null;
           const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
-          const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market, walletInfos);
+          let inserted = false;
+          try {
+            inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market, walletInfos);
+          } catch (e) {
+            // retry once on transient D1 failure — the block is marked as
+            // processed after this loop, so a failed whale is lost forever
+            await new Promise((r) => setTimeout(r, 1000));
+            try {
+              inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market, walletInfos);
+            } catch (e2) {
+              console.error(`[scanner:${chain}] whale insert failed twice, losing ${w.tx_hash}: ${e2.message}`);
+            }
+          }
           if (inserted) {
             newlyCounted++;
             // fold into the tick's rollups; the exchange side carries its label
