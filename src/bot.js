@@ -1830,12 +1830,6 @@ function priceForSymbol(market, symbol) {
 }
 
 /**
- * Grade all directional analyses older than minAgeHours (default 24).
- * Bounded to 50 rows per run; each row is graded exactly once (the UPDATE
- * only fires while prediction_outcome IS NULL, and rollups only run when
- * that UPDATE actually changed a row).
- */
-/**
  * Pure: is this event due for grading? Returns 'due' (24-36h old — the
  * honest window), 'young' (not yet 24h), or 'expired' (missed the window;
  * graded as 'expired' so the ledger never pretends a late price read was
@@ -1865,6 +1859,32 @@ export function gradeWindowCheck(detectedAt, now, minHours = 24, maxHours = 36) 
   return "due";
 }
 
+// Expire pass: close directional calls whose honest window has passed. The
+// age filter uses analysis.created_at (the analyst runs within minutes of
+// detection) — the previous version subqueried whales on detected_at, which
+// materialized a scan over the whole ~104K whales table on EVERY 15-min tick
+// (~416K reads/hour: the metronome that tripped the account-wide 5M cap).
+// Exported for the query-plan regression test (must never SCAN whales).
+export const GRADE_EXPIRE_SQL = `UPDATE analysis SET prediction_outcome = 'expired', evaluated_at = ?
+  WHERE prediction_outcome IS NULL AND signal IN ('bullish','bearish')
+    AND created_at < ?`;
+
+// Pending-calls select: analysis-first. whale_id IS the analysis PK (1:1 with
+// whales) and idx_analysis_outcome(prediction_outcome, signal) bounds this to
+// the small ungraded set; whale rows are then fetched separately by PK. The
+// old single JOIN ... ORDER BY whales.detected_at let SQLite drive from whales
+// in detected_at order — a full table scan per tick. Exported for the
+// query-plan regression test (must never SCAN whales).
+export const GRADE_PENDING_SQL = `SELECT whale_id, signal, confidence FROM analysis
+  WHERE prediction_outcome IS NULL AND signal IN ('bullish','bearish')
+  LIMIT 100`;
+
+/**
+ * Grade all directional analyses older than minAgeHours (default 24).
+ * Bounded to 50 rows per run; each row is graded exactly once (the UPDATE
+ * only fires while prediction_outcome IS NULL, and rollups only run when
+ * that UPDATE actually changed a row).
+ */
 export async function gradePending(env, opts = {}) {
   const now = Date.now();
   const minAgeHours = Number(opts.minAgeHours ?? 24);
@@ -1884,14 +1904,16 @@ export async function gradePending(env, opts = {}) {
   // ms — the old Math.max(minAgeMs, 36) * 3_600_000 multiplied a ms value by
   // 3.6M and NEVER matched anything (found by audit).
   const maxAgeHours = Math.max(Number(opts.minAgeHours) || 24, 24) + 12;
-  await env.DB.prepare(
-    `UPDATE analysis SET prediction_outcome = 'expired', evaluated_at = ?
-     WHERE prediction_outcome IS NULL AND signal IN ('bullish','bearish')
-       AND whale_id IN (SELECT id FROM whales WHERE detected_at < ?)`
-  ).bind(now0, now0 - maxAgeHours * 3_600_000).run();
+  await env.DB.prepare(GRADE_EXPIRE_SQL).bind(now0, now0 - maxAgeHours * 3_600_000).run();
 
-  // per-asset vol-adaptive thresholds (BTC/ETH), computed once per run —
-  // a flat 1% is huge in quiet markets and noise in violent ones
+  const { results: pend } = await env.DB.prepare(GRADE_PENDING_SQL).all();
+  const pending = pend || [];
+  if (pending.length === 0) return { graded: 0, considered: 0, expired: 0, pending: 0 };
+
+  // per-asset vol-adaptive thresholds (BTC/ETH) — a flat 1% is huge in quiet
+  // markets and noise in violent ones. Only paid when there is something to
+  // grade: the two 168-row price reads used to run even on no-op ticks
+  // (~32K reads/day of nothing).
   const thresholds = {};
   for (const coin of ["btc", "eth"]) {
     try {
@@ -1901,24 +1923,52 @@ export async function gradePending(env, opts = {}) {
       thresholds[coin] = volThreshold(ph || []);
     } catch { thresholds[coin] = 1.0; }
   }
-  const { results } = await env.DB.prepare(
-    `SELECT w.id, w.chain, w.symbol, w.usd_value, w.detected_at, w.price_at_detect, w.from_address,
-            a.signal, a.confidence
-     FROM whales w JOIN analysis a ON a.whale_id = w.id
-     WHERE a.signal IN ('bullish','bearish') AND a.prediction_outcome IS NULL
-       AND w.detected_at < ?
-     ORDER BY w.detected_at ASC LIMIT 50`
-  ).bind(now - minAgeMs).all();
+
+  // whale rows by PK — bounded point lookups, never a table scan (≤100 ids
+  // stays under the D1 100-bind ceiling)
+  const ids = pending.map((p) => p.whale_id);
+  const { results: whaleRows } = await env.DB.prepare(
+    `SELECT id, chain, symbol, usd_value, detected_at, price_at_detect, from_address
+     FROM whales WHERE id IN (${ids.map(() => "?").join(",")})`
+  ).bind(...ids).all();
+  const whaleById = new Map((whaleRows || []).map((w) => [w.id, w]));
+
+  // Honest window in JS: 'young' rows wait for their 24h mark, rows detected
+  // past 36h are closed as 'expired' (never graded against a price that isn't
+  // the 24h mark — even if the analysis itself landed late via reanalysis).
+  const maxAgeMs = maxAgeHours * 3_600_000;
+  const minAgeCutoff = now - minAgeMs;
+  const maxAgeCutoff = now - maxAgeMs;
+  const rows = pending
+    .map((p) => ({ ...p, w: whaleById.get(p.whale_id) }))
+    .filter((r) => r.w);
+
+  const stale = rows.filter((r) => r.w.detected_at < maxAgeCutoff).slice(0, 50);
+  if (stale.length) {
+    const stmts = stale.map((r) => env.DB.prepare(
+      "UPDATE analysis SET prediction_outcome = 'expired', evaluated_at = ? WHERE whale_id = ? AND prediction_outcome IS NULL"
+    ).bind(now0, r.w.id));
+    try { await env.DB.batch(stmts); } catch (e) {
+      console.warn(`[bot] grade expire batch failed: ${e.message}`);
+    }
+  }
+
+  // due = inside the 24-36h window; grade oldest first, cap 50/tick
+  const due = rows
+    .filter((r) => r.w.detected_at >= maxAgeCutoff && r.w.detected_at < minAgeCutoff)
+    .sort((a, b) => a.w.detected_at - b.w.detected_at)
+    .slice(0, 50);
 
   let graded = 0;
-  for (const row of results || []) {
-    const priceNow = priceForSymbol(market, row.symbol);
-    const outcome = gradeSignal(row.signal, row.price_at_detect, priceNow, thresholds[String(row.chain).toLowerCase()] || 1.0);
+  for (const row of due) {
+    const w = row.w;
+    const priceNow = priceForSymbol(market, w.symbol);
+    const outcome = gradeSignal(row.signal, w.price_at_detect, priceNow, thresholds[String(w.chain).toLowerCase()] || 1.0);
     // CAS-style: only grade if still ungraded (guards against overlapping runs)
     const upd = await env.DB.prepare(
       `UPDATE analysis SET prediction_outcome = ?, price_at_eval = ?, evaluated_at = ?
        WHERE whale_id = ? AND prediction_outcome IS NULL`
-    ).bind(outcome, priceNow, now, row.id).run();
+    ).bind(outcome, priceNow, now, w.id).run();
     if (!upd.meta || upd.meta.changes === 0) continue; // someone else graded it
 
     const bucket = confidenceBucket(row.confidence);
@@ -1930,14 +1980,14 @@ export async function gradePending(env, opts = {}) {
       env.DB.prepare(
         `INSERT INTO wallet_stats (address, chain, graded, correct) VALUES (?, ?, 1, ?)
          ON CONFLICT(address, chain) DO UPDATE SET graded = graded + 1, correct = correct + excluded.correct`
-      ).bind(row.from_address, row.chain, outcome === "correct" ? 1 : 0),
+      ).bind(w.from_address, w.chain, outcome === "correct" ? 1 : 0),
     ];
     try { await env.DB.batch(stmts); } catch (e) {
-      console.warn(`[bot] grade rollups failed for whale ${row.id}: ${e.message}`);
+      console.warn(`[bot] grade rollups failed for whale ${w.id}: ${e.message}`);
     }
     graded++;
   }
-  return { graded, considered: (results || []).length };
+  return { graded, considered: due.length, expired: stale.length, pending: pending.length };
 }
 
 // ─── event clustering ─────────────────────────────────────────────────

@@ -691,17 +691,26 @@ async function labelPair(env, fromAddr, toAddr) {
 
 /** Record the analysis + mark the whale done. */
 async function saveAnalysis(env, whaleId, parsed) {
+  // Neutrals are never graded — write 'no_signal' immediately so
+  // prediction_outcome IS NULL means "ungraded bullish/bearish call" and
+  // nothing else. Left NULL, every neutral row would sit in the ungraded
+  // index range the grader scans every 15 minutes, forever.
+  const initialOutcome = parsed.signal === "neutral" ? "no_signal" : null;
   await env.DB.prepare(
-    `INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, context_relevance, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, context_relevance, created_at, prediction_outcome)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(whale_id) DO UPDATE SET
        headline=excluded.headline, interpretation=excluded.interpretation,
        signal=excluded.signal, confidence=excluded.confidence,
        related_factor=excluded.related_factor,
-       context_relevance=excluded.context_relevance`
+       context_relevance=excluded.context_relevance,
+       prediction_outcome=CASE WHEN analysis.signal IS excluded.signal
+                               THEN analysis.prediction_outcome
+                               ELSE excluded.prediction_outcome END`
   ).bind(
     whaleId, parsed.headline, parsed.interpretation, parsed.signal,
-    parsed.confidence, parsed.related_factor, parsed.context_relevance ?? "medium", Date.now()
+    parsed.confidence, parsed.related_factor, parsed.context_relevance ?? "medium", Date.now(),
+    initialOutcome
   ).run();
   await env.DB.prepare(
     "UPDATE whales SET analysis_status = 'done' WHERE id = ?"

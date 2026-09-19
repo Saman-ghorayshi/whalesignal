@@ -38,6 +38,7 @@ this Cloudflare account.
 | Signal rollups | `hourly_stats` bullish/bearish/neutral + counters at analysis time | — |
 | Daily LLM news scoring | Hourly cron (`7 * * * *`): one batched call scores ≤20 headlines (llm_sentiment/llm_event/scored_at on `news`) | New columns were MISSING from prod until Sep 18 — if you deploy from an old dump, run the ALTERs |
 | Daily market brief | One LLM call/day → `daily_brief` KV → bot posts at 18:00 UTC | Analyst still never touches Telegram |
+| **Neutral stamp (Sep 19)** | Fresh `neutral` analyses are inserted with `prediction_outcome = 'no_signal'` (upsert keeps the existing outcome when the signal is unchanged on reanalysis). `IS NULL` on `prediction_outcome` now means exactly "ungraded bullish/bearish call" | Prod backfill applied Sep 19 (3,632 legacy NULL neutrals). Consumers that treated `IS NULL` as "never evaluated" must now also treat `'no_signal'` — scoreboards are unaffected (they filter on `evaluated_at`) |
 
 ### whalesignal-bot
 
@@ -52,6 +53,7 @@ this Cloudflare account.
 | Retention | Monthly prune of raw whales older than 18 months (rollups keep forever) | Runs on the 1st of each month at the grading tick |
 | Wallet API upgrade | `/wallet/:addr` adds lifetime flow stats, accumulator/distributor direction, track record (graded/correct), top counterparties | — |
 | Instrumentation | queueHandler batches log rows_read when > 500 | — |
+| **Grading metronome fix (Sep 19)** | Per-minute analytics showed 105,201 reads every 15-min grade tick (~420K/h ≈ 10M/day). Root cause: the grading SELECT (`JOIN … ORDER BY w.detected_at`) and the expire UPDATE (`whale_id IN (SELECT id FROM whales WHERE detected_at < ?)`) both let SQLite drive from the 104K-row whales table. Now: expire filters on `analysis.created_at` (no whales join), pending select reads the analysis outcome index first then fetches whale rows by PK, honest 24–36h window enforced in JS (late reanalysis of old whales expires instead of grading against a stale price), vol-threshold price reads only when something is pending | Per-tick reads: ~105K → **<20**. Query-plan regression test in `tests/grading.test.js` (asserts the plans never touch whales) |
 
 ### Premium × cryptopay integration (bot, Sep 18)
 

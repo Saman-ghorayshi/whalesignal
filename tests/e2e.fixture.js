@@ -311,7 +311,7 @@ export async function fullPipeline() {
   }
 
   const whales = DB.prepare("SELECT id, chain, tx_hash, amount, symbol, usd_value, tx_type, analysis_status FROM whales ORDER BY id").all().results;
-  const analyses = DB.prepare("SELECT whale_id, signal, confidence, headline FROM analysis").all().results;
+  const analyses = DB.prepare("SELECT whale_id, signal, confidence, headline, prediction_outcome FROM analysis").all().results;
   const delivered = DB.prepare("SELECT whale_id, chat_id FROM delivered").all().results;
 
   // Return env.KV (the MockKV instance), not just its store, so callers can

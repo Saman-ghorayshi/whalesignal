@@ -19,6 +19,7 @@ wrong, fix this doc first.
 | **TRADER: FinMem whale scores never written** — read every decision, updated by nothing | The weekly review's UPDATE matched zero rows | ✅ upsert after each close |
 | **TRADER: LLM TP/SL silently discarded** — hardcoded 3%/5% at close | Prompt asked for levels the closer ignored | ✅ persisted per trade, used by the closer |
 | Python trading-loop tests never ran in CI | test.yml only ran node tests | ✅ pytest job added |
+| **Grading metronome — the last 420K-reads/hour burner** (Sep 19) | The 15-min grade tick ran `FROM whales w JOIN analysis a … ORDER BY w.detected_at` and expire-passed via `whale_id IN (SELECT id FROM whales …)`; SQLite drove BOTH from whales in detected_at order = full ~104K-row scan per tick, per minute-level analytics 105K reads every 15 min like clockwork | ✅ both queries analysis-index-first (`idx_analysis_outcome`); whale rows fetched by PK; expire filter on `analysis.created_at`; vol thresholds deferred until pending ≠ 0; neutrals stamped `'no_signal'` at insert (prod backfill: 3,632 rows) so the `IS NULL` range stays empty; EXPLAIN-plan regression test added (`tests/grading.test.js`) |
 
 ## THE recurring cap-trip root cause (found by account inventory + measurement)
 
