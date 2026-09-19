@@ -182,8 +182,8 @@ test("marketState: neutral inputs → 50, missing inputs reduce confidence", () 
 });
 
 test("marketState: bias thresholds (65 bullish, 45 bearish)", () => {
-  const mildBull = computeMarketState({ taRegime: "bull_trend", fearGreed: 60 });
-  assert.equal(mildBull.bias, "neutral", "25/100 = neutral, not bullish");
+  const mildBull = computeMarketState({ taRegime: "bull_trend", fearGreed: 60 }); // 50+15+3 = 68
+  assert.equal(mildBull.bias, "bullish", "68/100 → bullish (>65 threshold)");
   const strongBull = computeMarketState({ taRegime: "bull_trend", fearGreed: 80 });
   assert.equal(strongBull.bias, "bullish", "35/100 → bullish tilt");
 });
