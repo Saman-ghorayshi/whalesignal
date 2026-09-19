@@ -2251,6 +2251,7 @@ export async function landingData(env) {
       btcPrice: market?.btc?.price ?? null, btcChange: market?.btc?.change_24h ?? null,
       ethPrice: market?.eth?.price ?? null, ethChange: market?.eth?.change_24h ?? null,
       fearGreed: market?.fear_greed ?? null, fearGreedLabel: market?.fear_greed_label ?? null,
+      updatedAt: market?.updated_at ?? null,
     },
     marketState,
     netflow24: { nativeNetUsd: Math.round(nativeNet) },
@@ -2288,6 +2289,12 @@ export function renderLandingHTML(d) {
   const price = (p, chg) => p == null ? "—" : `$${Number(p).toLocaleString(undefined, { maximumFractionDigits: 0 })} <span class="${chg >= 0 ? "up" : "down"}">${chg >= 0 ? "+" : ""}${chg != null ? Number(chg).toFixed(1) : "?"}%</span>`;
   const m = d.market || {};
   const ms = d.marketState || {};
+  // honest staleness marker: if every price source fails, say how old the
+  // strip is instead of silently showing yesterday's prices
+  const marketAgeMin = m.updatedAt ? Math.round((d.generatedAt - m.updatedAt) / 60000) : null;
+  const staleNote = marketAgeMin != null && marketAgeMin > 15
+    ? ` <span class="dim">(prices as of ${marketAgeMin}m ago — sources degraded)</span>`
+    : "";
   const msChip = ms.bias != null && ms.confidence !== "none"
     ? `<span class="chip ${ms.bias}">${ms.score}/100 · ${esc(ms.bias)}</span>`
     : `<span class="chip neutral">gauge warming up</span>`;
@@ -2373,7 +2380,7 @@ export function renderLandingHTML(d) {
   ${stat("whales tracked", Number(d.totalWhales || 0).toLocaleString())}
   ${stat("graded last 24h", d.graded24)}
 </div>
-<h3>Market conditions <span class="dim" style="font-weight:400">· ${ms.confidence === "none" ? "gauge warming up" : `confidence: ${esc(ms.confidence)}`}</span></h3>
+<h3>Market conditions <span class="dim" style="font-weight:400">· ${ms.confidence === "none" ? "gauge warming up" : `confidence: ${esc(ms.confidence)}`}</span>${staleNote}</h3>
 <div class="stats">
   ${stat("BTC", price(m.btcPrice, m.btcChange))}
   ${stat("ETH", price(m.ethPrice, m.ethChange))}
