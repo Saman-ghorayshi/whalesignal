@@ -123,6 +123,26 @@ test("landing: market context — gauge, netflow, sparkline, and news pulse rend
   assert.ok(/Page rebuilt at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/.test(html), "rebuilt timestamp");
 });
 
+test("landing: active narratives render from the news graph", async () => {
+  const w = await makeWorld();
+  await seedGradedCalls(w);
+  const now = Date.now();
+  await w.env.KV.put("news_graph", JSON.stringify({
+    themes: [{ theme: "etf", label: "ETF flows", count: 5, net: 6, pos: 5, neg: 0, latest: now - 3600_000 }],
+    narratives: [{
+      theme: "etf", label: "ETF flows", direction: "bullish", net: 6, count: 4,
+      strength: 3, latest: now - 3600_000, latestTitle: "SEC approves ETF upgrade",
+    }],
+    generated_at: now,
+  }));
+  const html = await (await fetchHome(w)).text();
+  assert.ok(html.includes("Active narratives"), html);
+  assert.ok(html.includes("ETF flows"), "narrative label renders");
+  assert.ok(html.includes("4 bullish headlines in 24h"), "count + direction render");
+  assert.ok(html.includes("SEC approves ETF upgrade"), "latest headline renders");
+  assert.ok(/class="narr bullish"/.test(html), "bullish styling hook");
+});
+
 test("landing: never leaks secrets or admin surface", async () => {
   const w = await makeWorld();
   await seedGradedCalls(w);

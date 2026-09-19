@@ -17,6 +17,7 @@ import { taSnapshot } from "./ta.js";
 import { volSpikeClass } from "./worker-utils.js";
 import { gradingThresholdPct, dailyizedVolPct, bucketFor } from "./signal_math.js";
 import { computeMarketState } from "./market_state.js";
+import { themeFor } from "./news_graph.js";
 
 /** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
@@ -649,16 +650,27 @@ export async function fetchHandler(request, env, ctx) {
       const limit = Math.max(1, Math.min(100, Math.trunc(Number(url.searchParams.get("limit")) || 20)));
       const payload = await cachedPayload(env, `news:v1:${limit}`, async () => {
         const rows = await env.DB.prepare(
-          "SELECT title, source, symbols, sentiment, first_seen FROM news ORDER BY first_seen DESC LIMIT ?"
+          "SELECT title, source, symbols, sentiment, llm_sentiment, llm_event, first_seen FROM news ORDER BY first_seen DESC LIMIT ?"
         ).bind(limit).all();
+        // the narrative graph (built hourly by the analyst) — cluster context
+        // is what turns a list of headlines into a readable picture
+        let narratives = [], themes = [];
+        try {
+          const g = JSON.parse(await env.KV.get("news_graph") || "null");
+          narratives = g?.narratives ?? [];
+          themes = g?.themes ?? [];
+        } catch { /* graph not built yet */ }
         return {
           ok: true,
           count: rows?.results?.length || 0,
+          narratives,
+          themes,
           news: (rows?.results || []).map((r) => ({
             title: r.title,
             source: r.source || null,
             symbols: r.symbols ? r.symbols.split(",") : [],
-            sentiment: r.sentiment ?? 0,
+            sentiment: r.llm_sentiment ?? r.sentiment ?? 0,
+            event: r.llm_event || null,
             first_seen: r.first_seen,
           })),
         };
@@ -2159,7 +2171,7 @@ export async function landingData(env) {
     // meaning, kept out of the market-state input)
     netflowTotals(env, now - 86_400_000),
     env.DB.prepare(
-      `SELECT title, source, sentiment, llm_sentiment, first_seen FROM news
+      `SELECT title, source, sentiment, llm_sentiment, llm_event, llm_theme, first_seen FROM news
        WHERE first_seen > ? ORDER BY first_seen DESC LIMIT 8`
     ).bind(now - 48 * 3_600_000).all(),
     env.DB.prepare(
@@ -2208,8 +2220,16 @@ export async function landingData(env) {
     title: h.title, source: h.source,
     sent: h.llm_sentiment ?? h.sentiment ?? 0,
     scored: h.llm_sentiment != null,
+    theme: themeFor(h),
     when: h.first_seen,
   }));
+  // narrative graph from the analyst's hourly cluster pass (KV, free read)
+  let narratives = [], themeRollup = [];
+  try {
+    const g = JSON.parse(await env.KV.get("news_graph") || "null");
+    narratives = g?.narratives ?? [];
+    themeRollup = g?.themes ?? [];
+  } catch { /* graph not built yet */ }
   const spark = (sparkQ.results || []).map((r) => ({
     events: r.events || 0, bull: r.bull || 0, bear: r.bear || 0, hour: r.hour_bucket,
   }));
@@ -2235,6 +2255,8 @@ export async function landingData(env) {
     marketState,
     netflow24: { nativeNetUsd: Math.round(nativeNet) },
     headlines,
+    narratives,
+    themeRollup,
     spark,
   };
 }
@@ -2275,9 +2297,15 @@ export function renderLandingHTML(d) {
     : net < -1_000_000 ? `Net <b class="up">${fmtUSD(-net)}</b> left exchanges (24h) — historically self-custody accumulation.`
     : "Native exchange flows are balanced over the last 24h.";
   const age = (t) => { const min = Math.round((d.generatedAt - t) / 60000); return min < 60 ? `${min}m ago` : `${Math.round(min / 60)}h ago`; };
+  const narrativeRows = (d.narratives || []).slice(0, 3).map((n) =>
+    `<div class="narr ${n.direction}"><b>${esc(n.label)}</b> — ${n.count} ${n.direction} headlines in 24h (net ${n.net > 0 ? "+" : ""}${n.net}) <span class="dim">· latest: ${esc(n.latestTitle)} · ${esc(age(n.latest))}</span></div>`).join("");
+  const narrativeBlock = narrativeRows
+    ? `<h3>Active narratives <span class="dim" style="font-weight:400">· clusters of related headlines — a theme several outlets push in one direction is a story, not noise</span></h3>${narrativeRows}`
+    : "";
   const headRows = (d.headlines || []).map((h) => {
     const dot = h.sent > 0 ? "🟢" : h.sent < 0 ? "🔴" : "⚪";
-    return `<li>${dot} ${esc(h.title)} <span class="dim">· ${esc(h.source || "?")} · ${esc(age(h.when))}${h.scored ? " · LLM-scored" : ""}</span></li>`;
+    const theme = h.theme && h.theme !== "other" ? ` · <span class="chip theme">${esc(h.theme)}</span>` : "";
+    return `<li>${dot} ${esc(h.title)}${theme} <span class="dim">· ${esc(h.source || "?")} · ${esc(age(h.when))}${h.scored ? " · LLM-scored" : ""}</span></li>`;
   }).join("");
   const bucketRows = Object.entries(d.buckets || {}).map(([b, v]) =>
     `<tr><td>${esc(b)}</td><td>${v.n}</td><td>${v.acc}%</td></tr>`).join("");
@@ -2328,6 +2356,9 @@ export function renderLandingHTML(d) {
   .gauge > div{height:100%;background:#3b82f6}
   .chip{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600;border:1px solid #1f2c3a}
   .chip.bullish{background:#0d2b1e;color:#34d399} .chip.bearish{background:#2b1212;color:#f87171} .chip.neutral{color:#7d93a8}
+  .chip.theme{font-size:.72rem;padding:.05rem .45rem;color:#93b4d4;margin-left:.2rem}
+  .narr{background:#121a24;border:1px solid #1f2c3a;border-left:3px solid #3b82f6;border-radius:8px;padding:.55rem .8rem;margin:.4rem 0;font-size:.93rem}
+  .narr.bullish{border-left-color:#34d399} .narr.bearish{border-left-color:#f87171}
   ul.news{list-style:none;padding:0;margin:.4rem 0} ul.news li{padding:.45rem 0;border-bottom:1px solid #1a2530;font-size:.93rem}
   ul.news li:last-child{border-bottom:none}
   .btn{display:inline-block;background:#1d4ed8;color:#fff;text-decoration:none;padding:.65rem 1.2rem;border-radius:8px;font-weight:600;margin:1rem .5rem 0 0}
@@ -2352,6 +2383,7 @@ export function renderLandingHTML(d) {
 ${msChip}
 <p class="dim">${esc(netLine)}</p>
 ${sparkBlock}
+${narrativeBlock}
 ${headlinesBlock}
 <p class="dim">✅ ${d.correct} right · ❌ ${d.wrong} wrong · ➖ ${d.nomove} no-move (lifetime). No cherry-picking: the ledger is the product.</p>
 ${bucketTable}

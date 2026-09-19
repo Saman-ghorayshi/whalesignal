@@ -347,3 +347,7 @@ CREATE INDEX IF NOT EXISTS idx_wallets_type ON wallets(type);
 -- bare detected_at index: the expired-grading cleanup and any time-window
 -- query without a chain prefix needs this to avoid full scans
 CREATE INDEX IF NOT EXISTS idx_whales_detected ON whales(detected_at);
+-- news graph (Sep 19): theme + magnitude from the LLM scorer so headlines
+-- cluster into narratives; llm_magnitude weights a headline's pull (1-3)
+ALTER TABLE news ADD COLUMN llm_theme TEXT;
+ALTER TABLE news ADD COLUMN llm_magnitude INTEGER;

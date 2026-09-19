@@ -30,6 +30,12 @@ test("analyst scheduled: scores pending news + generates the daily brief", async
   // news scoring wrote llm scores
   const scored = await w.DB.prepare("SELECT COUNT(*) AS n FROM news WHERE llm_sentiment IS NOT NULL").all();
   assert.ok(scored.results[0].n > 0, "news rows must get llm_sentiment");
+  // the narrative graph was built from the freshly scored rows
+  const graphRaw = await w.env.KV.get("news_graph");
+  assert.ok(graphRaw, "news_graph KV written by the cron");
+  const graph = JSON.parse(graphRaw);
+  assert.ok(Array.isArray(graph.themes) && graph.themes.length >= 1, "graph has themes");
+  assert.ok(Array.isArray(graph.narratives), "graph has a narratives array");
   // daily brief generated
   const brief = await w.env.KV.get("daily_brief");
   assert.ok(brief, "daily_brief must be written to KV");

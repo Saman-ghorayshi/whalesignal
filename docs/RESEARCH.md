@@ -203,3 +203,41 @@ couldn't — every one of these is the "looks done, isn't" class:
    applies to LLM confidence too.
 5. **Dead exports** (`dormancyFactor`, an unused `impactMultiplier`) and a
    prose-only "90d tier" — removed or wired, never just documented.
+
+---
+
+## 7. The news graph — headlines → themes → narratives (Sep 19, late)
+
+**The idea.** One headline is noise. The same theme pushed by several
+independent outlets inside a 24h window — ETF flows positive ×3, hacks
+bearish ×4 — is a *narrative*, and narratives (not headlines) are what
+actually shift sentiment and, with on-chain confirmation, price. This is the
+"how do we connect them" layer: headline → theme → cluster → narrative →
+confluence context.
+
+**What we extract per headline now** (src/news_graph.js, unit-tested):
+- **sentiment** — LLM's when scored, lexicon fallback otherwise
+- **theme** — llm_theme, else llm_event, else keyword lexicon (etf,
+  regulation, hack, macro, exchange, whales, stablecoin, adoption, market)
+  so UNSCORED headlines still cluster
+- **magnitude (1-3)** — "SEC approves" (3) outweighs "SEC mulls" (1); the
+  LLM returns it in the same scoring call (zero extra API cost)
+
+**What the graph computes:**
+- **themes** (72h): per-theme count, magnitude-weighted net sentiment, pos/neg
+- **narratives** (24h): a theme becomes one when ≥3 headlines AND |net| ≥ 2 —
+  both bars must clear, so two loud stories or three lukewarm mentions don't
+  qualify. Strength tiers 1-3 by count.
+- **narrativeBump** (≤ ±0.06): bounded confluence input so a corroborated
+  narrative can lean an event's news weight — never a standalone signal.
+
+**Where it surfaces:** the analyst's LLM prompt now shows active narratives
+so one headline is read in the context of its cluster; the landing page's
+Market Pulse shows narrative cards above the raw feed with per-headline
+theme chips; /news exposes the full graph (themes + narratives) as JSON.
+
+**Honest limits:** themes are coarse (10 buckets); the lexicon fallback is
+keyword-based and will mis-file some irony; narrative detection is
+count-and-direction, not semantic similarity — good enough for 72h windows,
+not an embedding cluster. The grading ledger is the arbiter: if
+narrative-aware analyses don't grade better, the feature gets tuned or cut.

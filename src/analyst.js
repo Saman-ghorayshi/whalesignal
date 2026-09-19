@@ -25,6 +25,7 @@ import {
   impactRatio, impactMultiplier, expectedImpactPct, liquidityHourFactor,
   dormancyDays, gradingThresholdPct, dailyizedVolPct, calibrate, bucketFor,
 } from "./signal_math.js";
+import { buildNewsGraph, narrativesForPrompt } from "./news_graph.js";
 
 // ─── confluence model (docs/SIGNAL_MODEL.md) ──────────────────────────
 
@@ -591,6 +592,8 @@ STRUCTURED FACTS:
 - Prior similar events in wallet history: ${history?.length || 0} transactions
 - Technical regime: ${ctx?.ta?.regime ?? 'unknown'}${ctx?.ta?.rsi14 != null ? ' (RSI14 ' + ctx.ta.rsi14 + ', EMA20 ' + ctx.ta.ema20 + ' vs EMA50 ' + ctx.ta.ema50 + ')' : ''}
 - Asset news sentiment (6h): ${ctx?.newsSent ? (ctx.newsSent.sum > 0 ? '+' : '') + ctx.newsSent.sum + ' across ' + ctx.newsSent.n + ' headlines' : 'no data'}
+- Active news narratives (clustered recent headlines — a theme repeated by several outlets is a story, not noise):
+${ctx?.newsNarratives ?? "- (narrative graph not built yet — judge headlines individually)"}
 ${impactFact}
 ${dormFact}
 
@@ -931,6 +934,12 @@ export async function analyzeOne(env, msg) {
     weights: await loadFlowWeights(env),
     fromLastSeen,
   };
+  // news narratives (clustered headlines) ride along for the LLM prompt —
+  // a single headline reads differently once you know 3 outlets ran the theme
+  try {
+    const graph = JSON.parse(await env.KV.get("news_graph") || "null");
+    if (graph) ctx.newsNarratives = narrativesForPrompt(graph);
+  } catch { /* no graph yet — prompt falls back to the plain headlines */ }
   const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);
@@ -989,8 +998,9 @@ export async function analyzeOne(env, msg) {
 // original block was lost in a file restore (see AUDIT.md).
 export function buildNewsScorePrompt(headlines) {
   return "You are a crypto news classifier. For each headline output a JSON array item:\n" +
-    '  {"i": <index>, "s": <-1|0|1>, "e": "<regulation|hack|adoption|macro|etf|exchange|market|other>"}\n' +
+    '  {"i": <index>, "s": <-1|0|1>, "e": "<regulation|hack|adoption|macro|etf|exchange|market|other>", "m": <1|2|3>}\n' +
     "  s: -1 bearish, 0 neutral, 1 bullish FOR THE ASSET MENTIONED (crypto-wide news counts for both BTC and ETH). Judge the headline's own content, not vibes.\n" +
+    "  m: magnitude — how hard this headline moves sentiment: 3 = decisive fact (approval, launch, confirmed hack), 2 = substantive development, 1 = routine/speculative mention.\n" +
     "  HEADLINES:\n" +
     headlines.map((h, i) => (i + 1) + ". " + h.title).join("\n") +
     "\n  Return ONLY the JSON array.";
@@ -1005,7 +1015,14 @@ export function parseNewsScores(text) {
     const arr = JSON.parse(s.slice(first, last + 1));
     if (!Array.isArray(arr)) return null;
     return arr.filter((it) => it && Number.isFinite(it.i) && [-1, 0, 1].includes(it.s))
-      .map((it) => ({ i: it.i, s: it.s, e: String(it.e || "other").slice(0, 24) }));
+      .map((it) => {
+        const m = Number(it.m);
+        return {
+          i: it.i, s: it.s,
+          e: String(it.e || "other").slice(0, 24),
+          m: m >= 1 && m <= 3 ? Math.round(m) : 1,
+        };
+      });
   } catch { return null; }
 }
 
@@ -1023,11 +1040,32 @@ export async function scorePendingNews(env) {
     const row = results[it.i];
     if (!row) return null;
     return env.DB.prepare(
-      "UPDATE news SET llm_sentiment = ?, llm_event = ?, scored_at = ? WHERE id = ? AND scored_at IS NULL"
-    ).bind(it.s, it.e, Date.now(), row.id);
+      "UPDATE news SET llm_sentiment = ?, llm_event = ?, llm_theme = ?, llm_magnitude = ?, scored_at = ? WHERE id = ? AND scored_at IS NULL"
+    ).bind(it.s, it.e, it.e, it.m, Date.now(), row.id);
   }).filter(Boolean);
   if (stmts.length) await env.DB.batch(stmts);
   return { scored: stmts.length };
+}
+
+/**
+ * Cluster the recent news table into themes + narratives and cache the graph
+ * (news_graph KV, 12h TTL, rebuilt every cron tick). Consumed by the LLM
+ * analysis prompt (narrative context per event) and the /news endpoint +
+ * landing page (Market Pulse). One 72h index-bounded read.
+ */
+export async function buildAndCacheNewsGraph(env) {
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT title, source, sentiment, llm_sentiment, llm_event, llm_theme, llm_magnitude, first_seen
+       FROM news WHERE first_seen > ? ORDER BY first_seen DESC LIMIT 200`
+    ).bind(Date.now() - 72 * 3600_000).all();
+    const graph = buildNewsGraph(results || [], Date.now());
+    await env.KV.put("news_graph", JSON.stringify(graph), { expirationTtl: 12 * 3600 });
+    return { themes: graph.themes.length, narratives: graph.narratives.length };
+  } catch (e) {
+    console.warn("[analyst] news graph build failed:", e.message);
+    return { error: e.message };
+  }
 }
 
 
@@ -1114,6 +1152,9 @@ export default {
       }
       const r = await scorePendingNews(env);
       console.log("[analyst] news scoring:", JSON.stringify(r));
+      // theme/narrative graph — one headline is noise, a cluster is a story
+      const ng = await buildAndCacheNewsGraph(env);
+      console.log("[analyst] news graph:", JSON.stringify(ng));
       const br = await generateDailyBrief(env);
       // expire stale subscriptions
       await env.DB.prepare(
