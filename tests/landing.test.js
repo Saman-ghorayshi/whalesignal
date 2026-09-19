@@ -143,6 +143,33 @@ test("landing: active narratives render from the news graph", async () => {
   assert.ok(/class="narr bullish"/.test(html), "bullish styling hook");
 });
 
+test("market route: TA + market_state score through the real /market path", async () => {
+  const w = await makeWorld();
+  // makeWorld seeds 60 oscillating BTC price rows (TA computable) and a
+  // market_cache with F&G; the fixture oscillation reads as bear_trend
+  const res = await w.harness.fetch(bot.default, new Request("https://bot.test/market"));
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  assert.equal(j.ok, true);
+  assert.ok(j.btc, "BTC TA snapshot present (the old SELECT ts bug made this null forever)");
+  assert.ok(j.btc.regime, "regime computed");
+  assert.ok(j.fear_greed === 50, "F&G from market cache");
+  assert.ok(j.market_state, "market-state gauge wired into /market");
+  assert.ok(typeof j.market_state.score === "number");
+  assert.notEqual(j.market_state.confidence, "none", "TA + F&G both present → confidence engages");
+});
+
+test("rate limiter: expensive paths 429 after 10 hits/min, landing unaffected", async () => {
+  const w = await makeWorld();
+  let last;
+  for (let i = 0; i < 12; i++) {
+    last = await w.harness.fetch(bot.default, new Request("https://bot.test/market"));
+  }
+  assert.equal(last.status, 429, "12th /market hit in a minute is limited");
+  const home = await w.harness.fetch(bot.default, new Request("https://bot.test/"));
+  assert.equal(home.status, 200, "landing stays open (KV-cached, cheap)");
+});
+
 test("landing: never leaks secrets or admin surface", async () => {
   const w = await makeWorld();
   await seedGradedCalls(w);

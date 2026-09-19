@@ -586,7 +586,7 @@ export async function fetchHandler(request, env, ctx) {
   const rlKey = clientIP + ":" + rlWindow;
   const rlCount = (globalThis._rateLimits.get(rlKey) || 0) + 1;
   globalThis._rateLimits.set(rlKey, rlCount);
-  const EXPENSIVE_PATHS = ["/netflow", "/graph", "/market", "/alerts/export", "/feed.xml", "/news"];
+  const EXPENSIVE_PATHS = ["/netflow", "/graph", "/market", "/alerts/export", "/feed.xml", "/news", "/history", "/wallet"];
   if (EXPENSIVE_PATHS.some((p) => path.startsWith(p)) && rlCount > 10) {
     return jsonResponse({ ok: false, reason: "rate_limited", retry_after: 60 }, 429);
   }

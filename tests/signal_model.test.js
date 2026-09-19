@@ -181,6 +181,18 @@ test("marketState: neutral inputs → 50, missing inputs reduce confidence", () 
   assert.equal(partial.confidence, "low", "1 category = low confidence");
 });
 
+test("flowConfidence: narrative corroboration is bounded and sign-correct", () => {
+  const base = flowConfidence({ bullish: true, newsSent: null });
+  const up = flowConfidence({ bullish: true, newsSent: null, narrBump: 0.06 });
+  assert.ok(Math.abs((up.confidence - base.confidence) - 0.06) < 0.001, );
+  assert.ok(up.features.some((f) => f.includes("narrative corroboration +0.06")), up.features.join('; '));
+  const down = flowConfidence({ bullish: true, narrBump: -0.06 });
+  assert.ok(down.confidence < base.confidence);
+  // still clamped by the [0.50, 0.85] bounds
+  const floor = flowConfidence({ bullish: true, narrBump: -0.5 });
+  assert.equal(floor.confidence, 0.5);
+});
+
 test("marketState: bias thresholds (65 bullish, 45 bearish)", () => {
   const mildBull = computeMarketState({ taRegime: "bull_trend", fearGreed: 60 }); // 50+15+3 = 68
   assert.equal(mildBull.bias, "bullish", "68/100 → bullish (>65 threshold)");

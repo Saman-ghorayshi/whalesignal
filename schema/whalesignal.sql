@@ -351,3 +351,6 @@ CREATE INDEX IF NOT EXISTS idx_whales_detected ON whales(detected_at);
 -- cluster into narratives; llm_magnitude weights a headline's pull (1-3)
 ALTER TABLE news ADD COLUMN llm_theme TEXT;
 ALTER TABLE news ADD COLUMN llm_magnitude INTEGER;
+-- hourly news scoring scans "unscored, oldest first" — without this partial
+-- index that query full-scans the growing news table every hour
+CREATE INDEX IF NOT EXISTS idx_news_unscored ON news(first_seen) WHERE scored_at IS NULL;

@@ -25,7 +25,7 @@ import {
   impactRatio, impactMultiplier, expectedImpactPct, liquidityHourFactor,
   dormancyDays, gradingThresholdPct, dailyizedVolPct, calibrate, bucketFor,
 } from "./signal_math.js";
-import { buildNewsGraph, narrativesForPrompt } from "./news_graph.js";
+import { buildNewsGraph, narrativesForPrompt, narrativeBump } from "./news_graph.js";
 
 // ─── confluence model (docs/SIGNAL_MODEL.md) ──────────────────────────
 
@@ -140,7 +140,7 @@ export function sanitizeWeights(w) {
 export function flowConfidence({
   bullish, fgRegime = null, behavior = null, sizeRatio = null,
   taRegime = null, newsSent = null, derivs = null, hugeUnlabeled = false, weights = null,
-  impact = null, calib = null,
+  impact = null, calib = null, narrBump = 0,
 }) {
   const W = { ...DEFAULT_WEIGHTS, ...sanitizeWeights(weights) };
   const adj = [];
@@ -166,6 +166,14 @@ export function flowConfidence({
     const s = Math.sign(newsSent.sum);
     if ((bullish && s > 0) || (!bullish && s < 0)) { c += W.news; adj.push("news agrees +" + W.news); }
     else if ((bullish && s < 0) || (!bullish && s > 0)) { c -= W.news; adj.push("news conflicts −" + W.news); }
+  }
+
+  // narrative corroboration (news_graph.js, bounded ±0.06): when several
+  // independent outlets push one theme in one direction within 24h, the news
+  // context for this event is a STORY, not noise — lean the weight accordingly.
+  if (narrBump) {
+    c += narrBump;
+    adj.push(`news narrative corroboration ${narrBump > 0 ? "+" : ""}${narrBump}`);
   }
 
   // derivatives crowding (contrarian — the 2026 regime papers treat funding
@@ -367,6 +375,7 @@ export function templateAnalysis(whale, market, history, ctx = null) {
       hugeUnlabeled,
       impact,
       calib: ctx?.calib ?? null,
+      narrBump: ctx?.newsBump ?? 0,
     });
 
     const stableNote = isStable
@@ -938,7 +947,12 @@ export async function analyzeOne(env, msg) {
   // a single headline reads differently once you know 3 outlets ran the theme
   try {
     const graph = JSON.parse(await env.KV.get("news_graph") || "null");
-    if (graph) ctx.newsNarratives = narrativesForPrompt(graph);
+    if (graph) {
+      ctx.newsNarratives = narrativesForPrompt(graph);
+      // corroboration bump (±0.06, bounded): a narrative backed by several
+      // outlets legitimately leans the news weight of every event it touches
+      ctx.newsBump = narrativeBump(graph);
+    }
   } catch { /* no graph yet — prompt falls back to the plain headlines */ }
   const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
