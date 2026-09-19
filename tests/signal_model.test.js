@@ -150,3 +150,40 @@ test("premium upsert SQL contract: fresh = 30d flat, renewal extends", () => {
     : periodEnd;
   assert.equal(renewExpiry, now + 40 * 86_400_000, "renewal stacks on remaining time");
 });
+
+// ─── market state score ──────────────────────────────────────────────
+import { computeMarketState } from "../src/market_state.js";
+
+test("marketState: all bullish components → 100, all bearish → 0", () => {
+  const bull = computeMarketState({
+    taRegime: "bull_trend", rsi14: 65, funding: -0.0005,
+    netInflow24h: -50_000_000, fearGreed: 90, newsSent: { sum: 5, n: 5 },
+  });
+  assert.equal(bull.score, 100, "all bullish signals → 100");
+  assert.equal(bull.bias, "bullish");
+  assert.equal(bull.confidence, "high");
+
+  const bear = computeMarketState({
+    taRegime: "bear_trend", rsi14: 25, funding: 0.0005,
+    netInflow24h: 50_000_000, fearGreed: 10, newsSent: { sum: -5, n: 5 },
+  });
+  assert.equal(bear.score, 0, "all bearish signals → 0");
+  assert.equal(bear.bias, "bearish");
+});
+
+test("marketState: neutral inputs → 50, missing inputs reduce confidence", () => {
+  const neutral = computeMarketState({});
+  assert.equal(neutral.score, 50, "no data → neutral base");
+  assert.equal(neutral.confidence, "none", "no contributing categories");
+
+  const partial = computeMarketState({ fearGreed: 50 });
+  assert.equal(partial.score, 50);
+  assert.equal(partial.confidence, "low", "1 category = low confidence");
+});
+
+test("marketState: bias thresholds (65 bullish, 45 bearish)", () => {
+  const mildBull = computeMarketState({ taRegime: "bull_trend", fearGreed: 60 });
+  assert.equal(mildBull.bias, "neutral", "25/100 = neutral, not bullish");
+  const strongBull = computeMarketState({ taRegime: "bull_trend", fearGreed: 80 });
+  assert.equal(strongBull.bias, "bullish", "35/100 → bullish tilt");
+});
