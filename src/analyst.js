@@ -22,8 +22,8 @@
 import { fetchJSON, fmtUSD, shortAddr } from "./worker-utils.js";
 import { taSnapshot, regimeAlignment } from "./ta.js";
 import {
-  impactRatio, expectedImpactPct, liquidityHourFactor,
-  dormancyDays, gradingThresholdPct, calibrate, bucketFor,
+  impactRatio, impactMultiplier, expectedImpactPct, liquidityHourFactor,
+  dormancyDays, gradingThresholdPct, dailyizedVolPct, calibrate, bucketFor,
 } from "./signal_math.js";
 
 // ─── confluence model (docs/SIGNAL_MODEL.md) ──────────────────────────
@@ -197,10 +197,13 @@ export function flowConfidence({
   // dormancy reactivation (coin-days-destroyed proxy): a wallet unseen for
   // 30d+ suddenly routing coins is the rare event the CDD literature flags —
   // conviction behind the flow's own direction. Same history weight bucket
-  // as behavior (it IS wallet behavior — just very long-range).
+  // as behavior (it IS wallet behavior — just very long-range). The 90d+
+  // tier is the genuinely-rare class the literature singles out, so it adds
+  // a bounded extra bump on top.
   if (impact && impact.dormancyDays != null && impact.dormancyDays >= 30) {
     c += W.history;
     adj.push(`dormancy ${Math.round(impact.dormancyDays)}d reactivation +${W.history}`);
+    if (impact.dormancyDays >= 90) { c += 0.03; adj.push("90d+ rare reactivation +0.03"); }
   }
 
   // ledger calibration (Beta-Binomial, strength 20): shrink the composed
@@ -271,6 +274,35 @@ export function sizeVsHistory(usd, history) {
 }
 
 /**
+ * Compute the market-impact context for one whale event — the SINGLE source
+ * both analysis paths (template + LLM prompt) share, so they can never drift:
+ *   expectedPct   σ_daily·√(Q/V) composed with the intraday session factor
+ *                 (native assets only — stablecoin flows are a dry-powder
+ *                 signal, not a price-impact story about the stable itself)
+ *   thresholdPct  the grader's own vol-adaptive bar (same formula, one source)
+ *   dormancyDays  from-wallet sighting gap (coin-days-destroyed proxy)
+ *   multiplier    √-law size vs the 0.1%-of-ADV "routine whale" reference
+ * Pure. Returns null when nothing is computable.
+ */
+export function computeImpactContext(whale, market, ctx) {
+  const sym = String(whale?.symbol || "").toUpperCase();
+  const isStable = sym === "USDT" || sym === "USDC" || sym === "DAI";
+  const impactCoin = sym === "WBTC" ? "btc" : String(whale?.chain || "").toLowerCase();
+  const vol24h = isStable ? NaN : Number(market?.[impactCoin]?.vol_24h);
+  const ratio = impactRatio(whale?.usd_value, vol24h);
+  const hourF = liquidityHourFactor(whale?.detected_at || Date.now());
+  const expectedRaw = expectedImpactPct(ratio, ctx?.volPct ?? null);
+  const expectedPct = expectedRaw != null ? expectedRaw * hourF : null;
+  // the bar only exists alongside an expected number — a stablecoin flow
+  // (ratio null) has no impact model, so no bar either
+  const thresholdPct = ratio != null && ctx?.volPct != null ? gradingThresholdPct(ctx.volPct) : null;
+  const dorm = dormancyDays(ctx?.fromLastSeen, whale?.detected_at);
+  const multiplier = impactMultiplier(ratio);
+  if ((expectedPct == null || thresholdPct == null) && dorm == null) return null;
+  return { expectedPct, thresholdPct, dormancyDays: dorm, multiplier };
+}
+
+/**
  * Try to analyze a whale without calling Gemini. Returns a normalized
  * analysis object if the case is obvious enough, or null if ambiguous.
  * Pure (no I/O, no API calls).
@@ -318,23 +350,9 @@ export function templateAnalysis(whale, market, history, ctx = null) {
     const sizeRatio = sizeVsHistory(usd, history);
     const hugeUnlabeled = usd >= 100_000_000;
 
-    // Square-root impact model (signal_math.js; RESEARCH.md Sep 19 wave).
-    // Native assets only — stablecoin flows are a "dry powder" signal, not a
-    // price-impact story about the stable itself. Expected impact =
-    // σ_daily·√(Q/V), scaled by the intraday session factor (thin hours hit
-    // harder), compared against the grader's own vol-adaptive bar so a
-    // "high-conviction" tag means "can actually clear the grading bar".
-    const impactCoin = sym === "WBTC" ? "btc" : String(whale.chain || "").toLowerCase();
-    const vol24h = isStable ? NaN : Number(market?.[impactCoin]?.vol_24h);
-    const ratio = impactRatio(usd, vol24h);
-    const hourF = liquidityHourFactor(whale.detected_at || Date.now());
-    const expectedRaw = expectedImpactPct(ratio, ctx?.volPct ?? null);
-    const expectedPct = expectedRaw != null ? expectedRaw * hourF : null;
-    const thresholdPct = ctx?.volPct != null ? gradingThresholdPct(ctx.volPct) : null;
-    const dorm = dormancyDays(ctx?.fromLastSeen, whale.detected_at);
-    const impact = (expectedPct != null && thresholdPct != null) || dorm != null
-      ? { expectedPct, thresholdPct, dormancyDays: dorm }
-      : null;
+    // Square-root impact model — computed once by computeImpactContext (the
+    // shared source; the LLM prompt gets the same numbers)
+    const impact = computeImpactContext(whale, market, ctx);
 
     const { confidence, features } = flowConfidence({
       bullish,
@@ -360,7 +378,7 @@ export function templateAnalysis(whale, market, history, ctx = null) {
     const tapeNote = ctx?.ta?.regime && ctx.ta.regime !== "unknown"
       ? ` Tape: ${ctx.ta.regime} (RSI14 ${ctx.ta.rsi14}).` : "";
     const impactNote = impact?.expectedPct != null && impact?.thresholdPct != null
-      ? ` Expected impact ≈${impact.expectedPct.toFixed(2)}% vs the ${impact.thresholdPct.toFixed(2)}% move bar${impact.expectedPct >= impact.thresholdPct ? " — this flow can move the market" : impact.expectedPct < impact.thresholdPct / 2 ? " — too small to move the market" : ""}.`
+      ? ` Expected impact ≈${impact.expectedPct.toFixed(2)}% vs the ${impact.thresholdPct.toFixed(2)}% move bar${impact.multiplier != null ? ` (${impact.multiplier.toFixed(1)}× a routine whale)` : ""}${impact.expectedPct >= impact.thresholdPct ? " — this flow can move the market" : impact.expectedPct < impact.thresholdPct / 10 ? " — too small to move the market" : ""}.`
       : "";
     const dormNote = impact?.dormancyDays != null && impact.dormancyDays >= 30
       ? ` This wallet has been quiet for ${Math.round(impact.dormancyDays)} days — a dormant-whale reactivation.` : "";
@@ -534,6 +552,16 @@ export function buildPrompt(whale, market, history, news, pattern, ctx = null) {
   const destIsExchange = whale.tx_type === "exchange_inflow" || whale.tx_type === "exchange_internal";
   const sourceIsExchange = whale.tx_type === "exchange_outflow" || whale.tx_type === "exchange_internal";
 
+  // Same impact/dormancy computation the template path uses — the LLM must
+  // reason over identical numbers, not a different (or missing) copy.
+  const impact = computeImpactContext(whale, market, ctx);
+  const impactFact = impact?.expectedPct != null && impact?.thresholdPct != null
+    ? `- Expected market impact: ≈${impact.expectedPct.toFixed(2)}% vs the ${impact.thresholdPct.toFixed(2)}% move bar${impact.multiplier != null ? ` (${impact.multiplier.toFixed(1)}× a routine whale)` : ""} — ${impact.expectedPct >= impact.thresholdPct ? "this flow alone can mechanically move price past the bar" : impact.expectedPct < impact.thresholdPct / 10 ? "this flow is mechanically negligible vs the bar" : "the flow alone sits between those extremes"}`
+    : "- Expected market impact: unknown (no 24h volume or volatility context)";
+  const dormFact = impact?.dormancyDays != null && impact.dormancyDays >= 30
+    ? `- Sender dormancy: unseen for ${Math.round(impact.dormancyDays)} days before this transfer${impact.dormancyDays >= 90 ? " (rare dormant-whale reactivation)" : ""}`
+    : "- Sender dormancy: no long absence on record";
+
   return `You are a crypto whale movement analyst. You are given STRUCTURED FACTS about a whale transaction.
 
 Your job: summarize what the facts SUPPORT. Do not speculate.
@@ -563,6 +591,8 @@ STRUCTURED FACTS:
 - Prior similar events in wallet history: ${history?.length || 0} transactions
 - Technical regime: ${ctx?.ta?.regime ?? 'unknown'}${ctx?.ta?.rsi14 != null ? ' (RSI14 ' + ctx.ta.rsi14 + ', EMA20 ' + ctx.ta.ema20 + ' vs EMA50 ' + ctx.ta.ema50 + ')' : ''}
 - Asset news sentiment (6h): ${ctx?.newsSent ? (ctx.newsSent.sum > 0 ? '+' : '') + ctx.newsSent.sum + ' across ' + ctx.newsSent.n + ' headlines' : 'no data'}
+${impactFact}
+${dormFact}
 
 RECENT HEADLINES:
 ${newsText}
@@ -858,7 +888,6 @@ async function bumpSignalRollups(env, whale, signal) {
 export async function analyzeOne(env, msg) {
   const { whale_id, chain } = msg || {};
   if (!whale_id) throw new Error("missing whale_id");
-
   const whale = await getWhale(env, whale_id);
   if (!whale) {
     console.warn(`[analyst:${whale_id}] whale not found — acking (maybe deleted)`);
@@ -885,18 +914,23 @@ export async function analyzeOne(env, msg) {
 
   // Sprint 1: try template analysis first (no Gemini call needed for obvious cases).
   // Saves 80% of AI calls. Falls through to Gemini for ambiguous events.
-  const ctx = await getMarketContext(env, whale.chain, whale.symbol);
-  // derivatives crowding context rides on the market cache (funding + OI)
-  ctx.derivs = market?.funding?.[String(whale.chain).toLowerCase()] ?? null;
-  ctx.weights = await loadFlowWeights(env);
-  // from-wallet sighting gap feeds the dormancy feature — one PK point
-  // lookup (the wallet row may not exist at all; null means no signal)
-  try {
-    const wr = await env.DB.prepare(
-      "SELECT last_seen FROM wallets WHERE address = ? AND chain = ?"
-    ).bind(String(whale.from_address || "").toLowerCase(), String(whale.chain || "").toLowerCase()).first();
-    ctx.fromLastSeen = wr?.last_seen ?? null;
-  } catch { ctx.fromLastSeen = null; }
+  // IMPORTANT: getMarketContext returns a CACHED object shared across events
+  // (60s TTL) — per-event fields must go on a COPY, never on the cache.
+  const cachedCtx = await getMarketContext(env, whale.chain, whale.symbol);
+  // Dormancy input travels ON THE QUEUE MESSAGE: the scanner stamps
+  // wallets.last_seen ≈ now on the same tick it inserts the whale, so a
+  // post-hoc lookup would read a ~0-day gap for EVERY whale and the feature
+  // could never fire (caught by the e2e pipeline assertions). Messages from
+  // admin reanalyze / orphan requeue carry no prev_last_seen → no dormancy
+  // signal, which is the honest default.
+  const fromLastSeen = Number(msg?.prev_last_seen) || null;
+  const ctx = {
+    ...cachedCtx,
+    // derivatives crowding context rides on the market cache (funding + OI)
+    derivs: market?.funding?.[String(whale.chain).toLowerCase()] ?? null,
+    weights: await loadFlowWeights(env),
+    fromLastSeen,
+  };
   const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);
@@ -917,6 +951,21 @@ export async function analyzeOne(env, msg) {
     console.error(`[analyst:${whale_id}] analysis failed:`, e.message);
     await markFailed(env, whale_id);
     return { ok: false, error: e.message };
+  }
+
+  // Ledger calibration applies to BOTH paths: the LLM's claimed confidence
+  // gets the same Beta-Binomial shrinkage toward realized accuracy as the
+  // template's (the ledger grades OUR calls, not who authored them). Silent
+  // at small sample sizes by design (calibrate() barely moves below n=10;
+  // the confidence-bucket counter lookup rides on ctx.calib).
+  if (parsed.signal === "bullish" || parsed.signal === "bearish") {
+    const bucket = bucketFor(parsed.confidence);
+    const row = ctx.calib?.[bucket];
+    if (row && row.correct + row.wrong >= 10) {
+      const { confidence: cal, acc } = calibrate(parsed.confidence, row);
+      console.log(`[analyst:${whale_id}] LLM confidence ${parsed.confidence} → ${cal} (ledger-calibrated, n=${row.correct + row.wrong}, acc=${Math.round(acc * 100)}%)`);
+      parsed.confidence = cal;
+    }
   }
 
   await saveAnalysis(env, whale_id, parsed);

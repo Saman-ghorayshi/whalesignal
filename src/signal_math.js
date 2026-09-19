@@ -101,13 +101,8 @@ export function dormancyDays(lastSeen, detectedAt) {
   return d > 0 ? d : 0;
 }
 
-/** Conviction multiplier for a reactivation: ≥90d unseen → 1.25,
- *  ≥30d → 1.1, routine churn → null (no signal). */
-export function dormancyFactor(days) {
-  if (days == null || !(days >= 30)) return null;
-  if (days >= 90) return 1.25;
-  return 1.1;
-}
+// (tiering note: the ≥30d / ≥90d tiers live in flowConfidence — +W.history
+// and +0.03 respectively — so the weights stay in one place.)
 
 // ─── ledger calibration (closing the accountability loop) ─────────────
 //

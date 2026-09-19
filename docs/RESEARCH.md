@@ -175,3 +175,31 @@ component never fired in production** despite 4,400 price rows sitting in
 the table. The same sweep caught the analysts' `price_history` reads being
 silent-failed in tests too, because MockD1 tolerated nothing — the fixture
 just never asserted `ta != null`. Both fixed; the fix ships with this wave.
+
+### 6.6 What the end-to-end audit of this wave caught (Sep 19, second pass)
+
+Shipping §6 with real pipeline coverage immediately caught what unit tests
+couldn't — every one of these is the "looks done, isn't" class:
+
+1. **Missing import, swallowed again**: `getMarketContext` called
+   `dailyizedVolPct` without importing it. The `ReferenceError` landed in
+   the same catch that guards "no price history yet" — so `ta` computed and
+   `volPct` stayed null forever, disabling the √impact bar in production
+   while every unit test passed. The e2e fixture now seeds 60 price rows
+   and asserts the impact note actually renders.
+2. **Dormancy could never fire**: the scanner stamps `wallets.last_seen ≈
+   now` on the same tick it inserts the whale, so the analyst's post-hoc
+   lookup always read a ~0-day gap. Fix: the pre-sighting `last_seen`
+   travels on the queue message (`prev_last_seen`); messages without it
+   (admin reanalyze, orphan requeue) honestly carry no dormancy signal.
+3. **Two copies of the grading bar**: bot's `volThreshold` and
+   signal_math's `gradingThresholdPct` were the same formula implemented
+   twice — drift would silently desync the impact feature from the grader.
+   The bot now delegates; one source of truth.
+4. **The LLM path was blind and uncalibrated**: ambiguous events (the ones
+   that NEED the LLM) got a prompt without impact/dormancy facts, and the
+   LLM's claimed confidence went to the ledger raw. Both paths now share
+   `computeImpactContext` for identical numbers, and ledger calibration
+   applies to LLM confidence too.
+5. **Dead exports** (`dormancyFactor`, an unused `impactMultiplier`) and a
+   prose-only "90d tier" — removed or wired, never just documented.

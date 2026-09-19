@@ -566,7 +566,14 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
 
   // Queue only for interesting whales — saves 50-90% of Gemini calls.
   if (shouldAnalyze) {
-    await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
+    await env.ANALYSTQ.send(JSON.stringify({
+      whale_id: row.id,
+      chain: wh.chain,
+      // PRE-sighting last_seen for the analyst's dormancy feature. The
+      // wallet bump below stamps last_seen ≈ now, so any post-hoc lookup
+      // would read a ~0-day gap and the feature could never fire.
+      prev_last_seen: walletInfo?.last_seen ?? null,
+    }));
   }
 
   // Bump wallet stats for non-exchange addresses.

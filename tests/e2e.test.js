@@ -78,6 +78,22 @@ test("fullPipeline: scanner→analyst→bot posts one alert", async () => {
   // fixture payload had Binance + ETF matching, beach/avocado non-matching.
   assert.ok(news.headlines.every((h) => /binance|etf/i.test(h.title)),
     "only keyword-matching headlines survived filterNewsKeywords");
+
+  // 8. the impact/dormancy context actually computed END-TO-END: the fixture
+  // has 60 price rows (vol context), 24h volume in market_cache, and a BTC
+  // source wallet last seen 95 days ago. If any link in that chain breaks
+  // silently (like the price_history.ts bug did), these fail.
+  const btcA = r.analyses.find((a) => /BTC/.test(a.headline || ""));
+  assert.ok(btcA, "BTC analysis exists");
+  assert.ok(btcA.interpretation.includes("Expected impact"),
+    `√impact note must appear end-to-end:\n${btcA.interpretation}`);
+  assert.ok(btcA.interpretation.includes("too small to move the market"),
+    "a $6M flow on $30B volume is mechanically negligible vs the bar");
+  assert.ok(btcA.interpretation.includes("95 days"),
+    `dormancy reactivation must be detected via the raw-case wallet lookup:\n${btcA.interpretation}`);
+  // features aren't persisted as a column — they render inside the text
+  assert.ok(btcA.interpretation.includes("dormancy 95d reactivation"),
+    `confluence feature line present:\n${btcA.interpretation}`);
 });
 
 test("bot fetch handler: /ping replies via Telegram", async () => {

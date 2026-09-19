@@ -36,8 +36,8 @@ export async function makeWorld() {
       { title: "Bitcoin ETF inflows hit 3-month high" },
     ], source: "test", updated_at: Date.now() }),
     market_cache: JSON.stringify({
-      btc: { price: 100000, change_24h: 1.2 },
-      eth: { price: 3500, change_24h: -0.5 },
+      btc: { price: 100000, change_24h: 1.2, vol_24h: 30e9 },
+      eth: { price: 3500, change_24h: -0.5, vol_24h: 15e9 },
       usdt: { price: 1, change_24h: 0 },
       usdc: { price: 1, change_24h: 0 },
       dai:  { price: 1, change_24h: 0 },
@@ -47,6 +47,25 @@ export async function makeWorld() {
       updated_at: Date.now(),
     }),
   });
+
+  // 60 oscillating hourly price rows per coin — the analyst's TA regime and
+  // dailyized vol (the √impact bar) need ≥51 rows to compute at all. Without
+  // these the pipeline silently runs with ta=null, volPct=null and never
+  // exercises the impact path.
+  const nowHour = Math.floor(Date.now() / 3600000) * 3600000;
+  for (let i = 0; i < 60; i++) {
+    const osc = i % 2 === 0 ? 0 : 1;
+    await DB.prepare("INSERT OR IGNORE INTO price_history (coin, hour_bucket, price) VALUES (?, ?, ?)")
+      .bind("btc", nowHour - i * 3600000, 100000 + osc * 1000).run();
+    await DB.prepare("INSERT OR IGNORE INTO price_history (coin, hour_bucket, price) VALUES (?, ?, ?)")
+      .bind("eth", nowHour - i * 3600000, 3500 + osc * 35).run();
+  }
+  // BTC source wallet last seen 95 days ago → the pipeline's BTC whale is a
+  // dormant-whale reactivation (exercises the raw-case wallets point lookup;
+  // detected_at is Date.now() at insert, so the gap is measured from now)
+  await DB.prepare(
+    "UPDATE wallets SET first_seen = ?, last_seen = ? WHERE address = '16KaJxxxxxxxWhaleSource0000'"
+  ).bind(Date.now() - 95 * 86400000, Date.now() - 95 * 86400000).run();
 
   const ANALYSTQ = new MockQueue("analystq");
   const BOTQ = new MockQueue("botq");
@@ -118,8 +137,8 @@ function makeFetches() {
     // coingecko prices
     { match: "https://api.coingecko.com/api/v3/simple/price",
       handler: () => ({ json: {
-        bitcoin: { usd: 100000, usd_24h_change: 1.2 },
-        ethereum: { usd: 3500, usd_24h_change: -0.5 },
+        bitcoin: { usd: 100000, usd_24h_change: 1.2, usd_24h_vol: 30e9 },
+        ethereum: { usd: 3500, usd_24h_change: -0.5, usd_24h_vol: 15e9 },
       } }) },
 
     // derivatives panel (sprint 5g): binance fapi premiumIndex + OI hist
@@ -311,7 +330,7 @@ export async function fullPipeline() {
   }
 
   const whales = (await DB.prepare("SELECT id, chain, tx_hash, amount, symbol, usd_value, tx_type, analysis_status FROM whales ORDER BY id").all()).results;
-  const analyses = (await DB.prepare("SELECT whale_id, signal, confidence, headline, prediction_outcome FROM analysis").all()).results;
+  const analyses = (await DB.prepare("SELECT whale_id, signal, confidence, headline, interpretation, prediction_outcome FROM analysis").all()).results;
   const delivered = (await DB.prepare("SELECT whale_id, chat_id FROM delivered").all()).results;
 
   // Return env.KV (the MockKV instance), not just its store, so callers can

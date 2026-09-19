@@ -103,9 +103,11 @@ test("gradePending: directional move grades correct and counts toward wallet acc
   const { env } = await makeWorld();
   const now = Date.now();
   await env.KV.put("market_cache", JSON.stringify({
-    btc: { price: 102_000, change_24h: 2 }, eth: { price: 3500, change_24h: 0 },
+    btc: { price: 103_500, change_24h: 3.5 }, eth: { price: 3500, change_24h: 0 },
     updated_at: Date.now(),
   }));
+  // fixture price history is oscillating (volPct ≈ 4.87% → grading bar 2.44%),
+  // so the move must clear that, not the 1% floor
   const wid = await seedWhale(env.DB, { detectedAt: now - 25 * H, priceAtDetect: 100_000 });
   await seedAnalysis(env.DB, wid, { signal: "bullish", createdAt: now - 25 * H });
 

@@ -5,10 +5,10 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import {
   impactRatio, impactMultiplier, expectedImpactPct, dailyizedVolPct,
-  gradingThresholdPct, liquidityHourFactor, dormancyDays, dormancyFactor,
+  gradingThresholdPct, liquidityHourFactor, dormancyDays,
   calibrate, bucketFor, IMPACT_CAP,
 } from "../src/signal_math.js";
-import { flowConfidence, templateAnalysis } from "../src/analyst.js";
+import { flowConfidence, templateAnalysis, computeImpactContext } from "../src/analyst.js";
 
 const DAY = 86_400_000;
 
@@ -70,10 +70,8 @@ test("dormancyDays: sighting gap in days, clamped, null when unknown", () => {
   assert.equal(dormancyDays(now - 30 * DAY, now), 30);
   assert.equal(dormancyDays(now - 1 * DAY, now), 1);
   assert.equal(dormancyDays(now + 3600_000, now), 0, "future last_seen clamps to 0");
-  assert.equal(dormancyDays(null, now), null);
-  assert.equal(dormancyFactor(95), 1.25);
-  assert.equal(dormancyFactor(30), 1.1);
-  assert.equal(dormancyFactor(5), null, "routine churn is not a signal");
+  assert.equal(dormancyDays(null, now), null, "null must not coerce to epoch 0");
+  assert.equal(dormancyDays(undefined, now), null);
 });
 
 // ─── calibration loop ──────────────────────────────────────────────────
@@ -129,20 +127,54 @@ test("flowConfidence: impact above the bar adds, negligible impact subtracts", (
   assert.equal(mid.confidence, base.confidence);
 });
 
-test("flowConfidence: dormant reactivation adds the history weight", () => {
+test("flowConfidence: dormant reactivation adds the history weight; 90d+ adds the rare tier", () => {
   const base = flowConfidence({ bullish: true });
-  const dorm = flowConfidence({
+  const dorm30 = flowConfidence({
+    bullish: true,
+    impact: { expectedPct: null, thresholdPct: null, dormancyDays: 45 },
+  });
+  assert.ok(dorm30.confidence > base.confidence);
+  assert.ok(dorm30.features.some((f) => f.includes("dormancy 45d")), dorm30.features.join("; "));
+  // the 90d+ tier is REAL: strictly above the 30d bump
+  const dorm90 = flowConfidence({
     bullish: true,
     impact: { expectedPct: null, thresholdPct: null, dormancyDays: 95 },
   });
-  assert.ok(dorm.confidence > base.confidence);
-  assert.ok(dorm.features.some((f) => f.includes("dormancy 95d")), dorm.features.join("; "));
+  assert.ok(dorm90.confidence > dorm30.confidence, `${dorm90.confidence} > ${dorm30.confidence}`);
+  assert.ok(dorm90.features.some((f) => f.includes("90d+ rare")), dorm90.features.join("; "));
   // <30d = routine churn, no line
   const quiet5 = flowConfidence({
     bullish: true,
     impact: { dormancyDays: 5 },
   });
   assert.equal(quiet5.confidence, base.confidence);
+});
+
+test("computeImpactContext: one shared computation — stables skip impact, unknown wallets skip dormancy", () => {
+  const market = { btc: { price: 100_000, vol_24h: 30e9 }, eth: { price: 3_500, vol_24h: 15e9 } };
+  const DETECTED = Date.UTC(2026, 8, 19, 10); // hour 10 → normal session (×1.0)
+  const ctx = { volPct: 2.0, fromLastSeen: null };
+
+  const native = computeImpactContext(
+    { chain: "btc", symbol: "BTC", usd_value: 3e9, detected_at: DETECTED }, market, ctx);
+  // ratio 0.1 → √0.1 = 0.3162 → expected 2%·0.3162 ≈ 0.632% ≥ bar/10, < bar
+  assert.ok(Math.abs(native.expectedPct - 0.6325) < 0.001, String(native.expectedPct));
+  assert.equal(native.thresholdPct, 1.0);
+  assert.equal(native.multiplier, IMPACT_CAP, "ratio 0.1 = 100× the 0.1% reference → √100 = 10, capped at 8");
+  assert.equal(native.dormancyDays, null);
+
+  // stable: no impact model, dormancy still flows through
+  const stable = computeImpactContext(
+    { chain: "eth", symbol: "USDT", usd_value: 5e6, detected_at: DETECTED },
+    market, { volPct: 2.0, fromLastSeen: DETECTED - 40 * DAY });
+  assert.equal(stable.expectedPct, null);
+  assert.equal(stable.thresholdPct, null);
+  assert.equal(stable.dormancyDays, 40);
+
+  // nothing computable at all → null (not an empty object)
+  assert.equal(computeImpactContext(
+    { chain: "btc", symbol: "USDT", usd_value: 100, detected_at: DETECTED },
+    market, { volPct: null, fromLastSeen: null }), null);
 });
 
 test("flowConfidence: calibration engages at n≥10 and moves toward realized accuracy", () => {

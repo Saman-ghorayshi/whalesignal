@@ -15,6 +15,7 @@
 import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
 import { taSnapshot } from "./ta.js";
 import { volSpikeClass } from "./worker-utils.js";
+import { gradingThresholdPct, dailyizedVolPct, bucketFor } from "./signal_math.js";
 
 /** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
@@ -1813,12 +1814,11 @@ export function gradeSignal(signal, priceAtDetect, priceNow, thresholdPct = 1.0)
   return movePct < 0 ? "correct" : "wrong";
 }
 
-/** Confidence bands for calibration stats: high ≥0.75, mid ≥0.60, low below. */
+/** Confidence bands for calibration stats: high ≥0.75, mid ≥0.60, low below.
+ *  Delegates to signal_math — one bucket definition shared with the
+ *  analyst's ledger calibration. */
 export function confidenceBucket(conf) {
-  const c = Number(conf) || 0;
-  if (c >= 0.75) return "high";
-  if (c >= 0.6) return "mid";
-  return "low";
+  return bucketFor(conf);
 }
 
 /** Price for a symbol from the market cache; stablecoins sit at ~1.0 so
@@ -1839,20 +1839,13 @@ function priceForSymbol(market, symbol) {
  * the 24h mark).
  */
 /**
- * Pure: vol-adaptive grading threshold. A flat 1% is a huge move in quiet
- * markets and noise in violent ones — grade each call against its asset's
- * own recent volatility instead (7d of hourly closes → dailyized stdev,
- * threshold = max(1%, half the daily vol)).
+ * Pure: vol-adaptive grading threshold (7d of hourly closes → dailyized
+ * stdev, threshold = max(1%, half the daily vol)). Delegates to signal_math
+ * — ONE source of truth for the bar, shared with the analyst's √impact
+ * feature (the old copy-pasted implementation could silently drift from it).
  */
 export function volThreshold(hourlyPrices) {
-  const prices = (hourlyPrices || []).map((p) => (typeof p === "object" ? p.price : p)).filter((p) => p > 0);
-  if (prices.length < 24) return 1.0;
-  const rets = [];
-  for (let i = 1; i < prices.length; i++) rets.push(Math.log(prices[i] / prices[i - 1]));
-  const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
-  const sd = Math.sqrt(rets.reduce((s, r) => s + (r - mean) ** 2, 0) / rets.length);
-  const dailyPct = Math.sqrt(24) * sd * 100;
-  return Math.round(Math.max(1.0, 0.5 * dailyPct) * 100) / 100;
+  return Math.round(gradingThresholdPct(dailyizedVolPct(hourlyPrices)) * 100) / 100;
 }
 
 export function gradeWindowCheck(detectedAt, now, minHours = 24, maxHours = 36) {
