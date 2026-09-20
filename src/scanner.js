@@ -559,15 +559,15 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
     ).bind("status:" + (shouldAnalyze ? "pending" : "skipped")).run();
   } catch { /* non-essential */ }
 
-  const row = await env.DB.prepare(
-    "SELECT id FROM whales WHERE tx_hash = ?"
-  ).bind(wh.tx_hash).first();
-  if (!row?.id) return false;
+  // the id comes back from the INSERT itself (meta.last_row_id) — the old
+  // extra SELECT id was one wasted read per whale insert
+  const whaleId = Number(ins.meta.last_row_id);
+  if (!whaleId) return false;
 
   // Queue only for interesting whales — saves 50-90% of Gemini calls.
   if (shouldAnalyze) {
     await env.ANALYSTQ.send(JSON.stringify({
-      whale_id: row.id,
+      whale_id: whaleId,
       chain: wh.chain,
       // PRE-sighting last_seen for the analyst's dormancy feature. The
       // wallet bump below stamps last_seen ≈ now, so any post-hoc lookup

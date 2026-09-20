@@ -858,12 +858,16 @@ async function saveAnalysis(env, whaleId, parsed) {
     "UPDATE whales SET analysis_status = 'done' WHERE id = ?"
   ).bind(whaleId).run();
   try {
-    await env.DB.prepare(
-      "INSERT INTO counters (k, v) VALUES ('status:pending', -1) ON CONFLICT(k) DO UPDATE SET v = MAX(0, v + excluded.v)"
-    ).run();
-    await env.DB.prepare(
-      "INSERT INTO counters (k, v) VALUES ('status:done', 1) ON CONFLICT(k) DO UPDATE SET v = v + 1"
-    ).run();
+    // both counters in one batch — two sequential round trips for two
+    // one-line upserts was slop
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO counters (k, v) VALUES ('status:pending', -1) ON CONFLICT(k) DO UPDATE SET v = MAX(0, v + excluded.v)"
+      ),
+      env.DB.prepare(
+        "INSERT INTO counters (k, v) VALUES ('status:done', 1) ON CONFLICT(k) DO UPDATE SET v = v + 1"
+      ),
+    ]);
   } catch { /* non-essential */ }
 }
 
