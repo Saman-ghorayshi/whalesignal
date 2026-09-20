@@ -2177,7 +2177,7 @@ export async function runTournamentStep(env) {
   ).bind(hourBucket).first();
   if (done?.n > 0) return { skipped: "already_ran" };
 
-  const [pricesQ, whaleQ, marketRow] = await Promise.all([
+  const [pricesQ, whaleQ, marketKV] = await Promise.all([
     env.DB.prepare(
       "SELECT hour_bucket AS ts, price FROM price_history WHERE coin = 'btc' ORDER BY hour_bucket DESC LIMIT 400"
     ).all(),
@@ -2186,13 +2186,13 @@ export async function runTournamentStep(env) {
        FROM analysis a JOIN whales w ON w.id = a.whale_id
        WHERE a.created_at > ? AND a.signal IN ('bullish','bearish')`
     ).bind(Date.now() - 86_400_000).first(),
-    env.DB.prepare("SELECT payload FROM stats_cache WHERE k = 'market:v1'").first(),
+    env.KV.get("market_cache"),
   ]);
   const prices = (pricesQ.results || []).slice().reverse();
   if (prices.length < 120) return { skipped: "not enough price history" };
 
   let market = null;
-  try { market = marketRow ? JSON.parse(marketRow.payload) : null; } catch { /* null */ }
+  try { market = marketKV ? JSON.parse(marketKV) : null; } catch { /* null */ }
   let narrNet = 0;
   try {
     const graph = JSON.parse(await env.KV.get("news_graph") || "null");
@@ -2200,10 +2200,22 @@ export async function runTournamentStep(env) {
     if (top) narrNet = top.direction === "bearish" ? -Math.abs(top.net) : Math.abs(top.net);
   } catch { /* no graph */ }
 
+  // market-state computed FRESH from the same prices the strategies see —
+  // the old path read the cached /market payload, which only refreshes when
+  // someone requests /market, so the narrative strategy could decide on
+  // hour-old state
+  let ta = null;
+  if (prices.length >= 51) ta = taSnapshot(prices.slice());
+  const marketState = computeMarketState({
+    taRegime: ta?.regime ?? null, rsi14: ta?.rsi14 ?? null,
+    funding: market?.funding?.btc?.funding ?? null,
+    fearGreed: market?.fear_greed ?? null,
+  });
+
   const ctx = {
     prices,
     whaleNet24h: whaleQ?.net ?? null,
-    marketStateScore: market?.market_state?.score ?? null,
+    marketStateScore: marketState.score,
     newsNarrativeNet: narrNet,
   };
   const mark = prices[prices.length - 1].price;
