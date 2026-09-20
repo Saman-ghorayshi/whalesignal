@@ -373,3 +373,13 @@ CREATE TABLE IF NOT EXISTS tournament (
   equity      REAL    NOT NULL,
   PRIMARY KEY (strategy, hour_bucket)
 );
+
+-- ─── funding history (perp funding rate, hourly) ─────────────────────
+-- Written by the scanner's market refresh on the same hour-gate as
+-- price_history. Unlocks funding-carry strategies (need months of rows).
+CREATE TABLE IF NOT EXISTS funding_history (
+  coin        TEXT    NOT NULL,
+  hour_bucket INTEGER NOT NULL,
+  funding     REAL    NOT NULL,
+  PRIMARY KEY (coin, hour_bucket)
+);

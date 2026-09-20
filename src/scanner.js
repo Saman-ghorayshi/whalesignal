@@ -1290,6 +1290,14 @@ export async function refreshMarketCache(env) {
             "INSERT OR IGNORE INTO price_history (coin, hour_bucket, price) VALUES (?, ?, ?)"
           ).bind(coin, hourBucket, p));
         }
+        // funding rate rides the same hour-gate — months of rows unlock the
+        // funding-carry strategy (funding_history had NO writer until now)
+        const f = cache.funding?.[coin]?.funding;
+        if (Number.isFinite(f)) {
+          rows.push(env.DB.prepare(
+            "INSERT OR IGNORE INTO funding_history (coin, hour_bucket, funding) VALUES (?, ?, ?)"
+          ).bind(coin, hourBucket, f));
+        }
       }
       if (rows.length) await env.DB.batch(rows);
       cache._last_price_hour = hourBucket;
@@ -1310,7 +1318,7 @@ export async function refreshMarketCache(env) {
 // (Phase 4+ — LLM gets diminishing returns past 5 headlines anyway). The
 // analyst prompt slot already exists; we're filling it, not building a new one.
 const NEWS_CACHE_TTL_S = 300;            // same cadence as market_cache
-const NEWS_KEYWORDS = /\b(binance|coinbase|kraken|bybit|okx|bitfinex|upbit|hack|exploit|drain|stolen|breach|vulnerability|exit scam|sec|lawsuit|sued|ban|sanctioned|settlement|charging|depeg|stablecoin|usdt|usdc|insurance|halt|withdrawal|etf|futures|expiry|options|listing|delisting|upgrade|fork|halving)\b/i;
+const NEWS_KEYWORDS = /\b(binance|coinbase|kraken|bybit|okx|bitfinex|upbit|hack|exploit|drain|stolen|breach|vulnerability|exit scam|sec|cftc|lawsuit|sued|ban|sanctioned|settlement|charging|depeg|stablecoin|usdt|usdc|insurance|halt|withdrawal|etf|spot etf|futures|expiry|options|listing|delisting|upgrade|fork|halving|bitcoin|btc|ethereum|ether|eth|crypto|solana|xrp|dogecoin|whale|blockchain|web3|defi|token|altcoin|miner|mining|federal reserve|inflation|interest rate|recession|adoption|regulation|regulator|treasury)\b/i;
 
 /**
  * Pure: keyword-filter CryptoPanic items to the top 5 matching titles.
@@ -1322,7 +1330,7 @@ export function filterNewsKeywords(items) {
   if (!Array.isArray(items)) return [];
   return items
     .filter((it) => it && typeof it.title === "string" && NEWS_KEYWORDS.test(it.title))
-    .slice(0, 5)
+    .slice(0, 25)
     .map((it) => ({ title: it.title }));
 }
 
@@ -1358,6 +1366,9 @@ const NEWS_RSS_FEEDS = [
   "https://cryptoslate.com/feed/",
   "https://bitcoinmagazine.com/feed",
   "https://www.theblock.co/rss.xml",
+  "https://blockworks.co/feed",
+  "https://ambcrypto.com/feed/",
+  "https://bitcoinist.com/feed/",
 ];
 
 /** Pure: which known assets does a headline mention? Comma list or "". */
@@ -1443,7 +1454,7 @@ export async function refreshNewsCache(env) {
 
   if (!headlines.length) {
     const start = rssStartIndex(Date.now(), NEWS_RSS_FEEDS.length);
-    for (let i = 0; i < NEWS_RSS_FEEDS.length && headlines.length < 5; i++) {
+    for (let i = 0; i < NEWS_RSS_FEEDS.length && headlines.length < 25; i++) {
       const feed = NEWS_RSS_FEEDS[(start + i) % NEWS_RSS_FEEDS.length];
       try {
         const xml = await fetchText(feed, { timeoutMs: 8000, maxBytes: 400_000 });
@@ -1454,14 +1465,14 @@ export async function refreshNewsCache(env) {
       }
     }
     // GDELT: keyless global events feed — tops up when RSS came back thin
-    if (headlines.length < 5) {
+    if (headlines.length < 25) {
       try {
         const gdeltTitles = await fetchGdeltNews();
         const extra = filterNewsKeywords(gdeltTitles);
         if (extra.length) {
           const seen = new Set(headlines.map((h) => h.title));
           for (const h of extra) if (!seen.has(h.title)) headlines.push(h);
-          headlines = headlines.slice(0, 5);
+          headlines = headlines.slice(0, 25);
           source = "gdelt.org";
         }
       } catch (e) {
