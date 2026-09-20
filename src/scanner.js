@@ -652,6 +652,11 @@ async function autoLabelWallets(env, targets, chain, walletInfos, walletInfo) {
       await env.DB.prepare(
         "UPDATE wallets SET " + updates.join(", ") + " WHERE address = ? AND chain = ?"
       ).bind(addr, chain).run();
+      // 'whale' rows are part of the label map (shown on alerts/profiles) —
+      // bump the version so every isolate reloads the map
+      if (updates.some((u) => u.includes("type = 'whale'"))) {
+        try { await env.KV.put("labels:ver", String(Date.now())); } catch { /* next tick */ }
+      }
     }
   }
 }
@@ -678,8 +683,7 @@ export function statTargets(fromAddr, toAddr, fromType, toType) {
  * label map itself lives in KV (hash-guarded) — the D1 full-scan version
  * burned ~10M rows/day and tripped the account read cap daily.
  */
-let labelMapCache = { map: null, ts: 0 };
-const LABEL_MAP_TTL_MS = 60_000;
+let labelMapCache = new Map(); // env → { map, ver }
 
 function labelMapFromRows(rows) {
   const m = new Map();
@@ -692,17 +696,26 @@ function labelMapFromRows(rows) {
   return m;
 }
 
-async function loadLabelMap(env) {
-  if (labelMapCache.map && Date.now() - labelMapCache.ts < LABEL_MAP_TTL_MS) {
-    return labelMapCache.map;
-  }
-  // 1) KV first — KV reads are FREE and the map is written only when labels
-  // change. THE fix for the 10M-reads/day full-scan (see block comment).
+export async function loadLabelMap(env) {
+  // keyed per-env: in tests each makeWorld() is a distinct universe, and a
+  // module-level singleton leaked rows across worlds (same bug class as the
+  // shared getMarketContext mutation)
+  const cache = labelMapCache.get(env);
+  // labels:ver is the single source of truth for freshness (1 free KV read
+  // per call). The first version of this cache checked a TTL BEFORE the ver,
+  // so a promotion stayed invisible for up to a minute — and the version
+  // before that had NO invalidation at all: the KV map was frozen at its
+  // first write and new labels never reached classification.
+  let ver = null;
+  try { ver = await env.KV.get("labels:ver"); } catch { /* ver unknown */ }
+  const verS = String(ver ?? "");
+  if (cache && cache.map && cache.ver === verS) return cache.map;
+  // 1) KV blob (free) — lets fresh isolates skip the D1 read entirely
   try {
     const kv = JSON.parse(await env.KV.get("labels:json") || "null");
-    if (Array.isArray(kv) && kv.length) {
-      const m = labelMapFromRows(kv);
-      labelMapCache = { map: m, ts: Date.now() };
+    if (Array.isArray(kv) && kv.length && String(kv._ver ?? "") === verS) {
+      const m = labelMapFromRows(kv.rows || kv);
+      labelMapCache.set(env, { map: m, ver: verS });
       return m;
     }
   } catch { /* fall through to D1 */ }
@@ -711,14 +724,17 @@ async function loadLabelMap(env) {
     "SELECT address, chain, label, type FROM wallets WHERE type IN ('exchange', 'treasury', 'bridge', 'miner', 'institution', 'exchange_candidate')"
   ).all();
   const m = labelMapFromRows(results);
-  labelMapCache = { map: m, ts: Date.now() };
-  // publish to KV so every other isolate reads free (hash-guard the write)
+  labelMapCache.set(env, { map: m, ver: verS });
+  // publish to KV so every other isolate reads free. The blob carries the
+  // labels:ver it was built from; the hash includes it so a ver bump forces
+  // a rewrite (the old hash ignored type/label changes — a promotion would
+  // never have propagated to other isolates)
   try {
     const rows = results || [];
-    const hash = rows.length + ":" + (rows.map((r) => r.address).join(",").length);
+    const hash = rows.length + ":" + (rows.map((r) => r.address).join(",").length) + ":" + String(ver ?? "");
     const prevHash = await env.KV.get("labels:hash");
     if (prevHash !== hash) {
-      await env.KV.put("labels:json", JSON.stringify(rows));
+      await env.KV.put("labels:json", JSON.stringify({ _ver: String(ver ?? ""), rows }));
       await env.KV.put("labels:hash", hash);
     }
   } catch { /* best effort */ }
@@ -1626,10 +1642,14 @@ export async function scanChain(env, chain, market) {
 // ─── sink-candidate discovery (free label source) ─────────────────────
 //
 // Destinations receiving transfers from >=5 DISTINCT whale senders over 7d
-// with >=$10M total are almost certainly exchange/custody sinks. Stored as
-// type='exchange_candidate' — shown on the graph/profiles but NOT used for
-// directional classification (only type='exchange' drives tx_type), so a
-// wrong guess can never flip a signal. Runs once per day (KV date marker).
+// with >=$10M total are almost certainly exchange/custody sinks. Each daily
+// scan that re-qualifies an address increments days_seen. At >=3 corroborated
+// scans AND >=8 senders AND >=$50M the candidate PROMOTES to type='exchange'
+// — the only type that drives tx_type classification — so label coverage
+// grows organically instead of staying at the ~31 hand-labeled wallets that
+// left every $40M+ flow reading as 'wallet_to_wallet' (found by live-run
+// audit). Until promotion, candidates are display-only, so a wrong guess can
+// never flip a signal on day one. Runs once per day (KV date marker).
 export async function discoverSinkCandidates(env) {
   const marker = "sinkscan:" + new Date().toISOString().slice(0, 10);
   try { if (await env.KV.get(marker)) return { skipped: "already_ran" }; } catch {}
@@ -1654,8 +1674,24 @@ export async function discoverSinkCandidates(env) {
     try {
       await env.DB.batch(rows.map((r) =>
         env.DB.prepare(
-          "INSERT OR IGNORE INTO wallets (address, chain, label, type) VALUES (?, ?, ?, 'exchange_candidate')"
-        ).bind(r.addr, r.chain, "auto cluster: " + r.senders + " senders / " + fmtUSD(r.volume))
+          `INSERT INTO wallets (address, chain, label, type, days_seen, first_seen, last_seen)
+           VALUES (?, ?, ?, 'exchange_candidate', 1, ?, ?)
+           ON CONFLICT(address, chain) DO UPDATE SET
+             days_seen = days_seen + 1,
+             last_seen = excluded.last_seen,
+             label = CASE WHEN wallets.type = 'exchange_candidate'
+                          THEN 'auto cluster: ' || (wallets.days_seen + 1) || ' scans / ' || ? || ' senders / ' || ?
+                          ELSE wallets.label END,
+             type = CASE WHEN wallets.type = 'exchange_candidate'
+                          AND wallets.days_seen + 1 >= 3 AND ? >= 8 AND ? >= 50000000
+                         THEN 'exchange' ELSE wallets.type END`
+        ).bind(
+          r.addr, r.chain,
+          "auto cluster: 1 scan / " + r.senders + " senders / " + fmtUSD(r.volume),
+          Date.now(), Date.now(),
+          r.senders, Math.round(r.volume),
+          r.senders, Math.round(r.volume),
+        )
       ));
       added = rows.length;
     } catch (e) {
@@ -1663,6 +1699,11 @@ export async function discoverSinkCandidates(env) {
     }
   }
   try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch {}
+  // label set changed (candidates inserted / promoted) — bump so every
+  // isolate reloads the map on its next tick
+  if (added) {
+    try { await env.KV.put("labels:ver", String(Date.now())); } catch { /* best effort */ }
+  }
   return { candidates: added };
 }
 

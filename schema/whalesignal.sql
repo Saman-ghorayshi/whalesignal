@@ -354,3 +354,7 @@ ALTER TABLE news ADD COLUMN llm_magnitude INTEGER;
 -- hourly news scoring scans "unscored, oldest first" — without this partial
 -- index that query full-scans the growing news table every hour
 CREATE INDEX IF NOT EXISTS idx_news_unscored ON news(first_seen) WHERE scored_at IS NULL;
+-- sink promotion tracking: how many daily scans have re-qualified this
+-- address as a sink; >=3 corroborated scans + volume bar → promoted to
+-- type='exchange' (drives classification)
+ALTER TABLE wallets ADD COLUMN days_seen INTEGER NOT NULL DEFAULT 1;

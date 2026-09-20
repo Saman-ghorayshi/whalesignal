@@ -111,6 +111,9 @@ export class MockKV {
   async put(key, value) {
     this.store.set(key, String(value));
   }
+  async delete(key) {
+    this.store.delete(key);
+  }
   async list(opts = {}) {
     const all = [...this.store.entries()].sort();
     return { keys: all.map(([name]) => ({ name })) };
