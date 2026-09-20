@@ -149,3 +149,35 @@ test("runTournamentStep: writes every strategy, idempotent within the hour, equi
     assert.ok(r.equity <= 1000 && r.equity >= 997, r.strategy + ": " + r.equity);
   }
 });
+
+test("runTournamentStep: whale_follow takes a long when 24h imbalance ≥ 3", async () => {
+  const w = await makeWorld();
+  const nowHour = Math.floor(Date.now() / 3600000) * 3600000;
+  for (let i = 0; i < 140; i++) {
+    const osc = i % 2 === 0 ? 0 : 1;
+    await w.DB.prepare("INSERT OR IGNORE INTO price_history (coin, hour_bucket, price) VALUES ('btc', ?, ?)")
+      .bind(nowHour - i * 3600000, 100000 + osc * 1000).run();
+  }
+  // 4 bullish directional calls in the last 24h → whaleNet24h = 4 ≥ 3
+  for (let i = 0; i < 4; i++) {
+    await w.DB.prepare(
+      "INSERT INTO whales (chain, tx_hash, from_address, to_address, amount, symbol, usd_value, tx_type, block_number, detected_at, analysis_status, interesting_score, price_at_detect) " +
+      "VALUES ('btc', ?, '0xf', '0xt', 60, 'BTC', 6000000, 'exchange_inflow', 800000, ?, 'done', 80, 100000)"
+    ).bind("wf-" + i, Date.now() - i * 3600_000).run();
+    await w.DB.prepare(
+      "INSERT INTO analysis (whale_id, headline, interpretation, signal, confidence, related_factor, context_relevance, created_at, prediction_outcome) " +
+      "VALUES ((SELECT id FROM whales WHERE tx_hash = ?), 'h', 'i', 'bullish', 0.8, 'r', 'medium', ?, NULL)"
+    ).bind("wf-" + i, Date.now() - i * 3600_000).run();
+  }
+  const r = await bot.runTournamentStep(w.env);
+  const wf = r.strategies.find((s) => s.strategy === "whale_follow");
+  assert.ok(wf, "whale_follow present");
+  assert.equal(wf.position, 1, "imbalance ≥ 3 → long");
+  // and the /tournament endpoint serves the leaderboard
+  const res = await w.harness.fetch(bot.default, new Request("https://bot.test/tournament"));
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.leaderboard.length, 5);
+  assert.ok(j.note.includes("paper trading"));
+});

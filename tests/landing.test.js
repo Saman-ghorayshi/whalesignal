@@ -177,3 +177,22 @@ test("landing: never leaks secrets or admin surface", async () => {
   assert.ok(!html.includes("TEST_TOKEN_123"), "no bot token in HTML");
   assert.ok(!html.includes("ADMIN"), "no admin surface");
 });
+
+test("landing: tournament leaderboard section renders from the table", async () => {
+  const w = await makeWorld();
+  await seedGradedCalls(w);
+  // two strategies with one hour of history
+  await w.DB.prepare(
+    "INSERT INTO tournament (strategy, hour_bucket, position, mark_price, pnl_hour, equity) VALUES (?, ?, ?, ?, ?, ?)"
+  ).bind("whale_follow", Date.now(), 1, 100000, 0, 1004).run();
+  await w.DB.prepare(
+    "INSERT INTO tournament (strategy, hour_bucket, position, mark_price, pnl_hour, equity) VALUES (?, ?, ?, ?, ?, ?)"
+  ).bind("meanrev", Date.now(), -1, 100000, 0, 999).run();
+
+  const html = await (await fetchHome(w)).text();
+  assert.ok(html.includes("Strategy tournament"), html);
+  assert.ok(html.includes("whale_follow"), html);
+  assert.ok(html.includes("🟢 long"), "position renders");
+  assert.ok(html.includes("$1004.00"), "equity renders");
+  assert.ok(html.includes("+0.40%"), "return renders");
+});

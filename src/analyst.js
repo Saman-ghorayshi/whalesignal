@@ -1137,6 +1137,16 @@ export async function generateDailyBrief(env) {
     if (n?.net != null) lines.push("24h exchange netflow: " + Math.round(n.net / 1e6) + "M USD");
   } catch {}
   try {
+    // tournament leaders ride into the brief — the arena is part of the story
+    const lr = await env.DB.prepare(
+      `SELECT strategy, equity FROM tournament WHERE hour_bucket = (SELECT MAX(hour_bucket) FROM tournament) ORDER BY equity DESC LIMIT 2`
+    ).all();
+    if (lr.results?.length) {
+      const top = lr.results.map((r) => r.strategy + " $" + Math.round(r.equity)).join(", ");
+      lines.push("Strategy tournament leaders: " + top);
+    }
+  } catch {}
+  try {
     const m = JSON.parse(await env.KV.get("market_cache") || "null");
     if (m?.funding?.btc?.funding != null) lines.push("BTC funding (8h): " + (m.funding.btc.funding * 100).toFixed(3) + "%");
     if (m?.fear_greed != null) lines.push("Fear & Greed: " + m.fear_greed + " (" + (m.fear_greed_label || "") + ")");

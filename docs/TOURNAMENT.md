@@ -113,3 +113,20 @@ ANY active strategy beats it after fees — the 94-day backtest says not yet.
 - [Ackerer et al. 2024 — Perpetual Futures Pricing (Wharton)](https://finance.wharton.upenn.edu)
 - [Presto Research 2024 — Can Funding Rate Predict Price Change?](https://www.prestolabs.io)
 - [Helminen 2022 — ETH Funding Rate (Aalto)](https://aaltodoc.aalto.fi)
+
+## whale_follow status note (Sep 20)
+
+The strategy is live in the arena but has almost no usable history to
+backtest against: of 3,679 lifetime analyses, only 4 are directional — the
+feed's first months were all-neutral (the label-coverage era). The 24h
+imbalance therefore almost always sits below the ±3 trade threshold, and
+the strategy will legitimately stay flat until:
+
+1. exchange-label coverage grows (sink promotion is live and accumulates
+   daily), and
+2. directional calls start flowing into the ledger.
+
+This is not a bug — it's the pipeline's honest reflection of its data. The
+strategy's first real evidence will come from the live tournament, not a
+backtest. Visibility: tournament standings now ride in the daily 18:00 UTC
+scoreboard and the daily brief.

@@ -2070,7 +2070,7 @@ export async function gradePending(env, opts = {}) {
 // ─── event clustering ─────────────────────────────────────────────────
 
 /** Pure. Build the daily scoreboard text. Plain text, no markdown. */
-export function renderScoreboard({ accuracy, graded24, correct24, wrong24, nomove24, topCalls }) {
+export function renderScoreboard({ accuracy, graded24, correct24, wrong24, nomove24, topCalls, tournament }) {
   const lines = [];
   lines.push("📊 WhaleSignal scoreboard — every call gets graded");
   lines.push("");
@@ -2080,6 +2080,14 @@ export function renderScoreboard({ accuracy, graded24, correct24, wrong24, nomov
     lines.push(`Running accuracy: ${rate}% (${accuracy.correct}/${accuracy.total} directional calls)`);
   } else {
     lines.push("Running accuracy: building — first grades land 24h after each call.");
+  }
+  if (tournament && tournament.length) {
+    lines.push("");
+    lines.push("🏆 Strategy tournament (paper, live):");
+    for (const t of tournament.slice(0, 3)) {
+      const pos = t.position === 1 ? "long" : t.position === -1 ? "short" : "flat";
+      lines.push(`  ${t.strategy}: ${t.totalPct >= 0 ? "+" : ""}${t.totalPct.toFixed(2)}% (${pos})`);
+    }
   }
   if (topCalls && topCalls.length) {
     lines.push("");
@@ -2146,6 +2154,7 @@ export async function postScoreboard(env) {
     nomove24,
     accuracy: correct + wrong > 0 ? { total: correct + wrong, correct } : null,
     topCalls: topCallsQ?.results || [],
+    tournament: await tournamentLeaderboard(env).catch(() => []),
   };
   const text = renderScoreboard(payload);
   await tgSendMessage(env.BOT_TOKEN, env.PUBLIC_CHANNEL, text, { parse_mode: "" });
