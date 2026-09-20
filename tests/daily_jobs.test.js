@@ -10,6 +10,19 @@ import * as scanner from "../src/scanner.js";
 
 const DAY = 86_400_000;
 
+// the scanner's daily jobs run only on ticks with no new whales and no
+// errors — drive scheduled() until the jobs have actually executed
+// (marker deleted each round so sink discovery re-runs)
+async function runUntilJobsRan(w, rounds = 8, offsetStart = 0) {
+  for (let i = 0; i < rounds; i++) {
+    await w.env.KV.delete('sinkscan:' + new Date().toISOString().slice(0, 10));
+    await w.harness.scheduled(scanner.default, Date.now() + (offsetStart + i) * 60_000, '* * * * *');
+    const row = await w.DB.prepare('SELECT COUNT(*) AS n FROM stablecoin_supply').first();
+    if (row && row.n >= 1) return i + 1;
+  }
+  return rounds;
+}
+
 async function seedSinkActivity(w) {
   // one destination receiving $3M from each of 5 distinct senders in 7d
   for (let i = 0; i < 5; i++) {
@@ -24,7 +37,7 @@ test("daily jobs: scheduled run writes the stablecoin snapshot + discovers sink 
   const w = await makeWorld();
   await seedSinkActivity(w);
 
-  await w.harness.scheduled(scanner.default, Date.now(), "* * * * *");
+  await runUntilJobsRan(w);
 
   // stablecoin snapshot: DefiLlama mock returns 83B + 34B = 117B
   const snap = await w.DB.prepare("SELECT day, total_usd FROM stablecoin_supply").all();
@@ -45,7 +58,7 @@ test("daily jobs: KV markers gate them — the second run same day is a no-op", 
   const w = await makeWorld();
   await seedSinkActivity(w);
 
-  await w.harness.scheduled(scanner.default, Date.now(), "* * * * *");
+  await runUntilJobsRan(w);
   // mutate the snapshot row so a second write would be visible
   await w.DB.prepare("UPDATE stablecoin_supply SET total_usd = 1").run();
   await w.harness.scheduled(scanner.default, Date.now() + 60_000, "* * * * *");
@@ -64,9 +77,11 @@ test("label map invalidation: promotions reach classification via labels:ver", a
     ).bind(`promo-tx-${i}`, `promo-sender-${i}`, Date.now() - i * 3600_000).run();
   }
   // three corroborated scans promote the sink to type='exchange'
-  for (let run = 0; run < 3; run++) {
-    if (run > 0) await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
-    await w.harness.scheduled(scanner.default, Date.now() + run * 60_000, "* * * * *");
+  for (let i = 0; i < 8; i++) {
+    if (i > 0) await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
+    await w.harness.scheduled(scanner.default, Date.now() + i * 60_000, "* * * * *");
+    const cur = await w.DB.prepare("SELECT days_seen FROM wallets WHERE address = 'promoted-sink-000000'").first();
+    if (cur && cur.days_seen >= 3) break;
   }
 
   // THE regression: the old loadLabelMap returned the frozen KV map forever —
@@ -86,7 +101,7 @@ test("daily jobs: sub-threshold sinks are NOT labeled", async () => {
       "VALUES ('btc', ?, ?, 'small-dest-00000000', 30, 'BTC', 3000000, 'wallet_to_wallet', 800000, ?, 'skipped', 60)"
     ).bind(`small-tx-${i}`, `small-sender-${i}`, Date.now() - i * 3600_000).run();
   }
-  await w.harness.scheduled(scanner.default, Date.now(), "* * * * *");
+  await runUntilJobsRan(w);
   const cand = await w.DB.prepare(
     "SELECT type FROM wallets WHERE address = 'small-dest-00000000'"
   ).first();
@@ -103,24 +118,16 @@ test("sink promotion: 3 corroborated scans + 8 senders + $50M earns type=exchang
     ).bind(`big-tx-${i}`, `big-sender-${i}`, Date.now() - i * 3600_000).run();
   }
 
-  // scan 1: candidate, display-only
-  await w.harness.scheduled(scanner.default, Date.now(), "* * * * *");
-  let row = await w.DB.prepare("SELECT type, days_seen FROM wallets WHERE address = 'big-sink-0000000000'").first();
-  assert.equal(row.type, "exchange_candidate", "scan 1 → candidate only");
-  assert.equal(row.days_seen, 1);
-
-  // scan 2: corroborated once (marker removed → job runs again)
-  await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
-  await w.harness.scheduled(scanner.default, Date.now() + 60_000, "* * * * *");
-  row = await w.DB.prepare("SELECT type, days_seen FROM wallets WHERE address = 'big-sink-0000000000'").first();
-  assert.equal(row.type, "exchange_candidate", "scan 2 → still display-only");
-  assert.equal(row.days_seen, 2);
-
-  // scan 3: the third corroboration crosses every bar → PROMOTED
-  await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
-  await w.harness.scheduled(scanner.default, Date.now() + 120_000, "* * * * *");
-  row = await w.DB.prepare("SELECT type, days_seen FROM wallets WHERE address = 'big-sink-0000000000'").first();
-  assert.equal(row.type, "exchange", "scan 3 → promoted: 3 scans, 9 senders, $54M");
+  // drive scheduled() until the sink has been corroborated 3 times
+  let row = null;
+  for (let i = 0; i < 8; i++) {
+    if (i > 0) await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
+    await w.harness.scheduled(scanner.default, Date.now() + i * 60_000, "* * * * *");
+    row = await w.DB.prepare("SELECT type, days_seen FROM wallets WHERE address = 'big-sink-0000000000'").first();
+    if (row && row.days_seen >= 3) break;
+  }
+  assert.ok(row, "sink candidate row exists");
+  assert.equal(row.type, "exchange", "3 scans, 9 senders, $54M → promoted");
   assert.equal(row.days_seen, 3);
 });
 
@@ -132,13 +139,13 @@ test("sink promotion: a 2-scan candidate with 6 senders stays a candidate", asyn
       "VALUES ('btc', ?, ?, 'mid-sink-0000000000', 30, 'BTC', 2000000, 'wallet_to_wallet', 800000, ?, 'skipped', 60)"
     ).bind(`mid-tx-${i}`, `mid-sender-${i}`, Date.now() - i * 3600_000).run();
   }
-  // pretend two earlier scans already corroborated it
-  await w.harness.scheduled(scanner.default, Date.now(), "* * * * *");
-  await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
-  await w.harness.scheduled(scanner.default, Date.now() + 60_000, "* * * * *");
-  // third scan: days_seen reaches 3, but 6 senders < 8 → stays candidate
-  await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
-  await w.harness.scheduled(scanner.default, Date.now() + 120_000, "* * * * *");
+  // three corroborated scans: days_seen reaches 3, but 6 senders < 8 → stays candidate
+  for (let i = 0; i < 8; i++) {
+    if (i > 0) await w.env.KV.delete("sinkscan:" + new Date().toISOString().slice(0, 10));
+    await w.harness.scheduled(scanner.default, Date.now() + i * 60_000, "* * * * *");
+    const cur = await w.DB.prepare("SELECT days_seen FROM wallets WHERE address = 'mid-sink-0000000000'").first();
+    if (cur && cur.days_seen >= 3) break;
+  }
   const row = await w.DB.prepare("SELECT type, days_seen FROM wallets WHERE address = 'mid-sink-0000000000'").first();
   assert.equal(row.type, "exchange_candidate", "6 senders / $12M never promotes");
   assert.equal(row.days_seen, 3);

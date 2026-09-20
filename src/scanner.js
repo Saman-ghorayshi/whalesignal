@@ -1543,6 +1543,15 @@ export async function scanChain(env, chain, market) {
   const walletMap = await loadLabelMap(env);
   const acc = newRollupAcc(Math.floor(Date.now() / 3600000) * 3600000);
 
+  // per-tick config hoisted OUT of the block loop — it was read per block
+  // (2 KV reads × blocks, pure waste)
+  const minUsd = parseInt((await env.KV.get("config:min_usd")) ?? env.MIN_USD ?? DEFAULT_MIN_USD, 10);
+  const internalFloor = parseInt((await env.KV.get("config:internal_floor")) ?? DEFAULT_INTERNAL_FLOOR, 10);
+  // subrequest budget for whale processing (~5 API calls per whale; the free
+  // plan caps the invocation at 50 and cache refreshes take ~10-20)
+  let whaleBudget = 8;
+  let budgetExhausted = false;
+
   let cursor = state.last_block + 1;
   let lastProcessed = state.last_block;
   let processed = 0;
@@ -1568,12 +1577,11 @@ export async function scanChain(env, chain, market) {
 
       const all = [...candidates, ...erc20];
       let whales = classifyWhales(
-        filterWhales(all, parseInt((await env.KV.get("config:min_usd")) ?? env.MIN_USD ?? DEFAULT_MIN_USD, 10)),
+        filterWhales(all, minUsd),
         walletMap
       );
       // plumbing valve: exchange-internal routing under the floor never
       // becomes a row (floor tunable via config:internal_floor, 0 disables)
-      const internalFloor = parseInt((await env.KV.get("config:internal_floor")) ?? DEFAULT_INTERNAL_FLOOR, 10);
       whales = dropPlumbing(whales, internalFloor);
 
       // wallet attributes only for THIS tick's candidates (indexed IN query)
@@ -1586,6 +1594,17 @@ export async function scanChain(env, chain, market) {
       lastWalletInfos = walletInfos.size;
 
       for (const w of whales) {
+        // subrequest budget: each whale costs ~5 API calls (insert+counter
+        // batch, queue send, wallet bumps). The free plan caps an invocation
+        // at 50 — a busy block used to blow through it mid-scan (found live:
+        // "Too many API requests" and the tick aborted). When the budget is
+        // out, stop WITHOUT advancing lastProcessed: the block is rescanned
+        // next tick and INSERT OR IGNORE dedups what already landed.
+        if (whaleBudget <= 0) {
+          budgetExhausted = true;
+          break;
+        }
+        whaleBudget--;
         try {
           const fromKey = String(w.from_address).toLowerCase();
           const walletInfo = walletInfos.get(fromKey) ?? walletMap.get(fromKey) ?? null;
@@ -1616,6 +1635,7 @@ export async function scanChain(env, chain, market) {
           console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);
         }
       }
+      if (budgetExhausted) break; // do NOT advance lastProcessed — rescan next tick
       lastProcessed = cursor;
     } catch (e) {
       // one bad block (API hiccup, malformed body) must not sink the batch;
@@ -1756,6 +1776,7 @@ export default {
     } catch { /* ignore — will be null/refresh */ }
 
     if (needMarketRefresh && !skipCacheRefresh) {
+      marketRefreshedThisTick = true;
       try {
         market = await refreshMarketCache(env);
       } catch (e) {
@@ -1779,7 +1800,11 @@ export default {
           }
         }
       } catch { /* keep needNewsRefresh=true */ }
-      if (needNewsRefresh && !skipCacheRefresh) {
+      if (needNewsRefresh && !skipCacheRefresh && !marketRefreshedThisTick) {
+        // stagger: market and news TTLs co-fire every 5 min — running both in
+        // the same tick doubled the refresh subrequests and helped blow the
+        // 50-subrequest cap on busy ticks (found live). News is 5-min
+        // tolerant; it goes next tick instead.
         try { await refreshNewsCache(env); }
         catch (e) { console.warn("news cache refresh failed:", e.message); }
       }
@@ -1842,14 +1867,21 @@ export default {
     // NEVER CALLED for the project's entire life — the bot's /netflow reads
     // stablecoin_supply that nothing wrote, and sink auto-discovery never
     // ran despite the docs claiming it was live. Found by call-site audit.
-    try {
-      const sc = await discoverSinkCandidates(env);
-      if (sc?.candidates) console.log(`[scanner] sink candidates: ${sc.candidates}`);
-    } catch (e) { console.warn("[scanner] sink discovery failed:", e.message); }
-    try {
-      const ss = await writeStablecoinSnapshot(env);
-      if (ss?.total_usd) console.log(`[scanner] stablecoin snapshot: $${ss.total_usd}`);
-    } catch (e) { console.warn("[scanner] stablecoin snapshot failed:", e.message); }
+    // IDLE-ISH TICKS ONLY: no new whales and no errors — dust-block scans are
+    // cheap (3 fetches) and compatible with the jobs' ~5 subrequests, but a
+    // whale-heavy tick is where the cap blows. Self-gated by date markers on
+    // top, so each job still runs at most once per day.
+    const tickIdle = results.every((r) => !r.newWhales && !r.error);
+    if (tickIdle) {
+      try {
+        const sc = await discoverSinkCandidates(env);
+        if (sc?.candidates) console.log(`[scanner] sink candidates: ${sc.candidates}`);
+      } catch (e) { console.warn("[scanner] sink discovery failed:", e.message); }
+      try {
+        const ss = await writeStablecoinSnapshot(env);
+        if (ss?.total_usd) console.log(`[scanner] stablecoin snapshot: $${ss.total_usd}`);
+      } catch (e) { console.warn("[scanner] stablecoin snapshot failed:", e.message); }
+    }
     return results;
   },
 };
