@@ -1765,6 +1765,7 @@ export default {
     // scanned. config:skip_cache_refresh = "1" bypasses both cache refreshes
     // so ticks stay lean until the operator clears the flag.
     let skipCacheRefresh = false;
+    let marketRefreshedThisTick = false;
     try { skipCacheRefresh = (await env.KV.get("config:skip_cache_refresh")) === "1"; } catch {}
     try {
       const raw = await env.KV.get("market_cache");
