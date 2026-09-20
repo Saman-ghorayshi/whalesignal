@@ -358,3 +358,18 @@ CREATE INDEX IF NOT EXISTS idx_news_unscored ON news(first_seen) WHERE scored_at
 -- address as a sink; >=3 corroborated scans + volume bar → promoted to
 -- type='exchange' (drives classification)
 ALTER TABLE wallets ADD COLUMN days_seen INTEGER NOT NULL DEFAULT 1;
+
+-- ─── strategy tournament (paper, walk-forward, live) ─────────────────
+-- One row per strategy per hour: the position held INTO that hour, the mark
+-- price, and running equity (start 1000 USD, 0.1% fee per position change).
+-- The leaderboard answers "which approach actually earns" over weeks — not
+-- one backtest window.
+CREATE TABLE IF NOT EXISTS tournament (
+  strategy    TEXT    NOT NULL,
+  hour_bucket INTEGER NOT NULL,
+  position    INTEGER NOT NULL,          -- -1 flat-long-short held INTO next hour
+  mark_price  REAL    NOT NULL,
+  pnl_hour    REAL,
+  equity      REAL    NOT NULL,
+  PRIMARY KEY (strategy, hour_bucket)
+);

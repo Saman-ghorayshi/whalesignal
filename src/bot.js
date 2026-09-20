@@ -18,6 +18,7 @@ import { volSpikeClass } from "./worker-utils.js";
 import { gradingThresholdPct, dailyizedVolPct, bucketFor } from "./signal_math.js";
 import { computeMarketState } from "./market_state.js";
 import { themeFor } from "./news_graph.js";
+import { STRATEGIES, step as tournStep } from "./strategies.js";
 
 /** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
@@ -430,6 +431,19 @@ export async function fetchHandler(request, env, ctx) {
         status: 200,
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=120" },
       });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /tournament — the strategy leaderboard ──────────────
+  if (request.method === "GET" && path === "/tournament") {
+    try {
+      const payload = await cachedPayload(env, "tournament:v1", async () => {
+        const board = await tournamentLeaderboard(env);
+        return { ok: true, generated_at: Date.now(), note: "paper trading, 1000 USD per strategy, 0.1% fee per position change", leaderboard: board };
+      });
+      return jsonResponse(payload);
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
@@ -2138,6 +2152,105 @@ export async function postScoreboard(env) {
   try { await env.KV.put(marker, "1", { expirationTtl: 2 * 86400 }); } catch { /* best effort */ }
   return { posted: true, graded24 };
 }
+// ─── strategy tournament (paper traders racing on the same feed) ──────
+//
+// Every hour, each strategy in src/strategies.js states a target position
+// from the SAME context; the engine marks equity to the hourly close and
+// charges 0.1% per position change. Rows land in `tournament`; the
+// leaderboard answers "which approach actually earns" over weeks — the
+// honest arbiter, since the first backtest window showed buy-and-hold
+// beating both naive hourly strategies.
+
+export async function runTournamentStep(env) {
+  const hourBucket = Math.floor(Date.now() / 3600000) * 3600000;
+  const done = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM tournament WHERE hour_bucket = ?"
+  ).bind(hourBucket).first();
+  if (done?.n > 0) return { skipped: "already_ran" };
+
+  const [pricesQ, whaleQ, marketRow] = await Promise.all([
+    env.DB.prepare(
+      "SELECT hour_bucket AS ts, price FROM price_history WHERE coin = 'btc' ORDER BY hour_bucket DESC LIMIT 400"
+    ).all(),
+    env.DB.prepare(
+      `SELECT SUM(CASE WHEN a.signal = 'bullish' THEN 1 ELSE 0 END) - SUM(CASE WHEN a.signal = 'bearish' THEN 1 ELSE 0 END) AS net
+       FROM analysis a JOIN whales w ON w.id = a.whale_id
+       WHERE a.created_at > ? AND a.signal IN ('bullish','bearish')`
+    ).bind(Date.now() - 86_400_000).first(),
+    env.DB.prepare("SELECT payload FROM stats_cache WHERE k = 'market:v1'").first(),
+  ]);
+  const prices = (pricesQ.results || []).slice().reverse();
+  if (prices.length < 120) return { skipped: "not enough price history" };
+
+  let market = null;
+  try { market = marketRow ? JSON.parse(marketRow.payload) : null; } catch { /* null */ }
+  let narrNet = 0;
+  try {
+    const graph = JSON.parse(await env.KV.get("news_graph") || "null");
+    const top = graph?.narratives?.[0];
+    if (top) narrNet = top.direction === "bearish" ? -Math.abs(top.net) : Math.abs(top.net);
+  } catch { /* no graph */ }
+
+  const ctx = {
+    prices,
+    whaleNet24h: whaleQ?.net ?? null,
+    marketStateScore: market?.market_state?.score ?? null,
+    newsNarrativeNet: narrNet,
+  };
+  const mark = prices[prices.length - 1].price;
+
+  const { results: prevRows } = await env.DB.prepare(
+    `SELECT strategy, position, equity, mark_price FROM tournament
+     WHERE hour_bucket = (SELECT MAX(hour_bucket) FROM tournament)`
+  ).all();
+  const prevMap = new Map((prevRows || []).map((s) => [s.strategy, s]));
+
+  const stmts = [];
+  const summary = [];
+  for (const [name, fn] of Object.entries(STRATEGIES)) {
+    let target = 0;
+    try { target = fn(ctx) ?? 0; } catch { target = 0; }
+    const prev = prevMap.get(name) || { position: 0, equity: 1000, mark_price: mark };
+    const st = tournStep(
+      { position: prev.position, equity: prev.equity },
+      { price: mark, prevPrice: prev.mark_price },
+      target
+    );
+    stmts.push(env.DB.prepare(
+      `INSERT INTO tournament (strategy, hour_bucket, position, mark_price, pnl_hour, equity)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(strategy, hour_bucket) DO UPDATE SET
+         position = excluded.position, mark_price = excluded.mark_price,
+         pnl_hour = excluded.pnl_hour, equity = excluded.equity`
+    ).bind(name, hourBucket, st.position, mark, Math.round((st.equity - prev.equity) * 10000) / 10000, Math.round(st.equity * 10000) / 10000));
+    summary.push({ strategy: name, position: st.position, equity: Math.round(st.equity * 100) / 100 });
+  }
+  await env.DB.batch(stmts);
+  return { hour: hourBucket, strategies: summary };
+}
+
+/** Leaderboard for /tournament and the landing page. One indexed read. */
+export async function tournamentLeaderboard(env) {
+  const { results: latest } = await env.DB.prepare(
+    `SELECT strategy, position, equity FROM tournament
+     WHERE hour_bucket = (SELECT MAX(hour_bucket) FROM tournament)`
+  ).all();
+  const { results: first } = await env.DB.prepare(
+    "SELECT strategy, MIN(hour_bucket) AS first_hour, COUNT(*) AS hours FROM tournament GROUP BY strategy"
+  ).all();
+  const firstMap = new Map((first || []).map((r) => [r.strategy, r]));
+  return (latest || [])
+    .map((r) => ({
+      strategy: r.strategy,
+      position: r.position,
+      equity: Math.round(r.equity * 100) / 100,
+      totalPct: Math.round((r.equity / 1000 - 1) * 10000) / 100,
+      hours: firstMap.get(r.strategy)?.hours ?? 0,
+      since: firstMap.get(r.strategy)?.first_hour ?? null,
+    }))
+    .sort((a, b) => b.equity - a.equity);
+}
+
 // ─── public landing page (the conversion asset) ───────────────────────
 //
 // GET / serves a server-rendered HTML page: the live accuracy record,
@@ -2228,10 +2341,13 @@ export async function landingData(env) {
   // narrative graph from the analyst's hourly cluster pass (KV, free read)
   let narratives = [], themeRollup = [];
   try {
-    const g = JSON.parse(await env.KV.get("news_graph") || "null");
-    narratives = g?.narratives ?? [];
-    themeRollup = g?.themes ?? [];
+    const graph = JSON.parse(await env.KV.get("news_graph") || "null");
+    narratives = graph?.narratives ?? [];
+    themeRollup = graph?.themes ?? [];
   } catch { /* graph not built yet */ }
+  // strategy tournament leaderboard (one indexed read)
+  let tournament = [];
+  try { tournament = await tournamentLeaderboard(env); } catch { /* empty table */ }
   const spark = (sparkQ.results || []).map((r) => ({
     events: r.events || 0, bull: r.bull || 0, bear: r.bear || 0, hour: r.hour_bucket,
   }));
@@ -2260,6 +2376,7 @@ export async function landingData(env) {
     headlines,
     narratives,
     themeRollup,
+    tournament,
     spark,
   };
 }
@@ -2397,6 +2514,12 @@ ${headlinesBlock}
 <p class="dim">✅ ${d.correct} right · ❌ ${d.wrong} wrong · ➖ ${d.nomove} no-move (lifetime). No cherry-picking: the ledger is the product.</p>
 ${bucketTable}
 ${recentTable}
+${(d.tournament || []).length ? `<h3>Strategy tournament <span class="dim" style="font-weight:400">· paper traders racing on the same feed — 1000 USD each, 0.1% fee per change</span></h3>
+<table><tr><th>strategy</th><th>position</th><th>equity</th><th>return</th></tr>${d.tournament.map((t) => {
+  const pos = t.position === 1 ? "🟢 long" : t.position === -1 ? "🔴 short" : "— flat";
+  return `<tr><td>${esc(t.strategy)}</td><td>${pos}</td><td>$${t.equity.toFixed(2)}</td><td class="${t.totalPct >= 0 ? "up" : "down"}">${t.totalPct >= 0 ? "+" : ""}${t.totalPct.toFixed(2)}%</td></tr>`;
+}).join("")}</table>
+<p class="dim">Live results accumulate hourly — the honest answer to "which approach actually earns".</p>` : ""}
 <h3>Get the alerts</h3>
 <p class="dim">The channel is free. Premium moves alerts to instant DMs, before the channel.</p>
 ${channel}<a class="btn alt" href="https://t.me/whalesignal_bot">Open the bot → /premium</a>
@@ -2613,6 +2736,12 @@ export default {
       try { minAge = Number(await env.KV.get("config:eval_min_age_h") ?? 24); } catch {}
       const g = await gradePending(env, { minAgeHours: Number.isFinite(minAge) && minAge >= 0 ? minAge : 24 });
       console.log(`[bot] graded ${g.graded}/${g.considered} predictions (min age ${Number.isFinite(minAge) ? minAge : 24}h)`);
+      // strategy tournament: one hourly step — 4+ paper traders racing on the
+      // same feed; the leaderboard answers "which approach actually earns"
+      try {
+        const t = await runTournamentStep(env);
+        if (t?.strategies) console.log(`[bot] tournament: ${JSON.stringify(t.strategies)}`);
+      } catch (e) { console.warn("[bot] tournament step failed:", e.message); }
       // monthly raw-data retention: rollups keep forever, raw whale rows
       // past 18 months go (KEEP_RAW_DAYS toggles it for research)
       const day = new Date().getUTCDate();
