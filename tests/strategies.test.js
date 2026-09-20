@@ -137,7 +137,6 @@ test("runTournamentStep: writes every strategy, idempotent within the hour, equi
   assert.equal(again.skipped, "already_ran");
 
   // next hour: rows accumulate, equity carries forward
-  await w.env.KV.delete("tourn:gate"); // (no KV gate used — the table itself gates)
   const later = nowHour + 3600000;
   // simulate the next hour by shifting price_history timestamps is heavy —
   // instead verify the persisted rows directly

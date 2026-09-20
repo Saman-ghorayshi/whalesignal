@@ -19,9 +19,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: node tests/run_tests.js
-      # static SQL validation (every query vs the real schema) — catches the
-      # "no such column" class before deploy
+      # static SQL validation (every query vs the real schema) + cross-file
+      # wiring (imports resolve, env bindings known) — catch the incomplete
+      # feature class before deploy
       - run: node tools/check_sql.mjs
+      - run: node tools/check_wiring.mjs
 
   python-tests:
     runs-on: ubuntu-latest
