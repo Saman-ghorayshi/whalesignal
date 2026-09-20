@@ -709,7 +709,9 @@ async function callGroqProvider(env, prompt, key) {
         model,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.4,
-        max_tokens: 400,
+        // 400 truncated the 20-headline JSON array mid-item (found live:
+        // the whole scoring run silently no-oped on parse failure)
+        max_tokens: 1500,
       }),
       signal: ctl.signal,
     });
@@ -735,7 +737,7 @@ async function callGeminiProvider(env, prompt, key) {
   }
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
+    generationConfig: { temperature: 0.4, maxOutputTokens: 1500 },
   });
   const urls = [
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -1011,12 +1013,15 @@ export async function analyzeOne(env, msg) {
 // type; rows are marked so nothing is scored twice. Rebuilt Sep 18 — the
 // original block was lost in a file restore (see AUDIT.md).
 export function buildNewsScorePrompt(headlines) {
+  // ids are EXPLICIT and 0-based: the model must echo the id it was given.
+  // (The old 1-based numbering + 0-based results[] indexing silently shifted
+  // every score onto the wrong headline when the response did parse.)
   return "You are a crypto news classifier. For each headline output a JSON array item:\n" +
-    '  {"i": <index>, "s": <-1|0|1>, "e": "<regulation|hack|adoption|macro|etf|exchange|market|other>", "m": <1|2|3>}\n' +
-    "  s: -1 bearish, 0 neutral, 1 bullish FOR THE ASSET MENTIONED (crypto-wide news counts for both BTC and ETH). Judge the headline's own content, not vibes.\n" +
+    '  {"i": <id>, "s": <-1|0|1>, "e": "<regulation|hack|adoption|macro|etf|exchange|market|other>", "m": <1|2|3>}\n' +
+    "  i: the exact id from the list (0-based). s: -1 bearish, 0 neutral, 1 bullish FOR THE ASSET MENTIONED (crypto-wide news counts for both BTC and ETH). Judge the headline's own content, not vibes.\n" +
     "  m: magnitude — how hard this headline moves sentiment: 3 = decisive fact (approval, launch, confirmed hack), 2 = substantive development, 1 = routine/speculative mention.\n" +
     "  HEADLINES:\n" +
-    headlines.map((h, i) => (i + 1) + ". " + h.title).join("\n") +
+    headlines.map((h, i) => "id=" + i + ": " + h.title).join("\n") +
     "\n  Return ONLY the JSON array.";
 }
 
