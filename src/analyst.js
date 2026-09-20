@@ -1046,10 +1046,17 @@ export async function scorePendingNews(env) {
   ).all();
   if (!results || results.length < 10) return { scored: 0, skipped: "fewer than 10 unscored" };
   const prompt = buildNewsScorePrompt(results);
-  let parsed = null;
-  try { parsed = parseNewsScores(await callLLM(env, prompt)); }
+  let raw = null;
+  try { raw = await callLLM(env, prompt); }
   catch (e) { return { scored: 0, skipped: e.message }; }
-  if (!parsed) return { scored: 0, skipped: "unparseable" };
+  const parsed = parseNewsScores(raw);
+  if (!parsed) {
+    // log what the model actually said — unparseable responses are invisible
+    // otherwise (found live: the first real run returned "unparseable" and
+    // there was no way to see why)
+    console.warn(`[analyst] news scoring unparseable, raw (${(raw || "").length} chars): ${(raw || "").slice(0, 300)}`);
+    return { scored: 0, skipped: "unparseable" };
+  }
   const stmts = parsed.map((it) => {
     const row = results[it.i];
     if (!row) return null;
