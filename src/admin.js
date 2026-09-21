@@ -104,6 +104,19 @@ async function collectCounts(env) {
  */
 export function validateKnob(key, value) {
   if (key === "channel_mode") return ["all", "directional", "high"].includes(String(value)) ? { ok: true, value } : { ok: false };
+  if (key === "jev") {
+    // Jev thresholds (src/jev.js) — confidences bounded 0..1; unknown fields
+    // dropped so the knob can't smuggle arbitrary config
+    if (!value || typeof value !== "object") return { ok: false };
+    const clean = {};
+    for (const k of ["min_sentiment_confidence", "min_choice_confidence", "max_headlines_per_call"]) {
+      const v = Number(value[k]);
+      if (!Number.isFinite(v)) continue;
+      if (k === "max_headlines_per_call") { if (v >= 1 && v <= 100) clean[k] = Math.round(v); }
+      else if (v >= 0 && v <= 1) clean[k] = v;
+    }
+    return { ok: true, value: clean };
+  }
   const numeric = { internal_floor: 500_000_000, eval_min_age_h: 720, min_usd: 10_000_000 };
   if (key in numeric) {
     const n = Number(value);
@@ -146,7 +159,7 @@ async function handleApi(request, env, path) {
                      "config:channel_mode", "config:eval_min_age_h", "config:max_blocks",
                      "config:flow_weights", "config:flow_weights_bull", "config:flow_weights_bear",
                      "config:flow_weights_choppy", "config:vol_spikes", "config:llm_chain",
-                     "config:model", "config:model_groq"]) {
+                     "config:model", "config:model_groq", "config:jev"]) {
       try { knobs[k.replace("config:", "")] = JSON.parse(await env.KV.get(k) || "null"); }
       catch { knobs[k.replace("config:", "")] = "raw:" + (await env.KV.get(k)); }
     }

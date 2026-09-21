@@ -62,3 +62,16 @@ test("validateKnob: enum, numeric bounds, weights clamping, unknown keys", () =>
   assert.equal(validateKnob("flow_weights", "garbage").ok, false);
   assert.equal(validateKnob("arbitrary_key", 1).ok, false, "whitelist only");
 });
+
+test("validateKnob: jev thresholds bounded, unknown fields dropped", async () => {
+  const { validateKnob } = await import("../src/admin.js");
+  const ok = validateKnob("jev", { min_sentiment_confidence: 0.65, min_choice_confidence: 0.5, max_headlines_per_call: 25, evil: "x" });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.value, { min_sentiment_confidence: 0.65, min_choice_confidence: 0.5, max_headlines_per_call: 25 });
+  // confidence out of range dropped
+  const bad = validateKnob("jev", { min_sentiment_confidence: 4 });
+  assert.equal(bad.ok, true);
+  assert.deepEqual(bad.value, {});
+  // non-object refused
+  assert.equal(validateKnob("jev", "aggressive").ok, false);
+});

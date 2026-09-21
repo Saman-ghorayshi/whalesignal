@@ -73,6 +73,7 @@ const KNOWN_ENV = new Set([
   // optional, every use guarded by `if (!env.X) skip`
   "CRYPTOPAY", "ALERTS_R2", "GH_PAT", "GH_REPO", "NEWS_TOKEN",
   "CG_KEYS", "CG_KEY", "CRYPTOCOMPARE_KEY",
+  "TYPESAFE_API_KEY", "JEV_MOCK",
 ]);
 const envRefs = new Map();
 for (const [file, text] of Object.entries(src)) {
