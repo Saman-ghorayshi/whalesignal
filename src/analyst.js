@@ -49,12 +49,17 @@ async function loadFlowWeights(env) {
 
 // Isolate-level cache: 400-row price read per analyzed event was wasteful
 // when a queue batch analyzes several events from the same chain in seconds.
-const ctxCache = new Map(); // chain → { ctx, ts }
+// Keyed PER-ENV: a module-level coin-keyed singleton leaked world-A's cached
+// DB handle into world B across test worlds (same bug class as the label
+// map cache).
+const ctxCache = new Map(); // env → (coin → { ctx, ts })
 const CTX_TTL_MS = 60_000;
 
 export async function getMarketContext(env, chain, symbol) {
   const coin = String(chain || "").toLowerCase() === "eth" ? "eth" : "btc";
-  const hit = ctxCache.get(coin);
+  let perEnv = ctxCache.get(env);
+  if (!perEnv) { perEnv = new Map(); ctxCache.set(env, perEnv); }
+  const hit = perEnv.get(coin);
   if (hit && Date.now() - hit.ts < CTX_TTL_MS) return hit.ctx;
   let ta = null;
   let volPct = null;
@@ -92,7 +97,7 @@ export async function getMarketContext(env, chain, symbol) {
     calib = calibByBucket(ck || []);
   } catch { /* no ledger yet */ }
   const out = { ta, newsSent, volPct, calib };
-  ctxCache.set(coin, { ctx: out, ts: Date.now() });
+  perEnv.set(coin, { ctx: out, ts: Date.now() });
   return out;
 }
 
