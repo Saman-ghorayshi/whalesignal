@@ -243,6 +243,12 @@ export class Harness {
       return await workerDefault.fetch(req, this.env, { waitUntil: (p) => p, passThroughOnException: () => {} });
     } finally { this._restoreFetch(); }
   }
+  // run an arbitrary async function with the mock fetch installed — for
+  // tests that invoke exported functions directly instead of worker handlers
+  async runWithFetch(fn) {
+    this._installFetch();
+    try { return await fn(); } finally { this._restoreFetch(); }
+  }
   _installFetch() { globalThis.fetch = this.fetchMock.handler(); }
   _restoreFetch() { globalThis.fetch = this._origFetch; }
 }

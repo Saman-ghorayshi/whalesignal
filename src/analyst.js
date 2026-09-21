@@ -26,6 +26,9 @@ import {
   dormancyDays, gradingThresholdPct, dailyizedVolPct, calibrate, bucketFor,
 } from "./signal_math.js";
 import { buildNewsGraph, narrativesForPrompt, narrativeBump } from "./news_graph.js";
+import { jevAvailable } from "./jev.js";
+import { jevScoreHeadlines } from "./jev_news.js";
+import { jevWhaleShadow } from "./jev_whale.js";
 
 // ─── confluence model (docs/SIGNAL_MODEL.md) ──────────────────────────
 
@@ -960,6 +963,17 @@ export async function analyzeOne(env, msg) {
       ctx.newsBump = narrativeBump(graph);
     }
   } catch { /* no graph yet — prompt falls back to the plain headlines */ }
+  // Jev shadow score (Pattern 3 composite): logged next to the hand-tuned
+  // interesting_score, NEVER gating. Purpose: accumulate the comparison
+  // dataset — if the model's judgment beats the heuristic at predicting
+  // graded outcomes, promote it; until then it is inert. Inert without a
+  // TYPESAFE_API_KEY (or JEV_MOCK=1).
+  try {
+    const shadow = await jevWhaleShadow(env, whale);
+    if (shadow) {
+      console.log(`[analyst:${whale_id}] jev shadow composite=${shadow.composite} vs heuristic=${whale.interesting_score} (model=${shadow.model})`);
+    }
+  } catch { /* shadow must never break the pipeline */ }
   const templateResult = templateAnalysis(whale, market, history, ctx);
   if (templateResult) {
     await saveAnalysis(env, whale_id, templateResult);
@@ -1054,6 +1068,31 @@ export async function scorePendingNews(env) {
     "SELECT id, title FROM news WHERE scored_at IS NULL ORDER BY first_seen ASC LIMIT 20"
   ).all();
   if (!results || results.length < 10) return { scored: 0, skipped: "fewer than 10 unscored" };
+
+  // Chain: Jev (typed, confidence-gated — cheapest, first) → Gemini batch →
+  // lexicon fallback. Jev answers only clear its own threshold; headlines it
+  // omits fall through to Gemini exactly as before. JEV_MOCK=1 exercises the
+  // full path offline (deterministic mock client).
+  if (jevAvailable(env)) {
+    try {
+      const j = await jevScoreHeadlines(env, results.map((r) => r.title));
+      if (!j.unavailable && j.items?.length) {
+        const stmts = j.items.map((it) => {
+          const row = results[it.i];
+          if (!row) return null;
+          return env.DB.prepare(
+            "UPDATE news SET llm_sentiment = ?, llm_event = ?, llm_theme = ?, llm_magnitude = ?, scored_at = ? WHERE id = ? AND scored_at IS NULL"
+          ).bind(it.s, it.e, it.e, it.m, Date.now(), row.id);
+        }).filter(Boolean);
+        if (stmts.length) await env.DB.batch(stmts);
+        console.log(`[analyst] news scoring (jev, model=${j.model}): ${stmts.length}/${results.length} headlines; injection=${j.injection}`);
+        return { scored: stmts.length, via: "jev" };
+      }
+    } catch (e) {
+      console.warn("[analyst] jev news scoring failed — falling through to LLM:", e.message);
+    }
+  }
+
   const prompt = buildNewsScorePrompt(results);
   let raw = null;
   try { raw = await callLLM(env, prompt); }

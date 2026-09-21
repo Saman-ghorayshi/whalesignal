@@ -1,0 +1,30 @@
+{"title": "SEC approves first spot Ethereum ETF for trading", "expected": {"s": 1, "e": "etf", "m": 3}}
+{"title": "Bitcoin ETF records largest daily inflow since launch", "expected": {"s": 1, "e": "etf", "m": 2}}
+{"title": "Crypto exchange halts withdrawals amid wallet maintenance", "expected": {"s": -1, "e": "exchange", "m": 2}}
+{"title": "DeFi protocol exploited for 12 million dollars, funds bridged", "expected": {"s": -1, "e": "hack", "m": 3}}
+{"title": "Federal Reserve holds interest rates steady", "expected": {"s": 0, "e": "macro", "m": 2}}
+{"title": "Whale wallet dormant for 5 years moves 10000 BTC", "expected": {"s": -1, "e": "whales", "m": 2}}
+{"title": "Stablecoin issuer publishes quarterly attestation report", "expected": {"s": 0, "e": "stablecoin", "m": 1}}
+{"title": "Major bank launches crypto custody for institutional clients", "expected": {"s": 1, "e": "adoption", "m": 2}}
+{"title": "Bitcoin dips below key moving average amid selloff", "expected": {"s": -1, "e": "market", "m": 1}}
+{"title": "CFTC sues derivatives platform over unregistered contracts", "expected": {"s": -1, "e": "regulation", "m": 3}}
+{"title": "Ethereum upgrade ships with record staking participation", "expected": {"s": 1, "e": "adoption", "m": 2}}
+{"title": "Analyst speculates Bitcoin could rally if ETF flows persist", "expected": {"s": 1, "e": "market", "m": 1}}
+{"title": "Exchange reports record quarterly revenue, stock surges", "expected": {"s": 1, "e": "exchange", "m": 2}}
+{"title": "Stablecoin depegs briefly after bank run rumors", "expected": {"s": -1, "e": "stablecoin", "m": 3}}
+{"title": "Miner reserves fall to three-year low as selling continues", "expected": {"s": -1, "e": "whales", "m": 2}}
+{"title": "Payment giant integrates stablecoin settlements for merchants", "expected": {"s": 1, "e": "adoption", "m": 2}}
+{"title": "Regulator publishes new licensing framework for exchanges", "expected": {"s": 1, "e": "regulation", "m": 2}}
+{"title": "Bitcoin ETF outflows continue for fifth straight session", "expected": {"s": -1, "e": "etf", "m": 2}}
+{"title": "Researcher warns of unpatched vulnerability in popular wallet", "expected": {"s": -1, "e": "hack", "m": 2}}
+{"title": "Bitcoin network hash rate hits new all-time high", "expected": {"s": 1, "e": "market", "m": 1}}
+{"title": "Exchange lists new memecoin pair amid community vote", "expected": {"s": 1, "e": "exchange", "m": 1}}
+{"title": "Treasury Department sanctions mixing service", "expected": {"s": -1, "e": "regulation", "m": 2}}
+{"title": "Whale accumulation address adds 5000 BTC in one week", "expected": {"s": 1, "e": "whales", "m": 2}}
+{"title": "Inflation data comes in hotter than expected", "expected": {"s": -1, "e": "macro", "m": 2}}
+{"title": " hacked exchange resumes withdrawals after incident", "expected": {"s": 0, "e": "hack", "m": 1}}
+{"title": "Issuer mints 1 billion new stablecoin tokens for treasury", "expected": {"s": 1, "e": "stablecoin", "m": 2}}
+{"title": "Ethereum gas fees spike amid NFT minting frenzy", "expected": {"s": 0, "e": "market", "m": 1}}
+{"title": "Institutional investor says allocation is underweight crypto", "expected": {"s": -1, "e": "adoption", "m": 1}}
+{"title": "SEC delays decision on staking feature for ETF product", "expected": {"s": -1, "e": "etf", "m": 2}}
+{"title": "Crypto theft down 30 percent year over year per report", "expected": {"s": 1, "e": "hack", "m": 1}}
