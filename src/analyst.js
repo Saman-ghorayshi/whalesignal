@@ -1074,7 +1074,7 @@ export default {
           headers: { "Content-Type": "application/json" },
         });
       } catch (e) {
-        return new Response(JSON.stringify({ ok: false, whale_id: whaleId, error: e.message }), {
+        return new Response(JSON.stringify({ ok: false, whale_id: whaleId, error: e.message, stack: (e.stack || "").slice(0, 1500) }), {
           status: 500,
           headers: { "Content-Type": "application/json" },
         });
