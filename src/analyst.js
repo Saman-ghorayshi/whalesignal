@@ -547,7 +547,8 @@ export async function callGroq(env, prompt, specificModel = null) {
   for (const model of candidateModels) {
     const url = "https://api.groq.com/openai/v1/chat/completions";
     const ctl = new AbortController();
-    const tid = setTimeout(() => ctl.abort(), 6000);
+    // gpt-oss-120b is a reasoning model: it needs time to think before emitting JSON.
+    const tid = setTimeout(() => ctl.abort(), 30000);
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -558,12 +559,14 @@ export async function callGroq(env, prompt, specificModel = null) {
         },
         body: JSON.stringify({
           messages: [
-            { role: "system", content: "You are a professional crypto whale movement analyst. Return valid JSON only with headline, interpretation, signal, confidence, related_factor." },
+            { role: "system", content: "You output ONLY valid JSON. No prose, no markdown, no explanations, no reasoning preamble. Just the JSON object. Do all analysis silently, then emit only the JSON." },
             { role: "user", content: prompt },
           ],
           model,
-          temperature: 0.3,
-          max_tokens: 350,
+          temperature: 0.2,
+          // gpt-oss-120b reasons before answering; 350 tokens starves it and
+          // json_validate_failed results. 2000 gives it room to think + emit JSON.
+          max_tokens: 2000,
           response_format: { type: "json_object" },
         }),
         signal: ctl.signal,
@@ -646,7 +649,10 @@ export async function callAI(env, prompt) {
   // A2: spend budget only when a provider can actually serve.
   await checkAiRateLimit(env);
 
-  const pref = String(env.AI_PROVIDER || "gemini").toLowerCase();
+  // Default provider is groq (verified 2026-10-15): gpt-oss-120b follows the
+  // JSON schema reliably, while gemini-3.5-flash echoes prompt rules as prose
+  // and 503s frequently on this key. Override with AI_PROVIDER=gemini if desired.
+  const pref = String(env.AI_PROVIDER || "groq").toLowerCase();
   const ordered = [
     ...candidates.filter((c) => c.name === pref),
     ...candidates.filter((c) => c.name !== pref),
