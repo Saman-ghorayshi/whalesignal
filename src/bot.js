@@ -14,6 +14,7 @@
 
 import { okJson, errJson, rateLimited, tgSendMessage, tgSendPhoto, fmtUSD, shortAddr, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit } from "./worker-utils.js";
 import { analyzeWalletPatterns, buildGraphPayload } from "./graph-analyst.js";
+import { buildContentBrief } from "./content.js";
 
 /** CORS headers shared by all public GET/OPTIONS routes (BT11: no drift). */
 function corsHeaders(extra = {}) {
@@ -365,6 +366,34 @@ export async function fetchHandler(request, env, ctx) {
       const [rows, total] = await Promise.all([historyRows(env, opts), historyCount(env, opts)]);
       const payload = renderHistoryJSON(rows, opts.page, opts.limit, total);
       return jsonResponse(payload);
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /content — content brief for the latest big whale ──
+  // Returns a human-ready brief: hook, 30s spoken script, caption, hashtags.
+  // ?id= for a specific whale, otherwise the latest score>=50 whale.
+  if (request.method === "GET" && path === "/content") {
+    try {
+      const id = url.searchParams.get("id");
+      let whale;
+      if (id) {
+        whale = await env.DB.prepare("SELECT * FROM whales WHERE id = ?").bind(id).first();
+      } else {
+        whale = await env.DB.prepare(
+          `SELECT * FROM whales WHERE interesting_score >= 50
+           ORDER BY detected_at DESC LIMIT 1`
+        ).first();
+      }
+      if (!whale) {
+        return jsonResponse({ ok: false, error: "no whale found" }, 404);
+      }
+      const analysis = await env.DB.prepare(
+        "SELECT * FROM analysis WHERE whale_id = ?"
+      ).bind(whale.id).first();
+      const brief = buildContentBrief(whale, analysis);
+      return jsonResponse({ ok: true, brief });
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
