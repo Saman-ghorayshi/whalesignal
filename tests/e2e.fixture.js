@@ -92,6 +92,12 @@ function makeFetches() {
     { match: "https://api.etherscan.io/v2/api?chainid=1&module=logs",
       handler: (url) => ({ json: { result: [] } }) }, // no erc20 transfers in this block
 
+    // coinbase spot prices
+    { match: "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+      handler: () => ({ json: { data: { base: "BTC", currency: "USD", amount: "100000" } } }) },
+    { match: "https://api.coinbase.com/v2/prices/ETH-USD/spot",
+      handler: () => ({ json: { data: { base: "ETH", currency: "USD", amount: "3500" } } }) },
+
     // coingecko prices
     { match: "https://api.coingecko.com/api/v3/simple/price",
       handler: () => ({ json: {
