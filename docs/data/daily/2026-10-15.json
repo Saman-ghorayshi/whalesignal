@@ -1,21 +1,47 @@
 {
   "date": "2026-10-15",
-  "generated_at": "2026-10-15T11:07:59.533801+00:00",
+  "generated_at": "2026-10-15T13:50:38.369248+00:00",
   "data": {
-    "ok": false,
-    "total_whales": 0,
-    "total_volume": 0,
-    "count_24h": 0,
-    "count_7d": 0,
-    "largest_transfer": 0,
+    "ok": true,
+    "total_whales": 217,
+    "total_volume": 855402532.6432114,
+    "count_24h": 217,
+    "count_7d": 217,
+    "largest_transfer": 199539761.41520435,
     "signals": {
-      "bullish": 0,
-      "bearish": 0,
-      "neutral": 0
+      "bullish": 2,
+      "bearish": 1,
+      "neutral": 14
     },
     "accuracy": null,
-    "top_symbols": [],
-    "hourly": [],
-    "market": null
+    "top_symbols": [
+      {
+        "symbol": "BTC",
+        "count": 92,
+        "volume": 520884989.21671236
+      },
+      {
+        "symbol": "USDT",
+        "count": 90,
+        "volume": 231473466.1265
+      },
+      {
+        "symbol": "USDC",
+        "count": 35,
+        "volume": 103044077.299999
+      }
+    ],
+    "hourly": [
+      {
+        "hour": 1792069200000,
+        "count": 217,
+        "volume": 855402532.6432114
+      }
+    ],
+    "market": {
+      "btc_price": 80211.16,
+      "eth_price": 2337.98,
+      "fear_greed": 53
+    }
   }
 }
