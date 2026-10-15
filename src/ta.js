@@ -294,7 +294,10 @@ async function fetchCoinGecko(symbol, limit = 100) {
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), 15000);
   try {
-    const res = await fetch(url, { signal: ctl.signal });
+    const res = await fetch(url, {
+      signal: ctl.signal,
+      headers: { "User-Agent": "WhaleSignal/1.0 (price monitor; contact: github.com/saman-ghorayshi/whalesignal)" },
+    });
     if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
     const j = await res.json();
     const prices = j.prices || [], vols = j.total_volumes || [];

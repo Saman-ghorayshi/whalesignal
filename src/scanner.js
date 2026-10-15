@@ -808,7 +808,10 @@ export async function refreshMarketCache(env) {
   try {
     const cgUrl =
       "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
-    const cg = await fetchJSON(cgUrl, { timeoutMs: 5000 });
+    const cg = await fetchJSON(cgUrl, {
+      timeoutMs: 5000,
+      headers: { "User-Agent": "WhaleSignal/1.0 (price monitor; contact: github.com/saman-ghorayshi/whalesignal)" },
+    });
     const bp = (cg?.bitcoin || cg?.prices?.bitcoin)?.usd;
     const ep = (cg?.ethereum || cg?.prices?.ethereum)?.usd;
     const bc = (cg?.bitcoin || cg?.prices?.bitcoin)?.usd_24h_change;
