@@ -33,6 +33,22 @@ import { fmtUSD, shortAddr, isAuthorizedAdmin } from "./worker-utils.js";
 export { isAuthorizedAdmin };
 import { analyzeWalletPatterns } from "./graph-analyst.js";
 import { getMarketSnapshot, summarizeTA, buildChartUrl } from "./ta.js";
+
+/**
+ * Fast-path TA: read the price worker's precomputed snapshot from KV.
+ * Returns null when missing or older than 10 min (caller falls back to live).
+ */
+async function getCachedTASnapshot(env, symbol) {
+  try {
+    const raw = await env.KV.get(`ta_cache:${symbol}`);
+    if (!raw) return null;
+    const snap = JSON.parse(raw);
+    if (!snap || !snap.series || Date.now() - (snap.fetchedAt || 0) > 600000) return null;
+    return snap;
+  } catch {
+    return null;
+  }
+}
 import { classifyMotive, pickCatalyst, estimateImpact, motivePromptBlock } from "./motive.js";
 import { getRelevantNews } from "./news.js";
 
@@ -302,14 +318,18 @@ export function buildPrompt(whale, market, history, news, patterns = null, label
     : "- (no recent headlines cached)";
 
   // TA block: structured technical facts for motive reasoning.
+  const sent = intel.sentiment || null;
+  const mktEvents = Array.isArray(intel.marketEvents) ? intel.marketEvents : [];
   const taBlock = ta ? `
 TECHNICAL ANALYSIS (${sanitizePromptText(ta.symbol, 8)}/USDT, hourly):
 - Price: $${ta.price.toLocaleString("en-US", { maximumFractionDigits: 0 })} (${ta.change24h >= 0 ? "+" : ""}${ta.change24h}% / 24h)
 - RSI(14): ${ta.rsi14 ?? "n/a"}${ta.rsi14 != null && ta.rsi14 < 35 ? " — OVERSOLD" : ta.rsi14 != null && ta.rsi14 > 70 ? " — OVERBOUGHT" : ""}
 - Trend: ${ta.trend} (SMA20 vs SMA50); MACD histogram ${ta.macdBullish == null ? "n/a" : ta.macdBullish ? "bullish" : "bearish"}
-- Bollinger: ${ta.bbPos === "near_upper" ? "price hugging UPPER band" : ta.bbPos === "near_lower" ? "price hugging LOWER band" : "mid-band"}
+- Bollinger: ${ta.bbPos === "near_upper" || ta.bbPos === "above_upper" ? "price at/above UPPER band" : ta.bbPos === "near_lower" || ta.bbPos === "below_lower" ? "price at/below LOWER band" : "mid-band"}
 - Volume: ${ta.volumeSpike ? "SPIKE (z=" + ta.volumeZ + ")" : "normal"}
 - Support $${ta.support?.toLocaleString("en-US", { maximumFractionDigits: 0 }) ?? "n/a"} / Resistance $${ta.resistance?.toLocaleString("en-US", { maximumFractionDigits: 0 }) ?? "n/a"} (48h swing)
+${sent ? `- Market sentiment: ${sent.label} (composite ${sent.composite}; Fear&Greed ${sent.fear_greed ?? "n/a"}, BTC funding ${sent.funding_btc ?? "n/a"}, news ${sent.news_sentiment ?? "n/a"})` : "- Market sentiment: n/a"}
+${mktEvents.length ? `- Recent market events: ${mktEvents.map((e) => `${e.type}@${new Date(e.detected_at).toISOString().slice(11, 16)}`).join(", ")}` : "- Recent market events: none in 24h"}
 ` : "\nTECHNICAL ANALYSIS: unavailable (price feed unreachable)\n";
 
   // Motive block: the rule-based preliminary assessment for the LLM to refine.
@@ -854,29 +874,50 @@ export async function analyzeOne(env, msg) {
   // E1: anchor history + forensics on the NON-EXCHANGE counterparty — the
   // actual whale — not on the exchange hot wallet for outflows.
   const subject = subjectAddress(whale);
-  const [history, labels, taSnap, richNews] = await Promise.all([
+  const symUpper = (whale.symbol || "BTC").toUpperCase();
+  const tradableSym = ["BTC", "ETH", "SOL"].includes(symUpper) ? symUpper : "BTC";
+  const [history, labels, taSnap, richNews, sentimentCache, eventsCache] = await Promise.all([
     getWalletHistory(env, subject, whale.chain, whale.id),
     // fix 7: wire up labelPair (was dead code) — labels feed the prompt and
     // the evidence count instead of printing raw hex everywhere.
     labelPair(env, whale.from_address, whale.to_address),
-    // Whale-intelligence: TA snapshot (null-tolerant) for the prompt.
-    getMarketSnapshot(whale.symbol).catch(() => null),
+    // Whale-intelligence: TA from the price worker's KV cache (fast path);
+    // falls back to a live fetch if the cache is missing/stale.
+    getCachedTASnapshot(env, tradableSym).catch(() => null),
     // Symbol-matched news from D1 near detection time (null-tolerant).
     getRelevantNews(env, { symbol: whale.symbol, detectedAt: whale.detected_at }).catch(() => []),
+    // Composite market sentiment (fear/greed + funding + news).
+    env.KV.get("sentiment_cache").then((r) => JSON.parse(r || "null")).catch(() => null),
+    // Recent market events for this symbol (pumps, RSI extremes…).
+    env.KV.get("market_events_cache").then((r) => JSON.parse(r || "null")).catch(() => null),
   ]);
+  // Fallback: live TA fetch when the price worker's cache is unavailable.
+  let ta = taSnap;
+  if (!ta) {
+    try { ta = await getMarketSnapshot(whale.symbol); } catch { ta = null; }
+  }
   // Prefer D1 symbol-matched news; fall back to the KV cache.
   if (richNews && richNews.length) news = richNews;
   const patterns = analyzeWalletPatterns([whale, ...(history || [])], subject, market, news);
+
+  // Recent market events for this symbol → prompt context.
+  const symEvents = Array.isArray(eventsCache)
+    ? eventsCache.filter((e) => (e.symbol || "").toUpperCase() === tradableSym).slice(0, 4)
+    : [];
 
   // Whale-intelligence: preliminary motive + catalyst + impact for the prompt.
   const avgUsd = history && history.length
     ? history.reduce((a, h) => a + (h.usd_value || 0), 0) / history.length : 0;
   const newsSentiment = news && news.length
     ? news.reduce((a, n) => a + (n.sentiment || 0), 0) / news.length : 0;
+  // Composite sentiment (F&G + funding + news) refines the news-only signal.
+  const blendedSentiment = sentimentCache && typeof sentimentCache.composite === "number"
+    ? sentimentCache.composite * 0.5 + newsSentiment * 0.5
+    : newsSentiment;
   const motivePre = classifyMotive({
     txType: whale.tx_type,
-    ta: taSnap,
-    sentiment: newsSentiment,
+    ta,
+    sentiment: blendedSentiment,
     newsCount: (news || []).length,
     usdValue: whale.usd_value || 0,
     avgUsd,
@@ -884,8 +925,8 @@ export async function analyzeOne(env, msg) {
     isStable: ["USDT", "USDC", "DAI"].includes((whale.symbol || "").toUpperCase()),
   });
   const catalystPick = pickCatalyst(news, { symbol: whale.symbol, detectedAt: whale.detected_at });
-  const impact = estimateImpact(whale.usd_value || 0, taSnap?.volume24hUsd || null);
-  const taSummary = taSnap ? summarizeTA(taSnap) : null;
+  const impact = estimateImpact(whale.usd_value || 0, ta?.volume24hUsd || null);
+  const taSummary = ta ? summarizeTA(ta) : null;
 
   // D3: a redelivered message reuses its already-paid-for analysis here and
   // never pays for the LLM twice.
@@ -906,7 +947,8 @@ export async function analyzeOne(env, msg) {
       source = "template";
     } else {
       const prompt = buildPrompt(whale, market, history, news, patterns, labels, subject, {
-        ta: taSnap, motivePre, catalyst: catalystPick, impact,
+        ta, motivePre, catalyst: catalystPick, impact, marketEvents: symEvents,
+        sentiment: sentimentCache,
       });
       let result;
       try {
@@ -982,8 +1024,8 @@ export async function analyzeOne(env, msg) {
   // Whale-intelligence: price chart with the whale's move marked (bot sends as photo).
   let chartUrl = null;
   try {
-    if (taSnap && taSnap.series && taSnap.series.length >= 2) {
-      chartUrl = buildChartUrl(whale.symbol, taSnap.series, { t: whale.detected_at, usd: whale.usd_value });
+    if (ta && ta.series && ta.series.length >= 2) {
+      chartUrl = buildChartUrl(whale.symbol, ta.series, { t: whale.detected_at, usd: whale.usd_value });
     }
   } catch (e) {
     console.warn(`[analyst:${whale_id}] chart build failed:`, e.message);
