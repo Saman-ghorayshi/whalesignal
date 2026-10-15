@@ -275,35 +275,143 @@ function paddedSymbols(symbols) {
 
 // ─── aggregation ────────────────────────────────────────────────────
 
-async function fetchSource(src) {
+/**
+ * Poll interval per source (minutes), from weight + type.
+ * Fast, high-signal outlets earn the 2-min cadence; slow/rare publishers
+ * (Fed, SEC) are polled hourly — polling them every 2 min is pure waste.
+ */
+export function sourceInterval(src) {
+  if (src.macro && (src.name === "fed_press" || src.name === "sec_press")) return 60;
+  if (src.macro) return 15;
+  if ((src.weight || 0) >= 0.8) return 2;
+  if ((src.weight || 0) >= 0.5) return 10;
+  return 15;
+}
+
+/**
+ * Fetch one source with conditional requests (ETag / If-Modified-Since).
+ * A 304 means "unchanged" — no body, no parse, ~free.
+ * Returns { items, notModified, etag, lastModified }.
+ */
+async function fetchSource(src, meta = {}) {
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), 10000);
   try {
-    const res = await fetch(src.rss, {
-      signal: ctl.signal,
-      headers: { "user-agent": "WhaleSignal/1.0 (news aggregator)" },
-    });
+    const headers = { "user-agent": "WhaleSignal/1.0 (news aggregator)" };
+    if (meta.etag) headers["if-none-match"] = meta.etag;
+    if (meta.last_modified) headers["if-modified-since"] = meta.last_modified;
+    const res = await fetch(src.rss, { signal: ctl.signal, headers });
+    if (res.status === 304) {
+      return { items: [], notModified: true, etag: meta.etag, lastModified: meta.last_modified };
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const xml = await res.text();
-    return parseRss(xml).map((it) => ({ ...it, source: src.name, weight: src.weight }));
+    return {
+      items: parseRss(xml).map((it) => ({ ...it, source: src.name, weight: src.weight })),
+      notModified: false,
+      etag: res.headers.get("etag"),
+      lastModified: res.headers.get("last-modified"),
+    };
   } finally {
     clearTimeout(tid);
   }
 }
 
-/**
- * Run aggregation for a subset of sources.
- * D1 writes are batched (Cloudflare caps subrequests/API calls per
- * invocation — per-item queries blow past it at 47 sources).
- */
-export async function runAggregation(env, sources = SOURCES, extraItems = []) {
-  const results = await Promise.allSettled(sources.map(fetchSource));
-  const items = [...extraItems];
-  for (const r of results) {
-    if (r.status === "fulfilled") items.push(...r.value);
-    else console.warn("[news] source failed:", r.reason?.message);
+/** Load per-source meta (one D1 query). */
+async function loadSourceMeta(env) {
+  try {
+    const rows = await env.DB.prepare("SELECT * FROM source_meta").all();
+    const m = new Map();
+    for (const r of rows.results || []) m.set(r.name, r);
+    return m;
+  } catch {
+    return new Map();
   }
+}
+
+/** Which sources are due? Respects interval + exponential failure backoff. */
+export function dueSources(now, metaMap) {
+  return SOURCES.filter((src) => {
+    const m = metaMap.get(src.name);
+    const interval = (m?.interval_min) || sourceInterval(src);
+    const lastFetch = m?.last_fetch || 0;
+    // backoff: failures push the next attempt out quadratically (cap 60 min)
+    const failures = m?.failures || 0;
+    const cooldownMin = Math.min(60, interval * Math.pow(2, Math.min(failures, 4)));
+    return now - lastFetch >= cooldownMin * 60000;
+  });
+}
+
+/** Persist per-source meta in one batch. */
+async function saveSourceMeta(env, updates) {
+  if (!updates.length) return;
+  const stmts = updates.map((u) =>
+    env.DB.prepare(
+      `INSERT INTO source_meta (name, last_fetch, last_ok, etag, last_modified, failures, interval_min, items_seen)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET
+         last_fetch=excluded.last_fetch, last_ok=excluded.last_ok,
+         etag=excluded.etag, last_modified=excluded.last_modified,
+         failures=excluded.failures, interval_min=excluded.interval_min,
+         items_seen=excluded.items_seen`
+    ).bind(u.name, u.last_fetch, u.last_ok, u.etag, u.last_modified, u.failures, u.interval_min, u.items_seen)
+  );
+  for (let i = 0; i < stmts.length; i += 50) {
+    try { await env.DB.batch(stmts.slice(i, i + 50)); }
+    catch (e) { console.warn("[news] meta batch failed:", e.message); }
+  }
+}
+
+/**
+ * Run aggregation with adaptive polling:
+ *  1. load source meta (1 D1 query)
+ *  2. fetch only due sources, with ETags (304 = unchanged, ~free)
+ *  3. batch-insert items, batch-save meta
+ * Respects Cloudflare's 50-subrequest/invocation cap and sites' rate limits.
+ */
+export async function runAggregation(env, sources = null, extraItems = []) {
   const now = Date.now();
+  const metaMap = await loadSourceMeta(env);
+  const due = sources || dueSources(now, metaMap);
+
+  const results = await Promise.allSettled(
+    due.map((src) => fetchSource(src, metaMap.get(src.name) || {}))
+  );
+  const items = [...extraItems];
+  const metaUpdates = [];
+  for (let i = 0; i < due.length; i++) {
+    const src = due[i];
+    const r = results[i];
+    const prev = metaMap.get(src.name) || {};
+    if (r.status === "fulfilled") {
+      const v = r.value;
+      if (!v.notModified) items.push(...v.items);
+      metaUpdates.push({
+        name: src.name,
+        last_fetch: now,
+        last_ok: now,
+        etag: v.etag || prev.etag || null,
+        last_modified: v.lastModified || prev.last_modified || null,
+        failures: 0,
+        interval_min: sourceInterval(src),
+        items_seen: v.notModified ? (prev.items_seen || 0) : v.items.length,
+      });
+    } else {
+      const failures = (prev.failures || 0) + 1;
+      console.warn(`[news] source failed: ${src.name}: ${r.reason?.message} (failures=${failures})`);
+      metaUpdates.push({
+        name: src.name,
+        last_fetch: now,
+        last_ok: prev.last_ok || null,
+        etag: prev.etag || null,
+        last_modified: prev.last_modified || null,
+        failures,
+        interval_min: sourceInterval(src),
+        items_seen: prev.items_seen || 0,
+      });
+    }
+  }
+  await saveSourceMeta(env, metaUpdates);
 
   // One query for all recent cluster_ids → in-memory dedupe check.
   let recentClusters = new Set();
@@ -362,17 +470,22 @@ export async function runAggregation(env, sources = SOURCES, extraItems = []) {
   try {
     await env.DB.prepare("DELETE FROM news WHERE created_at < ?").bind(now - 7 * 86400000).run();
   } catch {}
-  // KV cache: hottest 40 of the last 24h for the analyst fast path
+  // KV cache: hottest 40 of the last 24h for the analyst fast path.
+  // Throttled to every ~10 min (KV writes are budgeted at 1k/day on free).
   try {
-    const rows = await env.DB.prepare(
-      `SELECT title, url, source, published_at, symbols, sentiment, importance
-       FROM news WHERE created_at > ? ORDER BY importance DESC LIMIT 40`
-    ).bind(now - 86400000).all();
-    await env.KV.put("news_cache", JSON.stringify({
-      headlines: rows.results.map((n) => ({ title: n.title, url: n.url })),
-      full: rows.results,
-      updated_at: now,
-    }));
+    const lastCache = await env.KV.get("news_cache_meta");
+    if (!lastCache || now - parseInt(lastCache, 10) > 600000) {
+      const rows = await env.DB.prepare(
+        `SELECT title, url, source, published_at, symbols, sentiment, importance
+         FROM news WHERE created_at > ? ORDER BY importance DESC LIMIT 40`
+      ).bind(now - 86400000).all();
+      await env.KV.put("news_cache", JSON.stringify({
+        headlines: rows.results.map((n) => ({ title: n.title, url: n.url })),
+        full: rows.results,
+        updated_at: now,
+      }));
+      await env.KV.put("news_cache_meta", String(now), { expirationTtl: 900 });
+    }
   } catch (e) {
     console.warn("[news] KV cache update failed:", e.message);
   }
@@ -407,24 +520,20 @@ export async function getRelevantNews(env, { symbol, detectedAt, windowMs = 12 *
 
 export default {
   async scheduled(event, env, ctx) {
-    // Three cadences:
-    //   */2  — speed layer: Tier-1 crypto RSS + CryptoPanic aggregator
-    //   */5  — crypto long tail (tiers 2-4)
-    //   */15 — macro/world tier (slow-moving)
+    // Single 2-min cron; per-source intervals + ETags + backoff inside
+    // runAggregation decide what actually gets fetched each tick.
+    // Typical tick: ~5-8 fetches (not 47) — kind to CF limits and to sites.
     const cron = event.cron || "";
     if (cron.startsWith("*/2")) {
-      const tier1 = SOURCES.filter((s) => !s.macro && (s.weight || 0) >= 0.8);
       ctx.waitUntil((async () => {
         let panicItems = [];
         try { panicItems = await fetchCryptoPanic(env); }
         catch (e) { console.warn("[news] cryptopanic failed:", e.message); }
-        await runAggregation(env, tier1, panicItems);
+        await runAggregation(env, null, panicItems);
       })());
-    } else if (cron.startsWith("*/5")) {
-      const tail = SOURCES.filter((s) => !s.macro && (s.weight || 0) < 0.8);
-      ctx.waitUntil(runAggregation(env, tail));
     } else {
-      ctx.waitUntil(runAggregation(env, SOURCES.filter((s) => s.macro)));
+      // legacy/manual crons: run the due-source pass without the speed layer
+      ctx.waitUntil(runAggregation(env));
     }
   },
   async fetch(request, env) {
@@ -434,7 +543,7 @@ export default {
         return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 });
       }
       const tier = url.searchParams.get("tier");
-      let sources, extra = [];
+      let sources = null, extra = []; // null = adaptive due-source pass
       if (tier === "macro") {
         sources = SOURCES.filter((s) => s.macro);
       } else if (tier === "fast") {
@@ -442,7 +551,7 @@ export default {
         try { extra = await fetchCryptoPanic(env); } catch (e) { console.warn("[news] cryptopanic failed:", e.message); }
       } else if (tier === "crypto") {
         sources = SOURCES.filter((s) => !s.macro);
-      } else {
+      } else if (tier === "all") {
         sources = SOURCES;
       }
       const r = await runAggregation(env, sources, extra);

@@ -9,7 +9,9 @@ compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
-crons = ["*/2 * * * *"]
+# 10-min: TA snapshots change slowly; market events are stored in D1.
+# Keeps KV writes well under the 1k/day free budget.
+crons = ["*/10 * * * *"]
 
 [[d1_databases]]
 binding = "DB"

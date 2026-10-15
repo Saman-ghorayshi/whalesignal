@@ -171,7 +171,7 @@ export async function runPriceTick(env) {
       const snap = buildSnapshot(sym, klines);
       snap.summary = summarizeTA(snap);
       snapshots[sym] = snap;
-      await env.KV.put(`ta_cache:${sym}`, JSON.stringify(snap), { expirationTtl: 600 });
+      await env.KV.put(`ta_cache:${sym}`, JSON.stringify(snap), { expirationTtl: 1200 });
       const events = detectEvents(snap);
       const recorded = await recordEvents(env, sym, events);
       newEvents.push(...recorded.map((e) => ({ symbol: sym, ...e })));
@@ -185,21 +185,12 @@ export async function runPriceTick(env) {
       `SELECT symbol, type, detected_at, details FROM market_events
        WHERE detected_at > ? ORDER BY detected_at DESC LIMIT 20`
     ).bind(now - 86400000).all();
-    await env.KV.put("market_events_cache", JSON.stringify(rows.results || []), { expirationTtl: 600 });
+    await env.KV.put("market_events_cache", JSON.stringify(rows.results || []), { expirationTtl: 1200 });
   } catch (e) {
     console.warn("[price] events cache failed:", e.message);
   }
-  // BTC snapshot doubles as the legacy market_cache for backward compat
-  if (snapshots.BTC) {
-    try {
-      const legacy = {
-        btc: { price: snapshots.BTC.price, change_24h: snapshots.BTC.change24h },
-        eth: snapshots.ETH ? { price: snapshots.ETH.price, change_24h: snapshots.ETH.change24h } : undefined,
-        updated_at: now,
-      };
-      await env.KV.put("market_cache", JSON.stringify(legacy), { expirationTtl: 600 });
-    } catch {}
-  }
+  // NOTE: the legacy market_cache KV key is maintained by the scanner
+  // (refreshMarketCache) — not duplicated here, to save KV writes.
   console.log(`[price] tick done: ${Object.keys(snapshots).join(",")} | ${newEvents.length} new events`);
   return { symbols: Object.keys(snapshots), newEvents };
 }
