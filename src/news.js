@@ -413,12 +413,14 @@ export async function runAggregation(env, sources = null, extraItems = []) {
   }
   await saveSourceMeta(env, metaUpdates);
 
-  // One query for all recent cluster_ids → in-memory dedupe check.
+  // One query for recent cluster_ids → in-memory dedupe check.
+  // 2h window (not 24h): cross-outlet dupes appear within minutes.
+  // Saves ~90% of D1 row reads on this hot query.
   let recentClusters = new Set();
   try {
     const rows = await env.DB.prepare(
       `SELECT cluster_id, source FROM news WHERE created_at > ?`
-    ).bind(now - 86400000).all();
+    ).bind(now - 7200000).all();
     for (const r of rows.results || []) {
       if (r.cluster_id) recentClusters.add(`${r.cluster_id}|${r.source}`);
     }
