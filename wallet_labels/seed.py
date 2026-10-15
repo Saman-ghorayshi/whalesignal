@@ -61,16 +61,27 @@ def wrangler_exec(sql, db, dry_run=False):
         print(sql)
         return 0
     print(f"[seed] applying SQL to D1 database '{db}' via wrangler...")
-    res = subprocess.run(
-        ["npx", "wrangler", "d1", "execute", db, "--remote", "--command", sql],
-        cwd=REPO,
-    )
-    return res.returncode
+    sql_path = HERE / "seed_temp.sql"
+    sql_path.write_text(sql, encoding="utf-8")
+    is_win = sys.platform == "win32"
+    try:
+        res = subprocess.run(
+            ["npx", "wrangler", "d1", "execute", db, "--remote", "-c", "wrangler.analyst.toml", "--file", str(sql_path)],
+            cwd=REPO,
+            shell=is_win,
+        )
+        return res.returncode
+    finally:
+        if sql_path.exists():
+            try:
+                sql_path.unlink()
+            except Exception:
+                pass
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=None, help="D1 database name (default: from wrangler.toml)")
+    ap.add_argument("--db", default=None, help="D1 database name (default: whalesignal-db)")
     ap.add_argument("--dry-run", action="store_true", help="print SQL only")
     args = ap.parse_args()
 
@@ -81,10 +92,7 @@ def main():
 
     sql = build_sql(data)
 
-    db = args.db or db_name_from_wrangler()
-    if not db:
-        sys.exit("could not determine D1 database name. pass --db or set it in wrangler.toml")
-
+    db = args.db or db_name_from_wrangler() or "whalesignal-db"
     rc = wrangler_exec(sql, db, dry_run=args.dry_run)
     sys.exit(rc)
 

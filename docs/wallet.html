@@ -3,24 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>WhaleSignal — Wallet</title>
+<title>WhaleSignal — Wallet Intelligence & Money-Flow Graph</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🐋</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,510;14..32,590&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#08090a;--panel:#0f1011;--card:rgba(255,255,255,0.025);--card-hover:rgba(255,255,255,0.04);--t1:#f7f8f8;--t2:#d0d6e0;--t3:#8a8f98;--t4:#62666d;--a:#7170ff;--a-bg:#5e6ad2;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;--border:rgba(255,255,255,0.08);--border-sub:rgba(255,255,255,0.04);--r:8px;--r-sm:6px}
 html{font-size:16px}body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--t2);line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh}
-.con{max-width:960px;margin:0 auto;padding:0 24px}
+.con{max-width:1040px;margin:0 auto;padding:0 24px}
 header{position:sticky;top:0;z-index:50;background:rgba(8,9,13,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border-sub)}
-.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:960px;margin:0 auto}
-.logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:590;color:var(--t1);letter-spacing:-.3px}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:1040px;margin:0 auto}
+.logo{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:590;color:var(--t1);letter-spacing:-.3px;text-decoration:none}
 .logo i{font-size:22px;font-style:normal}
 .nav-links{display:flex;gap:16px;align-items:center}
 .nav-links a{font-size:13px;color:var(--t3);text-decoration:none;transition:color .2s}
 .nav-links a:hover{color:var(--t2)}
-.hero{padding:48px 0 24px}
-.wcard{background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:24px;margin-bottom:32px}
-.wcard-head{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.hero{padding:36px 0 20px}
+.wcard{background:var(--card);border:1px solid var(--border-sub);border-radius:var(--r);padding:24px;margin-bottom:24px}
+.wcard-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}
 .wcard-icon{font-size:28px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm);background:rgba(255,255,255,0.04);border:1px solid var(--border-sub);flex-shrink:0}
 .wcard-title{font-size:18px;font-weight:590;color:var(--t1);letter-spacing:-.3px}
 .wcard-addr{font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace;word-break:break-all}
@@ -31,12 +31,38 @@ header{position:sticky;top:0;z-index:50;background:rgba(8,9,13,0.85);backdrop-fi
 .badge-institution{background:rgba(168,85,247,0.12);color:#a855f7}
 .badge-unknown{background:rgba(255,255,255,0.06);color:var(--t3)}
 .badge-reactivated{background:rgba(59,130,246,0.12);color:#3b82f6}
-.badge-high_frequency{background:rgba(245,158,11,0.12);color:var(--amber)}
+.badge-risk-low{background:rgba(34,197,94,0.15);color:var(--green);border:1px solid rgba(34,197,94,0.3)}
+.badge-risk-medium{background:rgba(245,158,11,0.15);color:var(--amber);border:1px solid rgba(245,158,11,0.3)}
+.badge-risk-high{background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)}
 .wcard-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
 .wstat{background:rgba(255,255,255,0.02);border:1px solid var(--border-sub);border-radius:var(--r-sm);padding:12px 14px}
 .wstat-l{font-size:10px;font-weight:590;color:var(--t4);text-transform:uppercase;letter-spacing:.5px}
 .wstat-v{font-size:18px;font-weight:590;color:var(--t1);font-family:JetBrains Mono,monospace;margin-top:2px}
 .wstat-sub{font-size:11px;color:var(--t3);margin-top:1px}
+
+/* Forensic Intelligence Card */
+.f-box{background:linear-gradient(180deg,rgba(255,255,255,0.03) 0%,rgba(255,255,255,0.01) 100%);border:1px solid var(--border);border-radius:var(--r);padding:20px;margin-bottom:28px}
+.f-grid{display:grid;grid-template-columns:220px 1fr;gap:20px;align-items:start}
+@media(max-width:768px){.f-grid{grid-template-columns:1fr}}
+.f-meter{background:rgba(0,0,0,0.3);border:1px solid var(--border-sub);border-radius:var(--r-sm);padding:16px;text-align:center}
+.f-score{font-size:38px;font-weight:590;font-family:JetBrains Mono,monospace;line-height:1}
+.f-score-sub{font-size:11px;color:var(--t4);text-transform:uppercase;margin-top:6px;letter-spacing:1px}
+.f-flags{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.flag-pill{font-size:10px;font-family:JetBrains Mono,monospace;padding:2px 8px;border-radius:4px;background:rgba(255,255,255,0.05);color:var(--t2);border:1px solid var(--border-sub)}
+.flag-danger{background:rgba(239,68,68,0.15);color:#fca5a5;border-color:rgba(239,68,68,0.4)}
+.flag-warning{background:rgba(245,158,11,0.15);color:#fde68a;border-color:rgba(245,158,11,0.4)}
+.flag-good{background:rgba(34,197,94,0.15);color:#86efac;border-color:rgba(34,197,94,0.4)}
+
+/* Graph Visualizer */
+.graph-container{position:relative;background:#060708;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:32px}
+.graph-head{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;background:rgba(255,255,255,0.02);border-bottom:1px solid var(--border-sub)}
+.graph-canvas{display:block;width:100%;height:440px;cursor:grab}
+.graph-canvas:active{cursor:grabbing}
+.graph-legend{display:flex;gap:14px;font-size:11px;color:var(--t4)}
+.legend-item{display:flex;align-items:center;gap:6px}
+.legend-dot{width:10px;height:10px;border-radius:50%}
+
+/* Tables */
 .sec-hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px}
 .sec-title{font-size:15px;font-weight:510;color:var(--t1);letter-spacing:-.2px}
 .tbl{width:100%;border-collapse:collapse;margin-bottom:32px;font-size:13px}
@@ -62,68 +88,349 @@ footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .
 </style>
 </head>
 <body>
-<header><div class="hdr"><span class="logo"><i>🐋</i> WhaleSignal</span><div class="nav-links"><a href="index.html">Home</a><a href="history.html">History</a><a href="stats.html">Stats</a></div></div></header>
+<header><div class="hdr"><a href="index.html" class="logo"><i>🐋</i> WhaleSignal</a><div class="nav-links"><a href="index.html">Home</a><a href="history.html">History</a><a href="stats.html">Stats</a></div></div></header>
 <div class="con">
 <section class="hero" id="hero"></section>
 <div id="wallet-content"></div>
-<footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal Wallet</div></footer>
+<footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal Forensic Visualizer</div></footer>
 </div>
 <script>
-const API='https://whalesignal-bot.samsha.workers.dev';
-function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
+// Dynamic API Resolution (supports production workers.dev + localhost dev)
+const urlParams = new URLSearchParams(window.location.search);
+const API = urlParams.get('api') || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8787' : 'https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev');
+
+function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+Number(n).toLocaleString()}
 function ago(ts){if(!ts)return'—';const s=Math.floor((Date.now()-ts)/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 function sigDot(s){const v=(s||'').toLowerCase();return v==='bullish'?'b':v==='bearish'?'r':'n'}
 function shortAddr(a){if(!a)return'—';if(a.length<=12)return a;return a.slice(0,6)+'...'+a.slice(-4)}
+
 async function fetchWallet(){
-  const addr=new URLSearchParams(location.search).get('addr');
-  if(!addr){document.getElementById('hero').innerHTML='<div class="none"><span class="e">🔍</span><p>Enter a wallet address in the URL: <code>wallet.html?addr=0x...</code></p><a href="index.html">← Back to Home</a></div>';return;}
-  document.getElementById('hero').innerHTML='<div class="none"><span class="e">🐋</span><p>Looking up wallet '+esc(shortAddr(addr))+'...</p></div>';
-  try{
-    const chain=new URLSearchParams(location.search).get('chain');
-    const url=chain?`${API}/wallet/${encodeURIComponent(addr)}?chain=${chain}`:`${API}/wallet/${encodeURIComponent(addr)}`;
-    const r=await fetch(url);
-    const data=await r.json();
-    if(!data.ok){
-      document.getElementById('hero').innerHTML='';
-      document.getElementById('wallet-content').innerHTML='<div class="none"><span class="e">🔍</span><p>Wallet not in our database. It hasn\'t been involved in any detected whale transfers.</p><a href="history.html">← Browse Whale History</a></div>';
-      return;
+  const addr = urlParams.get('addr');
+  if(!addr){
+    document.getElementById('hero').innerHTML='<div class="none"><span class="e">🔍</span><p>Enter a wallet address in the URL: <code>wallet.html?addr=0x...</code></p><a href="index.html">← Back to Home</a></div>';
+    return;
+  }
+  document.getElementById('hero').innerHTML='<div class="none"><span class="e">🐋</span><p>Analyzing forensic money-flow graph for '+esc(shortAddr(addr))+'...</p></div>';
+  
+  try {
+    const chain = urlParams.get('chain');
+    const cleanAddr = addr.trim().toLowerCase();
+    
+    // Concurrent fetch: Profile, Forensic Patterns, Money-Flow Graph
+    const [profRes, patRes, graphRes] = await Promise.all([
+      fetch(chain ? `${API}/wallet/${encodeURIComponent(cleanAddr)}?chain=${chain}` : `${API}/wallet/${encodeURIComponent(cleanAddr)}`).then(r => r.json()).catch(() => ({ ok: false })),
+      fetch(chain ? `${API}/patterns/${encodeURIComponent(cleanAddr)}?chain=${chain}` : `${API}/patterns/${encodeURIComponent(cleanAddr)}`).then(r => r.json()).catch(() => ({ ok: false })),
+      fetch(chain ? `${API}/graph/${encodeURIComponent(cleanAddr)}?chain=${chain}` : `${API}/graph/${encodeURIComponent(cleanAddr)}`).then(r => r.json()).catch(() => ({ ok: false })),
+    ]);
+
+    document.getElementById('hero').innerHTML = '';
+    
+    // 1. Profile section
+    const profile = profRes.ok ? profRes : {
+      address: cleanAddr,
+      type: 'unknown',
+      tx_count: patRes.metrics?.unique_counterparties || 0,
+      total_volume: patRes.metrics?.total_inflow_usd + patRes.metrics?.total_outflow_usd || 0,
+      recent_txs: []
+    };
+
+    const typeCls = 'badge-' + (profile.type || 'unknown');
+    const typeBadge = '<span class="badge ' + typeCls + '">' + esc(profile.type || 'unknown') + '</span>';
+    const repBadge = profile.reputation ? '<span class="badge badge-' + esc(profile.reputation) + '">' + esc(profile.reputation.replace(/_/g, ' ')) + '</span>' : '';
+    const chainTag = profile.chain ? '<span class="tag-chain tag-' + esc(profile.chain) + '">' + esc(profile.chain.toUpperCase()) + '</span>' : '';
+
+    let riskBadge = '<span class="badge badge-risk-low">LOW RISK</span>';
+    let scoreColor = 'var(--green)';
+    if (patRes.deception_risk === 'high') {
+      riskBadge = '<span class="badge badge-risk-high">🚨 HIGH DECEPTION RISK</span>';
+      scoreColor = 'var(--red)';
+    } else if (patRes.deception_risk === 'medium') {
+      riskBadge = '<span class="badge badge-risk-medium">⚠️ MEDIUM RISK</span>';
+      scoreColor = 'var(--amber)';
     }
-    document.getElementById('hero').innerHTML='';
-    const typeCls='badge-'+(data.type||'unknown');
-    const repBadge=data.reputation?'<span class="badge badge-'+esc(data.reputation)+'">'+esc(data.reputation.replace(/_/g,' '))+'</span>':'';
-    const typeBadge='<span class="badge '+typeCls+'">'+esc(data.type||'unknown')+'</span>';
-    const chainTag=data.chain?'<span class="tag-chain tag-'+esc(data.chain)+'">'+esc(data.chain.toUpperCase())+'</span>':'';
-    let html='<div class="wcard"><div class="wcard-head"><div class="wcard-icon">'+(data.type==='exchange'?'🏦':'🐋')+'</div><div><div class="wcard-title">'+esc(data.label||shortAddr(data.address))+'</div><div class="wcard-addr">'+esc(data.address)+'</div></div></div>';
-    html+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+typeBadge+repBadge+chainTag+'</div>';
-    html+='<div class="wcard-grid">';
-    const stats=[
-      {l:'Transactions',v:data.tx_count||0},
-      {l:'Total Volume',v:fmt(data.total_volume)},
-      {l:'First Seen',v:ago(data.first_seen)},
-      {l:'LastSeen',v:ago(data.last_seen)},
-    ];
-    stats.forEach(s=>{html+='<div class="wstat"><div class="wstat-l">'+s.l+'</div><div class="wstat-v">'+s.v+'</div></div>';});
-    html+='</div></div>';
-    const txs=data.recent_txs||[];
-    html+='<div class="sec-hd"><h2 class="sec-title">Recent Transactions</h2><span style="font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace">'+txs.length+' events</span></div>';
-    if(!txs.length){html+='<div class="none"><p>No whale transactions detected involving this wallet.</p></div>';}
-    else{
-      html+='<table class="tbl"><thead><tr><th>Date</th><th>Chain</th><th>Dir</th><th>Counterpart</th><th>Amount</th><th>USD Value</th><th>Type</th><th>Signal</th><th>Headline</th></tr></thead><tbody>';
-      html+=txs.map(t=>{
-        const tc=(t.chain||'').toLowerCase();
-        const dirCls=t.direction==='in'?'dir-in':'dir-out';
-        const sCls=sigDot(t.signal);
-        return '<tr><td>'+ago(t.detected_at)+'</td><td><span class="tag-chain tag-'+tc+'">'+(t.chain||'?')+'</span></td><td><span class="dir '+dirCls+'">'+t.direction+'</span></td><td class="mono">'+esc(shortAddr(t.counterpart))+'</td><td class="mono">'+(t.amount?Number(t.amount).toLocaleString(undefined,{maximumFractionDigits:2}):'—')+'</td><td class="mono">'+fmt(t.usd_value)+'</td><td>'+esc(t.tx_type?t.tx_type.replace(/_/g,' '):'—')+'</td><td><span class="sgl '+sCls+'"></span></td><td>'+esc(t.headline||'—')+'</td></tr>';
+
+    let html = `
+      <div class="wcard">
+        <div class="wcard-head">
+          <div class="wcard-icon">${profile.type === 'exchange' ? '🏦' : '🐋'}</div>
+          <div>
+            <div class="wcard-title">${esc(profile.label || shortAddr(profile.address))}</div>
+            <div class="wcard-addr">${esc(profile.address)}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+          ${typeBadge} ${repBadge} ${chainTag} ${riskBadge}
+        </div>
+        <div class="wcard-grid">
+          <div class="wstat"><div class="wstat-l">Transactions</div><div class="wstat-v">${profile.tx_count || 0}</div></div>
+          <div class="wstat"><div class="wstat-l">Total Volume</div><div class="wstat-v">${fmt(profile.total_volume)}</div></div>
+          <div class="wstat"><div class="wstat-l">Inflow</div><div class="wstat-v" style="color:var(--green)">${fmt(patRes.metrics?.total_inflow_usd || 0)}</div></div>
+          <div class="wstat"><div class="wstat-l">Outflow</div><div class="wstat-v" style="color:var(--red)">${fmt(patRes.metrics?.total_outflow_usd || 0)}</div></div>
+        </div>
+      </div>
+    `;
+
+    // 2. Forensic Deception Intelligence Card
+    if (patRes.ok) {
+      const flagsHtml = (patRes.flags || []).map(f => {
+        const cls = f.includes('WASH') || f.includes('PEELING') ? 'flag-danger' : f.includes('STRUCTURING') ? 'flag-warning' : 'flag-good';
+        return `<span class="flag-pill ${cls}">• ${esc(f.replace(/_/g, ' '))}</span>`;
       }).join('');
-      html+='</tbody></table>';
+
+      html += `
+        <div class="f-box">
+          <div class="sec-hd" style="margin-bottom:12px">
+            <h2 class="sec-title">🕵️ Forensic Deception Intelligence</h2>
+            <span style="font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace">Profile: ${esc(patRes.behavioral_profile)}</span>
+          </div>
+          <div class="f-grid">
+            <div class="f-meter">
+              <div class="f-score" style="color:${scoreColor}">${patRes.deception_score}<span style="font-size:16px;color:var(--t4)">/100</span></div>
+              <div class="f-score-sub">Deception Score</div>
+              <div style="margin-top:10px;font-size:12px;font-weight:510">${riskBadge}</div>
+            </div>
+            <div>
+              <div style="font-size:14px;color:var(--t1);font-weight:510;margin-bottom:6px">Inferred Behavioral Intent:</div>
+              <p style="font-size:13px;color:var(--t3);line-height:1.6">${esc(patRes.intent_summary)}</p>
+              ${patRes.wash_loops?.length ? `<div style="margin-top:8px;font-size:12px;color:var(--red);font-weight:510">⚠️ ${patRes.wash_loops.length} round-trip wash loop(s) detected (${fmt(patRes.wash_loops[0]?.round_trip_usd)} volume)!</div>` : ''}
+              ${patRes.is_peeling_chain ? `<div style="margin-top:4px;font-size:12px;color:var(--amber);font-weight:510">⚠️ Layering across single-use addresses detected (potential money laundering).</div>` : ''}
+              <div class="f-flags">${flagsHtml}</div>
+            </div>
+          </div>
+        </div>
+      `;
     }
-    document.getElementById('wallet-content').innerHTML=html;
-  }catch(e){
-    document.getElementById('hero').innerHTML='';
-    document.getElementById('wallet-content').innerHTML='<div class="err">Failed to load wallet: '+esc(e.message)+'</div>';
+
+    // 3. Interactive Money-Flow Network Graph
+    html += `
+      <div class="sec-hd">
+        <h2 class="sec-title">🌐 Counterparty Money-Flow Network</h2>
+        <span style="font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace">${graphRes.node_count || 1} Nodes · ${graphRes.link_count || 0} Transfers</span>
+      </div>
+      <div class="graph-container">
+        <div class="graph-head">
+          <span style="font-size:12px;font-weight:510;color:var(--t2)">Directed Flow Visualization</span>
+          <div class="graph-legend">
+            <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> Target Whale</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#7170ff"></span> Exchange</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#64748b"></span> Private Wallet</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> Wash Loop</div>
+          </div>
+        </div>
+        <canvas id="flowCanvas" class="graph-canvas"></canvas>
+      </div>
+    `;
+
+    // 4. Transactions table
+    const txs = profile.recent_txs || [];
+    html += `
+      <div class="sec-hd">
+        <h2 class="sec-title">Recent On-Chain Whale Events</h2>
+        <span style="font-size:12px;color:var(--t4);font-family:JetBrains Mono,monospace">${txs.length} events</span>
+      </div>
+    `;
+
+    if(!txs.length){
+      html += '<div class="none"><p>No whale transactions currently cached for this address.</p></div>';
+    } else {
+      html += `
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>Date</th><th>Chain</th><th>Dir</th><th>Counterpart</th><th>Amount</th><th>USD Value</th><th>Type</th><th>Signal</th><th>Headline</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      html += txs.map(t => {
+        const tc = (t.chain || '').toLowerCase();
+        const dirCls = t.direction === 'in' ? 'dir-in' : 'dir-out';
+        const sCls = sigDot(t.signal);
+        return `
+          <tr>
+            <td>${ago(t.detected_at)}</td>
+            <td><span class="tag-chain tag-${tc}">${esc(t.chain || '?')}</span></td>
+            <td><span class="dir ${dirCls}">${t.direction}</span></td>
+            <td class="mono"><a href="wallet.html?addr=${encodeURIComponent(t.counterpart)}" style="color:var(--a);text-decoration:none">${esc(shortAddr(t.counterpart))}</a></td>
+            <td class="mono">${t.amount ? Number(t.amount).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}</td>
+            <td class="mono">${fmt(t.usd_value)}</td>
+            <td>${esc(t.tx_type ? t.tx_type.replace(/_/g, ' ') : '—')}</td>
+            <td><span class="sgl ${sCls}"></span></td>
+            <td>${esc(t.headline || '—')}</td>
+          </tr>
+        `;
+      }).join('');
+      html += '</tbody></table>';
+    }
+
+    document.getElementById('wallet-content').innerHTML = html;
+
+    // Render HTML5 Canvas Graph with interactive nodes
+    initNetworkGraph(graphRes.nodes || [{ id: cleanAddr, is_root: true, label: shortAddr(cleanAddr) }], graphRes.links || []);
+
+  } catch(e) {
+    document.getElementById('hero').innerHTML = '';
+    document.getElementById('wallet-content').innerHTML = '<div class="err">Failed to load wallet analysis: ' + esc(e.message) + '</div>';
   }
 }
+
+// ─── Interactive Canvas Graph Renderer ────────────────────────────────
+function initNetworkGraph(rawNodes, rawLinks) {
+  const canvas = document.getElementById('flowCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  
+  // Set real pixel density for crisp retina display
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+
+  // Topology placement
+  const centerX = W / 2;
+  const centerY = H / 2;
+  const nodes = rawNodes.map((n, i) => {
+    if (n.is_root) {
+      return { ...n, x: centerX, y: centerY, vx: 0, vy: 0, r: 24, color: '#f59e0b' };
+    }
+    const angle = (i / Math.max(1, rawNodes.length - 1)) * Math.PI * 2;
+    const dist = Math.min(W, H) * 0.35;
+    const color = n.type === 'exchange' ? '#7170ff' : '#64748b';
+    return {
+      ...n,
+      x: centerX + Math.cos(angle) * dist,
+      y: centerY + Math.sin(angle) * dist,
+      vx: 0, vy: 0,
+      r: n.type === 'exchange' ? 20 : 16,
+      color,
+    };
+  });
+
+  const nodeMap = new Map();
+  nodes.forEach(n => nodeMap.set(n.id.toLowerCase(), n));
+
+  const links = (rawLinks || []).map(l => ({
+    ...l,
+    source: nodeMap.get((l.source || '').toLowerCase()),
+    target: nodeMap.get((l.target || '').toLowerCase()),
+  })).filter(l => l.source && l.target);
+
+  let draggedNode = null;
+
+  canvas.addEventListener('mousedown', e => {
+    const pos = getPos(e);
+    for (const n of nodes) {
+      const dx = n.x - pos.x, dy = n.y - pos.y;
+      if (Math.sqrt(dx*dx + dy*dy) <= n.r + 4) {
+        draggedNode = n;
+        break;
+      }
+    }
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!draggedNode) return;
+    const pos = getPos(e);
+    draggedNode.x = pos.x;
+    draggedNode.y = pos.y;
+    draw();
+  });
+
+  window.addEventListener('mouseup', () => { draggedNode = null; });
+
+  function getPos(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Draw background subtle grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 30) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y < H; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+    // Draw directed links
+    for (const l of links) {
+      const isWash = l.is_wash_trade;
+      ctx.strokeStyle = isWash ? '#ef4444' : 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = isWash ? 2.5 : 1.5;
+      if (isWash) ctx.setLineDash([4, 4]); else ctx.setLineDash([]);
+
+      const dx = l.target.x - l.source.x;
+      const dy = l.target.y - l.source.y;
+      const angle = Math.atan2(dy, dx);
+      const startX = l.source.x + Math.cos(angle) * l.source.r;
+      const startY = l.source.y + Math.sin(angle) * l.source.r;
+      const endX = l.target.x - Math.cos(angle) * (l.target.r + 4);
+      const endY = l.target.y - Math.sin(angle) * (l.target.r + 4);
+
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw Arrowhead
+      ctx.fillStyle = isWash ? '#ef4444' : 'rgba(255,255,255,0.5)';
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - 8 * Math.cos(angle - Math.PI / 6), endY - 8 * Math.sin(angle - Math.PI / 6));
+      ctx.lineTo(endX - 8 * Math.cos(angle + Math.PI / 6), endY - 8 * Math.sin(angle + Math.PI / 6));
+      ctx.closePath();
+      ctx.fill();
+
+      // Flow USD Label
+      const midX = (startX + endX) / 2;
+      const midY = (startY + endY) / 2;
+      ctx.fillStyle = isWash ? '#fca5a5' : '#8a8f98';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(fmt(l.usd_volume || l.volume_usd), midX, midY - 6);
+    }
+
+    // Draw Nodes
+    for (const n of nodes) {
+      // Glow
+      ctx.shadowColor = n.color;
+      ctx.shadowBlur = n.is_root ? 16 : 8;
+
+      ctx.fillStyle = n.color;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#08090a';
+      ctx.stroke();
+
+      // Icon / text inside node
+      ctx.fillStyle = '#ffffff';
+      ctx.font = n.is_root ? '14px sans-serif' : '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(n.is_root ? '🐋' : n.type === 'exchange' ? '🏦' : '💼', n.x, n.y);
+
+      // Label below node
+      ctx.fillStyle = n.is_root ? '#f7f8f8' : '#d0d6e0';
+      ctx.font = '11px Inter, sans-serif';
+      ctx.textBaseline = 'top';
+      const labelText = n.label || shortAddr(n.id);
+      ctx.fillText(labelText, n.x, n.y + n.r + 5);
+    }
+  }
+
+  draw();
+}
+
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',fetchWallet);else fetchWallet();
 </script>
-</body></html>
+</body>
+</html>

@@ -28,11 +28,11 @@ queue = "whalesignal-bot-q"
 binding = "DB"
 database_name = "whalesignal-db"
 # placeholder — replaced by deploy_all.py
-database_id = "__FILL_ME__"
+database_id = "6e369b7a-a8df-4864-b8f5-7bdc171ecf3d"
 
 [[kv_namespaces]]
 binding = "KV"
 # placeholder — replaced by deploy_all.py
-id = "__FILL_ME__"
+id = "1b3b2a8763b0497880983d3e9d26f76a"
 
 # Secret: wrangler secret put GEMINI_KEY  (set once, with a Gemini API key)

@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-15",
+  "generated_at": "2026-10-15T01:06:47.228447+00:00",
+  "data": {
+    "ok": false,
+    "total_whales": 0,
+    "total_volume": 0,
+    "count_24h": 0,
+    "count_7d": 0,
+    "largest_transfer": 0,
+    "signals": {
+      "bullish": 0,
+      "bearish": 0,
+      "neutral": 0
+    },
+    "accuracy": null,
+    "top_symbols": [],
+    "hourly": [],
+    "market": null
+  }
+}

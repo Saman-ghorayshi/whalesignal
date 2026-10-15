@@ -20,7 +20,7 @@ jobs:
 
       - name: Generate daily report
         env:
-          WS_API: https://whalesignal-bot.samsha.workers.dev
+          WS_API: https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           PUBLIC_CHANNEL: ${{ secrets.PUBLIC_CHANNEL }}
         run: |

@@ -78,23 +78,35 @@ Return JSON only. The bearish case must come BEFORE the bullish case."""
 # ─── alert fetching ───────────────────────────────────────────────────
 
 def fetch_alerts(alerts_url: str = None, alerts_file: str = None) -> list:
-    """Fetch NDJSON alerts from R2 URL or local fixture file."""
+    """Fetch NDJSON alerts or JSON alerts from URL or local fixture file."""
     if alerts_file:
         with open(alerts_file) as f:
             text = f.read()
     elif alerts_url:
         import httpx
-        resp = httpx.get(alerts_url, timeout=15)
+        resp = httpx.get(alerts_url, timeout=15, headers={"User-Agent": "whalesignal-trader/1.0"})
         resp.raise_for_status()
         text = resp.text
     else:
         return []
 
     alerts = []
-    for line in text.strip().splitlines():
+    text = text.strip()
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and "alerts" in parsed:
+                return parsed["alerts"]
+        except Exception:
+            pass
+
+    for line in text.splitlines():
         if not line.strip():
             continue
-        alerts.append(json.loads(line))
+        try:
+            alerts.append(json.loads(line))
+        except Exception:
+            continue
     return alerts
 
 
@@ -325,23 +337,24 @@ def run_loop(args):
 
     print(f"[loop] starting — db={args.db} dry_run={args.dry_run} gemini={'yes' if gemini_key else 'no'}")
 
-    if args.dry_run:
+    if args.dry_run or getattr(args, "once", False):
         # single pass — fetch alerts, process each, close trades, exit
         alerts = fetch_alerts(alerts_url=alerts_url, alerts_file=alerts_file)
         # insert each alert as a signal so the loop sees it
-        insert_signals_from_alerts(db, alerts)
+        if alerts:
+            insert_signals_from_alerts(db, alerts)
         # re-read from DB so dedupe is clean
         sigs = new_signals(db)
         print(f"[loop] processing {len(sigs)} signal(s)")
         for s in sigs:
             try:
                 decide_and_trade(db, s, hl, args.llm, args.starting_balance,
-                                 dry_run=True, llm_stub=args.llm_stub,
+                                 dry_run=args.dry_run, llm_stub=args.llm_stub,
                                  gemini_key=gemini_key)
             except Exception as e:
                 print(f"  [error] signal {s['id']}: {e}", file=sys.stderr)
-        check_and_close_trades(db, hl, dry_run=True)
-        print("[loop] pass done — exiting (dry-run mode)")
+        check_and_close_trades(db, hl, dry_run=args.dry_run)
+        print(f"[loop] pass done — exiting ({'dry-run' if args.dry_run else 'once'} mode)")
         return
 
     # Live mode: loop forever, 60s interval
@@ -369,7 +382,7 @@ def run_loop(args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--db", default="./trades.db")
-    p.add_argument("--alerts-url", default=None, help="R2 NDJSON URL")
+    p.add_argument("--alerts-url", default=None, help="R2 NDJSON or Worker /history URL")
     p.add_argument("--alerts-file", default=None, help="local NDJSON file (for dry-run)")
     p.add_argument("--testnet-wallet", default=None)
     p.add_argument("--testnet-key", default=None)
@@ -377,6 +390,7 @@ def main():
     p.add_argument("--llm", default="http://localhost:20128/v1/chat/completions")
     p.add_argument("--gemini-key", default=None, help="Google AI Studio API key (bypasses 9Router, calls Gemini direct)")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--once", action="store_true", help="run a single pass and exit (for cron/GH Actions)")
     p.add_argument("--llm-stub", default=None, help="stub JSON file for LLM responses (dry-run)")
     args = p.parse_args()
 

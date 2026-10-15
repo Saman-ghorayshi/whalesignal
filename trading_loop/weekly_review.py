@@ -160,10 +160,15 @@ def apply_review(db: sqlite3.Connection, review: dict, now_ms: int):
 
     # insert new beliefs (append-only — FinCon pattern, old beliefs stay)
     for nb in review.get("new_beliefs", []):
+        scope = nb.get("scope") or ("whale" if (nb.get("whale") or nb.get("target")) else "global")
+        target = nb.get("target") or nb.get("whale")
+        belief = nb.get("belief")
+        if not belief:
+            continue
         db.execute(
             "INSERT INTO beliefs (scope, target, belief, created_at, source) "
             "VALUES (?, ?, ?, ?, 'weekly_review')",
-            (nb["scope"], nb.get("target"), nb["belief"], now_ms),
+            (scope, target, belief, now_ms),
         )
 
     # update whale_scores (only for whales with 3+ trades)
@@ -175,10 +180,15 @@ def apply_review(db: sqlite3.Connection, review: dict, now_ms: int):
     trade_counts = {r["whale"]: r["cnt"] for r in week_trades}
 
     for us in review.get("updated_scores", []):
-        whale = us["whale"]
+        whale = us.get("whale") or us.get("target")
+        if not whale:
+            continue
         if trade_counts.get(whale, 0) < 3:
             continue  # skip: not enough trades this week
-        new_score = float(us["new_score"])
+        try:
+            new_score = float(us.get("new_score", 0.5))
+        except (ValueError, TypeError):
+            continue
         db.execute(
             "UPDATE whale_scores SET score = ?, last_updated = ? WHERE whale = ?",
             (new_score, now_ms, whale),

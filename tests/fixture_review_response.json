@@ -1,0 +1,17 @@
+{
+  "new_beliefs": [
+    {
+      "whale": "0xAAA111",
+      "belief": "Whale transfers over $10M preceded sharp price corrections within 4h.",
+      "evidence": "2 winning short trades on BTC"
+    }
+  ],
+  "updated_scores": [
+    {
+      "whale": "0xAAA111",
+      "new_score": 0.85,
+      "reason": "100% win rate across 2 trades"
+    }
+  ],
+  "weekly_summary": "Strong performance across whale copy-trades with a 100% win rate. Total PnL reached +$0.12 across 2 paper positions."
+}

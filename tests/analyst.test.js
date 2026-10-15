@@ -102,3 +102,25 @@ test("parseAnalysis truncates runaway long fields", () => {
   assert.ok(r.interpretation.length <= 800);
   assert.ok(r.related_factor.length <= 200);
 });
+
+test("callXAI throws when XAI_API_KEY is missing", async () => {
+  const { callXAI } = await import("../src/analyst.js");
+  await assert.rejects(async () => {
+    await callXAI({}, "test prompt");
+  }, /XAI_API_KEY missing/);
+});
+
+test("callGroq throws when GROQ_KEY is missing", async () => {
+  const { callGroq } = await import("../src/analyst.js");
+  await assert.rejects(async () => {
+    await callGroq({}, "test prompt");
+  }, /GROQ_KEY missing/);
+});
+
+test("callAI throws when no AI keys are configured", async () => {
+  const { callAI } = await import("../src/analyst.js");
+  await assert.rejects(async () => {
+    await callAI({}, "test prompt");
+  }, /No AI provider available/);
+});
+

@@ -28,8 +28,8 @@ import httpx
 
 MODEL_TRADE_9ROUTER = "nvidia/deepseek-ai/deepseek-v4-flash"
 MODEL_REVIEW_9ROUTER = "nvidia/z-ai/glm-5.2"  # deepseek-v4-pro times out on 9Router; glm-5.2 is fast + quality enough for 1 call/week
-MODEL_TRADE_GEMINI = "gemini-2.5-flash"
-MODEL_REVIEW_GEMINI = "gemini-2.5-flash"
+MODEL_TRADE_GEMINI = "gemini-flash-latest"
+MODEL_REVIEW_GEMINI = "gemini-flash-latest"
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -117,26 +117,32 @@ def _call_9router(prompt: str, base_url: str, model: str,
 
 def _call_gemini_direct(prompt: str, gemini_key: str, model: str,
                          timeout: float, max_retries: int) -> dict:
-    """Call Google Gemini API directly (for GH Actions where 9Router is unreachable)."""
-    url = f"{GEMINI_BASE}/models/{model}:generateContent?key={gemini_key}"
+    """Call Google Gemini API directly with multi-model fallback."""
+    candidate_models = [model, "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.7-flash"]
+    # Deduplicate while preserving order
+    seen = set()
+    candidate_models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
+
     last_err = None
-    for attempt in range(max_retries + 1):
-        try:
-            resp = httpx.post(
-                url,
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"responseMimeType": "application/json"},
-                },
-                timeout=timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return extract_json(text)
-        except Exception as e:
-            last_err = e
-            if attempt < max_retries:
-                time.sleep(2)
-                continue
-    raise RuntimeError(f"Gemini direct LLM call failed after {max_retries + 1} attempts: {last_err}")
+    for m in candidate_models:
+        url = f"{GEMINI_BASE}/models/{m}:generateContent?key={gemini_key}"
+        for attempt in range(max_retries + 1):
+            try:
+                resp = httpx.post(
+                    url,
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"responseMimeType": "application/json"},
+                    },
+                    timeout=timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return extract_json(text)
+            except Exception as e:
+                last_err = e
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+    raise RuntimeError(f"Gemini direct LLM call failed across models: {last_err}")
