@@ -315,10 +315,11 @@ test("webhook rate-limits a chat after 10 commands/min (429)", async () => {
   const restore = mockFetch(captured);
   const { ctx, drain } = stubCtx();
   const env = { BOT_TOKEN: "tok", DB: statsDB(), KV: stubKV() };
+  const _rlChatId = 900000 + Math.floor(Math.random() * 99999);
   try {
     let okCount = 0, limited = 0;
     for (let i = 0; i < 12; i++) {
-      const resp = await fetchHandler(tgRequest("tok", tgUpdate("/ping")), env, ctx);
+      const resp = await fetchHandler(tgRequest("tok", tgUpdate("/ping", _rlChatId)), env, ctx);
       if (resp.status === 429) limited++;
       else { okCount++; }
     }

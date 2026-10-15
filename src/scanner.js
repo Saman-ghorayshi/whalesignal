@@ -1306,6 +1306,20 @@ export default {
       }
     }
 
+    // D1 retention: delete whales older than 30 days (prevents unbounded growth).
+    // Runs once per hour (gated by KV timestamp) to avoid D1 write spam.
+    try {
+      const lastCleanup = parseInt(await env.KV.get("whales_cleanup_at") || "0", 10) || 0;
+      if (Date.now() - lastCleanup > 3600000) {
+        const r = await env.DB.prepare("DELETE FROM whales WHERE detected_at < ?")
+          .bind(Date.now() - 30 * 86400000).run();
+        await env.KV.put("whales_cleanup_at", String(Date.now()), { expirationTtl: 7200 });
+        if ((r.meta?.changes ?? 0) > 0) console.log(`[scanner] cleaned ${(r.meta.changes)} old whales`);
+      }
+    } catch (e) {
+      console.warn("[scanner] whales cleanup failed:", e.message);
+    }
+
     if (!market || !market.btc?.price) {
       market = {
         btc: { price: 80_000, change_24h: 0 },
