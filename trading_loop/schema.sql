@@ -5,13 +5,15 @@ CREATE TABLE IF NOT EXISTS signals (
   id INTEGER PRIMARY KEY,
   whale TEXT, chain TEXT, signal TEXT, from_label TEXT, to_label TEXT,
   usd_value REAL, detected_at INTEGER, raw_json TEXT,
-  processed INTEGER DEFAULT 0
+  processed INTEGER DEFAULT 0,
+  skip_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS paper_trades (
   id INTEGER PRIMARY KEY,
   signal_id INTEGER, whale TEXT, side TEXT, size_usd REAL, entry_price REAL,
   coin TEXT, leverage INTEGER,
+  tp_pct REAL, sl_pct REAL,
   opened_at INTEGER, closed_at INTEGER, exit_price REAL, pnl_usd REAL,
   close_reason TEXT,
   bear_case TEXT,

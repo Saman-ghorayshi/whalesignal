@@ -122,16 +122,19 @@ function makeFetches() {
         { title: "Recipe of the week: avocado toast" },
       ] } }) },
 
-    // Gemini — returns a well-formed JSON analysis for any prompt
+    // Gemini — returns a well-formed JSON analysis for any prompt.
+    // NOTE: signal is bearish (not neutral) so the unified broadcast gate
+    // (analyst shouldBroadcast) lets it through — the e2e proves the full
+    // delivery path, while analyst.test.js covers gate suppression.
     { match: "https://generativelanguage.googleapis.com",
       handler: () => ({
         json: { candidates: [{ content: { parts: [{ text:
           JSON.stringify({
-            headline: "Whale moves 500 BTC to Binance during neutral sentiment",
-            interpretation: "Likely a sell-side liquidity move, but small in size — not a strong directional signal.",
-            signal: "neutral",
-            confidence: 0.62,
-            related_factor: "exchange inflow during neutral sentiment",
+            headline: "Whale deposits $6M BTC to Binance during neutral sentiment",
+            interpretation: "Exchange inflow of 60 BTC to a labeled Binance wallet. Inflows of this size often precede selling pressure, though sentiment is neutral and there is no prior wallet history.",
+            signal: "bearish",
+            confidence: 0.78,
+            related_factor: "exchange inflow to labeled Binance wallet",
           })
         }] } }] },
       }) },
@@ -224,6 +227,14 @@ export async function fullPipeline() {
   // But our "whale block" lives at 800001 / 500001 by the fixtures above. ✓
 
   // Tick 2: scan the next block
+  await harness.scheduled(scanner.default);
+
+  // Confirmation depth (S16): the scanner only processes blocks behind the
+  // tip (BTC: latest-1, ETH: latest-2), so the whale blocks at the old tip
+  // need two more ticks to become eligible.
+  // Tick 3: BTC tip is 800002 → scans 800001 → BTC whale found.
+  await harness.scheduled(scanner.default);
+  // Tick 4: ETH tip is 500003 → scans 500001 → ETH whale found.
   await harness.scheduled(scanner.default);
 
   // Drain ANALYSTQ → analyst

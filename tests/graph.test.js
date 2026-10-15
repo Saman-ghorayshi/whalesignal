@@ -294,3 +294,60 @@ test("Telegram channel_post updates are completely ignored without spamming", as
   assert.equal(data.ok, true);
   assert.equal(data.ignored, "channel_post");
 });
+
+test("analyzeWalletPatterns is honest about low data: unknown risk, no clean bill of health", () => {
+  const txs = [
+    { from_address: TARGET_WALLET, to_address: CP_WALLET_A, usd_value: 800_000, tx_type: "wallet_to_wallet", detected_at: 1_700_000_000_000 },
+    { from_address: TARGET_WALLET, to_address: CP_WALLET_B, usd_value: 1_200_000, tx_type: "wallet_to_wallet", detected_at: 1_700_001_000_000 },
+    { from_address: CP_WALLET_C, to_address: TARGET_WALLET, usd_value: 900_000, tx_type: "wallet_to_wallet", detected_at: 1_700_002_000_000 },
+  ];
+  const r = analyzeWalletPatterns(txs, TARGET_WALLET);
+  assert.equal(r.deception_score, 0);
+  assert.equal(r.deception_risk, "unknown", "0/100 from 3 txs is absence of data");
+  assert.ok(!r.flags.includes("ORGANIC_ONCHAIN_FLOW"), "no clean bill of health on thin history");
+  assert.ok(r.flags.includes("INSUFFICIENT_HISTORY"));
+  assert.match(r.intent_summary, /insufficient/i);
+});
+
+test("analyzeWalletPatterns still reports positive detections on small windows", () => {
+  const txs = [
+    { from_address: TARGET_WALLET, to_address: CP_WALLET_A, usd_value: 2_000_000, tx_type: "wallet_to_wallet", detected_at: 1_700_000_000_000 },
+    { from_address: CP_WALLET_A, to_address: TARGET_WALLET, usd_value: 1_900_000, tx_type: "wallet_to_wallet", detected_at: 1_700_001_000_000 },
+  ];
+  const r = analyzeWalletPatterns(txs, TARGET_WALLET);
+  assert.ok(r.wash_loops.length >= 1, "detections are not suppressed by low-data honesty");
+  assert.notEqual(r.deception_risk, "unknown");
+});
+
+test("analyzeWalletPatterns gives a real low-risk verdict with enough clean history", () => {
+  const cps = [CP_WALLET_A, CP_WALLET_B, CP_WALLET_C, CP_WALLET_D];
+  const txs = [];
+  for (let i = 0; i < 12; i++) {
+    // one-way sends to rotating counterparties, varied amounts — no loops,
+    // no peeling (counterparties repeat), no structuring (amounts vary widely)
+    txs.push({
+      from_address: TARGET_WALLET,
+      to_address: cps[i % cps.length],
+      usd_value: 600_000 + (i % 5) * 900_000,
+      tx_type: "wallet_to_wallet",
+      detected_at: 1_700_000_000_000 + i * 86_400_000, // spread over days
+    });
+  }
+  const r = analyzeWalletPatterns(txs, TARGET_WALLET);
+  assert.equal(r.deception_score, 0);
+  assert.equal(r.deception_risk, "low");
+  assert.ok(r.flags.includes("ORGANIC_ONCHAIN_FLOW"));
+});
+
+test("news catalyst matching uses word boundaries", () => {
+  const one = (title) =>
+    analyzeWalletPatterns(
+      [{ from_address: TARGET_WALLET, to_address: CP_WALLET_A, usd_value: 1, tx_type: "wallet_to_wallet" }],
+      TARGET_WALLET, null, [{ title }]
+    ).news_catalysts;
+  assert.equal(one("Urban renewal project approved downtown").length, 0, "'ban' must not match 'urban'");
+  assert.equal(one("Tethered swimming areas closed").length, 0, "'tether' must not match 'tethered'");
+  assert.equal(one("SEC sues exchange")[0].keyword, "sec");
+  assert.equal(one("Binance lists new token")[0].keyword, "binance");
+  assert.equal(one("rate cut expectations rise")[0].keyword, "rate cut", "multi-word keywords work");
+});

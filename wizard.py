@@ -73,6 +73,9 @@ def main():
                             "limits — recommended yes if you'll deploy for real)")
     use_cryptopanic = confirm("Got a CryptoPanic API token? (Phase 4 — "
                               "skip for Phase 1)", default=False)
+    use_trading_loop = confirm("Enable the GH Actions paper-trading loop? "
+                               "(needs a GitHub PAT + repo for the worker dispatch)",
+                               default=False)
 
     cfg = {
         "_comment": "Non-secret runtime config. Secrets go in wrangler via "
@@ -120,6 +123,19 @@ def main():
         print("# --- PHASE 4 (optional now) ---")
         print("# CryptoPanic auth token (https://cryptopanic.com/developers/api/):")
         print(f"npx wrangler secret put CRYPTOPANIC_TOKEN -c wrangler.scanner.toml")
+        print()
+    if use_trading_loop:
+        print("# --- TRADING LOOP (GH Actions trigger) ---")
+        print("# Without these, bot.js silently skips the repository_dispatch")
+        print("# and the trading loop never fires on new alerts.")
+        print("# GitHub fine-grained PAT (contents: read+write, for repository_dispatch):")
+        print(f"npx wrangler secret put GH_PAT   -c wrangler.bot.toml")
+        print("# Repo as owner/repo:")
+        print(f"npx wrangler secret put GH_REPO  -c wrangler.bot.toml")
+        print()
+        print("# ...and the same two values as GitHub *Actions* secrets")
+        print("# (repo → Settings → Secrets → Actions): GH_PAT, GEMINI_KEY,")
+        print("# HL_TESTNET_KEY, WS_BOT_TOKEN, WS_CHAT_ID, R2_ALERTS_URL")
         print()
     print("=" * 60)
     print("Next steps:")

@@ -4,13 +4,16 @@ Borrowed from sanketagarwal/hyperliquid-trading-agent src/risk_manager.py.
 Pure functions, no LLM. The LLM says "COPY with size_pct=80" — these guards
 clamp it down before the signed message leaves the process.
 
-6 guards:
+8 guards:
   1. Max position size: <= 10% of starting balance per trade
   2. Daily circuit breaker: if daily PnL <= -10% of starting, stop new trades
   3. Max concurrent positions: <= 10
   4. Balance reserve: don't trade below 20% of starting
-  5. Max leverage: 10x
+  5. Max leverage: 10x (min 1x — a 0/negative leverage is nonsense)
   6. Mandatory SL: if LLM doesn't specify, default 5%
+  7. Minimum confidence: reject when the LLM states confidence below 0.30
+     (None = LLM didn't state one → guard skipped, can't judge absence)
+  8. Total exposure cap: sum of open notionals <= 50% of starting balance
 """
 
 import sqlite3
@@ -34,7 +37,7 @@ class Decision:
     tp_pct: float                   # take profit %
     sl_pct: Optional[float]         # stop loss % (None = not set)
     leverage: int = 1
-    confidence: float = 0.0
+    confidence: Optional[float] = None  # None = LLM didn't state one
 
 
 @dataclass
@@ -46,10 +49,14 @@ class CheckResult:
 
 MAX_POS_PCT = 10.0      # 10% of starting balance per trade
 MAX_LEVERAGE = 10
+MIN_LEVERAGE = 1
 MAX_OPEN_POSITIONS = 10
 DAILY_LOSS_LIMIT_PCT = 10.0   # -10% of starting → circuit breaker
 MIN_BALANCE_PCT = 20.0       # don't trade below 20% of starting
 DEFAULT_SL_PCT = 5.0         # mandatory SL if LLM forgot
+DEFAULT_TP_PCT = 3.0         # sanity default if LLM gave a nonsense TP
+MIN_CONFIDENCE = 0.30        # reject stated confidence below this
+MAX_TOTAL_EXPOSURE_PCT = 50.0  # total open notional <= 50% of starting
 
 
 def check(decision: Decision, state: RiskState) -> CheckResult:
@@ -67,6 +74,22 @@ def check(decision: Decision, state: RiskState) -> CheckResult:
     if state.open_position_count >= MAX_OPEN_POSITIONS:
         return CheckResult(False, f"max {MAX_OPEN_POSITIONS} concurrent positions reached")
 
+    # Guard 8: total exposure cap (the guard that was plumbed but never built)
+    max_exposure = state.starting_balance * (MAX_TOTAL_EXPOSURE_PCT / 100)
+    if state.open_exposure >= max_exposure:
+        return CheckResult(
+            False,
+            f"total open exposure ${state.open_exposure:.2f} at cap "
+            f"({MAX_TOTAL_EXPOSURE_PCT:.0f}% of starting) — no new trades",
+        )
+
+    # Guard 7: minimum stated confidence
+    if decision.confidence is not None and decision.confidence < MIN_CONFIDENCE:
+        return CheckResult(
+            False,
+            f"confidence {decision.confidence:.2f} below minimum {MIN_CONFIDENCE:.2f}",
+        )
+
     # Guard 1: position size — clamp to 10%
     max_size_usd = state.starting_balance * (MAX_POS_PCT / 100)
     requested_size = state.starting_balance * (decision.size_pct / 100)
@@ -74,17 +97,24 @@ def check(decision: Decision, state: RiskState) -> CheckResult:
         decision.size_pct = MAX_POS_PCT
         requested_size = max_size_usd
 
-    # Guard 5: leverage cap
+    # Guard 5: leverage cap (and floor — 0/negative leverage is nonsense)
     if decision.leverage > MAX_LEVERAGE:
         decision.leverage = MAX_LEVERAGE
+    elif decision.leverage < MIN_LEVERAGE:
+        decision.leverage = MIN_LEVERAGE
 
     # Guard 6: mandatory SL
     if decision.sl_pct is None or decision.sl_pct <= 0:
         decision.sl_pct = DEFAULT_SL_PCT
 
+    # TP sanity: a non-positive TP would close the trade instantly at a loss.
+    if decision.tp_pct is None or decision.tp_pct <= 0:
+        decision.tp_pct = DEFAULT_TP_PCT
+
     return CheckResult(True, adjusted={
         "size_pct": decision.size_pct,
         "leverage": decision.leverage,
+        "tp_pct": decision.tp_pct,
         "sl_pct": decision.sl_pct,
         "size_usd": requested_size,
     })

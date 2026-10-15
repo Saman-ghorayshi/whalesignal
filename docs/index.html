@@ -109,24 +109,30 @@ footer a:hover{color:var(--t2)}
 <div class="con">
 <section class="hero">
   <h1>The <span class="gr">whales</span> can't hide.<br>Your bot <span class="gr">knows why</span> they moved.</h1>
-  <h2>Blocks scanned every 30s. Transactions over $500k intercepted. AI interprets the why — bull, bear, or noise — then posts here automatically.</h2>
+  <h2>Blocks scanned every minute. Transactions over $500k intercepted. AI interprets the why — bull, bear, or noise — then posts here automatically.</h2>
   <div class="pill-row"><span class="pill pill-btc">BTC chain ✓</span><span class="pill pill-eth">ETH chain ✓</span><span class="pill">⚡ Gemini-interpreted</span><span class="pill">⛅ Workers</span></div>
 </section>
 
 <div class="cbar" id="market"><div class="ctr"><div class="ctr-l">BTC</div><div class="ctr-v">—</div></div><div class="ctr"><div class="ctr-l">ETH</div><div class="ctr-v">—</div></div><div class="ctr"><div class="ctr-l">Fear & Greed</div><div class="ctr-v">—</div><div class="ctr-sub">/100</div></div></div>
 
 <div class="sec-hd"><h2 class="sec-title">Live alerts from the chain</h2><span class="sec-badge" id="badge">—</span></div>
-<div id="alerts"><div class="none"><span class="e">🐋</span><p>Waiting for the next whale move. Scanner is scanning BTC + ETH blocks every 30s.</p></div></div>
+<div id="alerts"><div class="none"><span class="e">🐋</span><p>Waiting for the next whale move. Scanner is scanning BTC + ETH blocks every minute.</p></div></div>
 
 <footer>
-<div><a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal/blob/master/PLAN.md" target="_blank">Plan</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal/blob/master/PLAN_trading_loop.md" target="_blank">Trading loop</a></div>
-<div class="ft-mono">builder: Samsha &nbsp;|&nbsp; no price prediction &nbsp;|&nbsp; scanner + analyst + bot</div>
+<div><a href="https://github.com/saman-ghorayshi/whalesignal" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/saman-ghorayshi/whalesignal/blob/master/PLAN.md" target="_blank">Plan</a> &nbsp;·&nbsp; <a href="https://github.com/saman-ghorayshi/whalesignal/blob/master/PLAN_trading_loop.md" target="_blank">Trading loop</a></div>
+<div class="ft-mono">builder: saman-ghorayshi &nbsp;|&nbsp; no price prediction &nbsp;|&nbsp; scanner + analyst + bot</div>
 </footer>
 </div>
 
 <script>
 const urlParams = new URLSearchParams(window.location.search);
-const BASE_API = urlParams.get('api') || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8787' : 'https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev');
+// BT13: the API base is configurable, never a hardcoded account URL (the old
+// one embedded a Cloudflare account id and rotted on redeploy). Order:
+// ?api= query param → window.WHALESIGNAL_API (set in an earlier <script> or
+// your Pages build) → localhost dev default → placeholder that renders a
+// setup hint instead of silently failing.
+const PLACEHOLDER_API = 'https://whalesignal-bot.<your-account>.workers.dev';
+const BASE_API = urlParams.get('api') || window.WHALESIGNAL_API || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8787' : PLACEHOLDER_API);
 const API = `${BASE_API}/latest?limit=6`;
 const POLL_S = 30;
 let tid;
@@ -140,7 +146,7 @@ function render(data){
   const a=document.getElementById('alerts');
   const b=document.getElementById('badge');
   if(!data.ok||!data.alerts.length){
-    a.innerHTML='<div class="none"><span class="e">🐋</span><p>No alerts yet. Scanner is scanning BTC + ETH blocks every 30s — check back in a minute.</p></div>';
+    a.innerHTML='<div class="none"><span class="e">🐋</span><p>No alerts yet. Scanner is scanning BTC + ETH blocks every minute — check back in a minute.</p></div>';
     b.textContent='0';return;
   }
   b.textContent=data.count;
@@ -186,7 +192,10 @@ async function poll(){
   }catch(e){
     document.getElementById('dot').className='dot stale';
     document.getElementById('dotTxt').textContent='offline';
-    document.getElementById('alerts').innerHTML='<div class="err">Could not reach scanner. The worker may be sleeping.</div>';
+    const hint = BASE_API.includes('<your-account>')
+      ? '<div class="err">API not configured. Add <b>?api=https://your-worker.workers.dev</b> to the URL, or set <b>window.WHALESIGNAL_API</b>.</div>'
+      : '<div class="err">Could not reach scanner. The worker may be sleeping.</div>';
+    document.getElementById('alerts').innerHTML=hint;
   }
 }
 

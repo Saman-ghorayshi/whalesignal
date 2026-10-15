@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 """trading_loop/seed_week.py — seed a test DB with one week of trades.
 
-Creates trades.db with 7 days of paper trades for 3 whales, plus
+Creates a scratch DB with 7 days of paper trades for 3 whales, plus
 existing beliefs and whale_scores so weekly_review has something
 to critique. Run once before testing weekly_review.py.
+
+Safety: defaults to a temp file. Overwriting ANY existing DB requires
+--force. It will never silently nuke a live trades.db.
 """
 
-import sqlite3, json, time, os
+import sqlite3, json, time, os, sys, argparse, tempfile
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "trades.db")
 SCHEMA = os.path.join(os.path.dirname(__file__), "schema.sql")
@@ -15,10 +18,32 @@ NOW = int(time.time() * 1000)
 DAY_MS = 86400000
 
 def main():
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+    ap = argparse.ArgumentParser(description="Seed a test DB with one week of trades.")
+    ap.add_argument("--db", default=None,
+                    help="output DB path (default: a temp file — never touches a live DB by accident)")
+    ap.add_argument("--force", action="store_true",
+                    help="allow deleting an existing DB at --db (required, no exceptions)")
+    ap.add_argument("--legacy-path", action="store_true",
+                    help="use the historical default repo-root trades.db as output (still requires --force to overwrite)")
+    args = ap.parse_args()
 
-    db = sqlite3.connect(DB_PATH)
+    if args.db:
+        db_path = args.db
+    elif args.legacy_path:
+        db_path = DB_PATH
+    else:
+        db_path = os.path.join(tempfile.gettempdir(), f"seed_week_{NOW}.db")
+
+    # T18: this helper used to nuke repo-root trades.db unconditionally.
+    # Deleting ANY existing DB now requires an explicit --force.
+    if os.path.exists(db_path):
+        if not args.force:
+            print(f"refusing to delete existing {db_path} — pass --force to overwrite",
+                  file=sys.stderr)
+            sys.exit(1)
+        os.remove(db_path)
+
+    db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     with open(SCHEMA) as f:
         db.executescript(f.read())
@@ -83,7 +108,7 @@ def main():
 
     db.commit()
     db.close()
-    print(f"seeded {DB_PATH} with 3 whales, 12 trades, 2 existing beliefs")
+    print(f"seeded {db_path} with 3 whales, 12 trades, 2 existing beliefs")
 
 if __name__ == "__main__":
     main()
