@@ -1124,11 +1124,10 @@ export async function scanTron(env, market, budget = null) {
   const sinceMs = Number(state.last_block) || now - 120000;
   let events;
   try {
-    if (budget && budget.remaining <= 0) {
+    if (!takeSubrequest(budget)) {
       console.warn("[scanner:tron] subrequest budget exhausted — skipping tick");
       return { chain, processed: 0, newWhales: 0, primed: false };
     }
-    if (budget) budget.remaining--;
     events = await fetchTronEvents(sinceMs + 1);
   } catch (e) {
     console.warn("[scanner:tron] fetch failed:", e.message);
