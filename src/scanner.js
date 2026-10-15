@@ -504,8 +504,16 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
   if (!row?.id) return false;
 
   // Queue only for interesting whales — saves 50-90% of Gemini calls.
+  // Enterprise: if queue send fails, mark as queue_failed (not queued) so
+  // a retry job can pick it up. Never silently lose a whale.
   if (shouldAnalyze) {
-    await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
+    try {
+      await env.ANALYSTQ.send(JSON.stringify({ whale_id: row.id, chain: wh.chain }));
+    } catch (e) {
+      console.error(`[scanner] queue send failed for whale ${row.id}:`, e.message);
+      await env.DB.prepare("UPDATE whales SET analysis_status = 'queue_failed' WHERE id = ?")
+        .bind(row.id).run().catch(() => {});
+    }
   }
 
   // Bump wallet stats for non-exchange addresses.
@@ -1358,10 +1366,28 @@ export default {
     // One subrequest budget shared by both chains for this tick: Workers
     // allow 50 subrequests per invocation and market+news+tip overhead is
     // ~9-12. scanChain stops fetching (persisting progress) when it's out.
-    const budget = { remaining: SCAN_SUBREQUEST_BUDGET };
+    // Enterprise: per-chain subrequest budgets. A shared pool lets one hungry
+    // chain (Solana: 15 wallets × N txs) starve the others. Each chain gets
+    // a guaranteed reservation; total stays under the 50 CF limit.
+    // Budget: BTC 8, ETH 8, BSC 6, Base 6, TRON 6, Solana 10 = 44 total.
+    const CHAIN_BUDGETS = { btc: 8, eth: 8, bsc: 6, base: 6, tron: 6, solana: 10 };
 
     const results = [];
     for (const chain of ["btc", "eth", "bsc", "base", "tron", "solana"]) {
+      const budget = { remaining: CHAIN_BUDGETS[chain] || 6 };
+      // Circuit breaker: if a chain has 5+ consecutive errors, back off
+      // exponentially (don't waste budget on a dead RPC every tick).
+      try {
+        const st = await getScannerState(env, chain);
+        if ((st.errors || 0) >= 5) {
+          const backoffMin = Math.min(60, Math.pow(2, (st.errors || 5) - 5) * 5);
+          const lastScan = st.last_scan || 0;
+          if (Date.now() - lastScan < backoffMin * 60000) {
+            results.push({ chain, skipped: "circuit_breaker", errors: st.errors });
+            continue;
+          }
+        }
+      } catch {}
       try {
         results.push(
           chain === "tron"

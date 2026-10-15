@@ -24,6 +24,10 @@ max_retries = 3
 binding = "BOTQ"
 queue = "whalesignal-bot-q"
 
+# Hourly retry poller for queue_failed whales (see scheduled() in analyst.js)
+[triggers]
+crons = ["17 * * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "whalesignal-db"
