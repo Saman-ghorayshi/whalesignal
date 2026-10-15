@@ -48,25 +48,25 @@ const SOURCES = [
   // Tier 5 — macro/world. Verified working Oct 2026. These explain WHY whales
   // move: FOMC, CPI, wars, SEC actions, earnings. Rare items get higher weight
   // because when they fire, they move everything.
-  { name: "fed_press", rss: "https://www.federalreserve.gov/feeds/press_all.xml", weight: 0.8 },
-  { name: "sec_press", rss: "https://www.sec.gov/news/pressreleases.rss", weight: 0.8 },
-  { name: "cnbc_top", rss: "https://www.cnbc.com/id/100003114/device/rss/rss.html", weight: 0.6 },
-  { name: "cnbc_earnings", rss: "https://www.cnbc.com/id/15839135/device/rss/rss.html", weight: 0.6 },
-  { name: "marketwatch_top", rss: "https://www.marketwatch.com/rss/topstories", weight: 0.6 },
-  { name: "forexlive", rss: "https://www.forexlive.com/feed/news/", weight: 0.6 },
-  { name: "investing_news", rss: "https://www.investing.com/rss/news_25.rss", weight: 0.5 },
-  { name: "bbc_news", rss: "http://feeds.bbci.co.uk/news/rss.xml", weight: 0.5 },
-  { name: "bbc_business", rss: "http://feeds.bbci.co.uk/news/business/rss.xml", weight: 0.5 },
-  { name: "bbc_world", rss: "http://feeds.bbci.co.uk/news/world/rss.xml", weight: 0.5 },
-  { name: "aljazeera", rss: "https://www.aljazeera.com/xml/rss/all.xml", weight: 0.5 },
-  { name: "thehill", rss: "https://thehill.com/feed/", weight: 0.5 },
-  { name: "oilprice", rss: "https://oilprice.com/rss/main", weight: 0.5 },
-  { name: "seekingalpha", rss: "https://seekingalpha.com/feed.xml", weight: 0.5 },
-  { name: "npr_politics", rss: "https://feeds.npr.org/1014/rss.xml", weight: 0.4 },
-  { name: "economist_china", rss: "https://www.economist.com/china/rss.xml", weight: 0.4 },
-  { name: "asiatimes", rss: "https://asiatimes.com/feed/", weight: 0.4 },
-  { name: "longwarjournal", rss: "https://www.longwarjournal.org/feed", weight: 0.3 },
-  { name: "crisisgroup", rss: "https://www.crisisgroup.org/rss.xml", weight: 0.3 },
+  { name: "fed_press", rss: "https://www.federalreserve.gov/feeds/press_all.xml", weight: 0.8, macro: true },
+  { name: "sec_press", rss: "https://www.sec.gov/news/pressreleases.rss", weight: 0.8, macro: true },
+  { name: "cnbc_top", rss: "https://www.cnbc.com/id/100003114/device/rss/rss.html", weight: 0.6, macro: true },
+  { name: "cnbc_earnings", rss: "https://www.cnbc.com/id/15839135/device/rss/rss.html", weight: 0.6, macro: true },
+  { name: "marketwatch_top", rss: "https://www.marketwatch.com/rss/topstories", weight: 0.6, macro: true },
+  { name: "forexlive", rss: "https://www.forexlive.com/feed/news/", weight: 0.6, macro: true },
+  { name: "investing_news", rss: "https://www.investing.com/rss/news_25.rss", weight: 0.5, macro: true },
+  { name: "bbc_news", rss: "http://feeds.bbci.co.uk/news/rss.xml", weight: 0.5, macro: true },
+  { name: "bbc_business", rss: "http://feeds.bbci.co.uk/news/business/rss.xml", weight: 0.5, macro: true },
+  { name: "bbc_world", rss: "http://feeds.bbci.co.uk/news/world/rss.xml", weight: 0.5, macro: true },
+  { name: "aljazeera", rss: "https://www.aljazeera.com/xml/rss/all.xml", weight: 0.5, macro: true },
+  { name: "thehill", rss: "https://thehill.com/feed/", weight: 0.5, macro: true },
+  { name: "oilprice", rss: "https://oilprice.com/rss/main", weight: 0.5, macro: true },
+  { name: "seekingalpha", rss: "https://seekingalpha.com/feed.xml", weight: 0.5, macro: true },
+  { name: "npr_politics", rss: "https://feeds.npr.org/1014/rss.xml", weight: 0.4, macro: true },
+  { name: "economist_china", rss: "https://www.economist.com/china/rss.xml", weight: 0.4, macro: true },
+  { name: "asiatimes", rss: "https://asiatimes.com/feed/", weight: 0.4, macro: true },
+  { name: "longwarjournal", rss: "https://www.longwarjournal.org/feed", weight: 0.3, macro: true },
+  { name: "crisisgroup", rss: "https://www.crisisgroup.org/rss.xml", weight: 0.3, macro: true },
 ];
 
 // topic → keywords. A headline can carry multiple topics.
@@ -258,16 +258,39 @@ async function fetchSource(src) {
   }
 }
 
-export async function runAggregation(env) {
-  const results = await Promise.allSettled(SOURCES.map(fetchSource));
+/**
+ * Run aggregation for a subset of sources.
+ * D1 writes are batched (Cloudflare caps subrequests/API calls per
+ * invocation — per-item queries blow past it at 47 sources).
+ */
+export async function runAggregation(env, sources = SOURCES) {
+  const results = await Promise.allSettled(sources.map(fetchSource));
   const items = [];
   for (const r of results) {
     if (r.status === "fulfilled") items.push(...r.value);
     else console.warn("[news] source failed:", r.reason?.message);
   }
   const now = Date.now();
+
+  // One query for all recent cluster_ids → in-memory dedupe check.
+  let recentClusters = new Set();
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT cluster_id, source FROM news WHERE created_at > ?`
+    ).bind(now - 86400000).all();
+    for (const r of rows.results || []) {
+      if (r.cluster_id) recentClusters.add(`${r.cluster_id}|${r.source}`);
+    }
+  } catch (e) {
+    console.warn("[news] cluster prefetch failed:", e.message);
+  }
+
   let inserted = 0, duplicates = 0;
+  const stmts = [];
+  const seenUrls = new Set();
   for (const it of items) {
+    if (!it.url || seenUrls.has(it.url)) continue;
+    seenUrls.add(it.url);
     const symbols = tagSymbols(`${it.title} ${it.summary}`);
     const topics = tagTopics(`${it.title} ${it.summary}`);
     const sentiment = scoreSentiment(`${it.title} ${it.summary}`);
@@ -275,28 +298,31 @@ export async function runAggregation(env) {
     let importance = scoreImportance({
       sourceWeight: it.weight, publishedAt: it.publishedAt, symbols, title: it.title, topics,
     });
-    // Dedupe: same story from another outlet in the last 24h → keep, but demote.
-    try {
-      const dup = await env.DB.prepare(
-        `SELECT id FROM news WHERE cluster_id = ? AND created_at > ? AND source != ? LIMIT 1`
-      ).bind(cid, now - 86400000, it.source).first();
-      if (dup) {
-        importance *= 0.25;
-        duplicates++;
-      }
-    } catch {}
-    try {
-      const r = await env.DB.prepare(
+    // Dedupe: same story from another outlet in the last 24h → keep, demote.
+    let isDup = false;
+    for (const key of recentClusters) {
+      if (key.startsWith(cid + "|") && !key.endsWith(`|${it.source}`)) { isDup = true; break; }
+    }
+    if (isDup) { importance *= 0.25; duplicates++; }
+    recentClusters.add(`${cid}|${it.source}`);
+    stmts.push(
+      env.DB.prepare(
         `INSERT OR IGNORE INTO news (url, title, source, published_at, symbols, sentiment, importance, created_at, topics, cluster_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         it.url.slice(0, 500), it.title.slice(0, 300), it.source,
         it.publishedAt, paddedSymbols(symbols), +sentiment.toFixed(3), +importance.toFixed(3), now,
         paddedSymbols(topics), cid
-      ).run();
-      if (r.meta.changes > 0) inserted++;
+      )
+    );
+  }
+  // Batched inserts (chunks of 50 stay well under D1 batch limits).
+  for (let i = 0; i < stmts.length; i += 50) {
+    try {
+      const res = await env.DB.batch(stmts.slice(i, i + 50));
+      for (const r of res) inserted += r.meta?.changes || 0;
     } catch (e) {
-      console.warn("[news] insert failed:", e.message);
+      console.warn("[news] batch insert failed:", e.message);
     }
   }
   // prune: keep 7 days
@@ -348,7 +374,13 @@ export async function getRelevantNews(env, { symbol, detectedAt, windowMs = 12 *
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runAggregation(env));
+    // Macro/world tier runs on the 15-min cadence (slower-moving, fewer
+    // subrequests per tick); crypto tiers run every 5 min.
+    const isMacroTick = event.cron === "*/15 * * * *";
+    const sources = isMacroTick
+      ? SOURCES.filter((s) => s.macro)
+      : SOURCES.filter((s) => !s.macro);
+    ctx.waitUntil(runAggregation(env, sources));
   },
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -356,7 +388,11 @@ export default {
       if (!isAuthorizedAdmin(request, env)) {
         return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 });
       }
-      const r = await runAggregation(env);
+      const tier = url.searchParams.get("tier");
+      const sources = tier === "macro"
+        ? SOURCES.filter((s) => s.macro)
+        : tier === "crypto" ? SOURCES.filter((s) => !s.macro) : SOURCES;
+      const r = await runAggregation(env, sources);
       return new Response(JSON.stringify({ ok: true, ...r }), { headers: { "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ ok: true, worker: "whalesignal-news", status: "healthy" }), {
