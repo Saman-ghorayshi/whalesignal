@@ -1,0 +1,23 @@
+# wrangler.health.toml
+# Worker #8: the watchdog. Every 5 min: pings all workers, checks D1+KV,
+# verifies scanner liveness. 3 consecutive failures → Telegram alert.
+# Deploy with:  npx wrangler deploy -c wrangler.health.toml
+
+name = "whalesignal-health"
+main = "src/health.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+database_id = "6e369b7a-a8df-4864-b8f5-7bdc171ecf3d"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "1b3b2a8763b0497880983d3e9d26f76a"
+
+# Secrets: BOT_TOKEN, PUBLIC_CHANNEL, ADMIN_TOKEN
