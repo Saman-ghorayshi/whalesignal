@@ -1287,4 +1287,28 @@ export default {
     }
     return out;
   },
+
+  // Retry poller: picks up whales where queue send failed (status='queue_failed').
+  // Runs hourly via cron. Self-healing for transient queue outages.
+  async scheduled(event, env, ctx) {
+    try {
+      const rows = await env.DB.prepare(
+        "SELECT id, chain FROM whales WHERE analysis_status = 'queue_failed' LIMIT 20"
+      ).all();
+      const failed = rows.results || [];
+      if (!failed.length) return;
+      console.log(`[analyst] retrying ${failed.length} queue_failed whales`);
+      for (const w of failed) {
+        try {
+          await env.ANALYSTQ.send(JSON.stringify({ whale_id: w.id, chain: w.chain }));
+          await env.DB.prepare("UPDATE whales SET analysis_status = 'queued' WHERE id = ?")
+            .bind(w.id).run();
+        } catch (e) {
+          console.warn(`[analyst] retry failed for whale ${w.id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.error("[analyst] scheduled retry failed:", e.message);
+    }
+  },
 };
