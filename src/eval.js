@@ -171,7 +171,10 @@ export default {
     if (url.pathname === "/leaderboard") {
       const raw = await env.KV.get("leaderboard");
       return new Response(raw || JSON.stringify({ ok: false, error: "not built yet" }), {
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
       });
     }
     return new Response(JSON.stringify({ ok: true, worker: "whalesignal-eval", status: "healthy" }), {

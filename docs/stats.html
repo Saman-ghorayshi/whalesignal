@@ -67,13 +67,31 @@ footer a{color:var(--t3);font-weight:510;text-decoration:none;transition:color .
 <div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
 <div class="sec-hd"><h2 class="sec-title">Top Symbols</h2></div>
 <table class="tbl"><thead><tr><th>Symbol</th><th>Whales</th><th>Volume</th></tr></thead><tbody id="sym-tbody"></tbody></table>
-<footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/Samsha/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal Stats</div></footer>
+<div class="sec-hd"><h2 class="sec-title">🎯 Prediction Leaderboard</h2><span class="sec-badge" id="lb-badge">—</span></div>
+<div class="cbar" id="lb-cards"></div>
+<div class="sec-hd"><h2 class="sec-title">By Motive</h2></div>
+<table class="tbl"><thead><tr><th>Motive</th><th>Calls</th><th>Accuracy</th></tr></thead><tbody id="lb-motive"></tbody></table>
+<footer><div><a href="index.html">Home</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/saman-ghorayshi/whalesignal" target="_blank">GitHub</a></div><div class="ft-mono">WhaleSignal Stats</div></footer>
 </div>
 <script>
 const urlParams=new URLSearchParams(window.location.search);
 const BASE_API=urlParams.get('api')||(window.location.hostname==='localhost'||window.location.hostname==='127.0.0.1'?'http://127.0.0.1:8787':'https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev');
 const API=`${BASE_API}/stats`;const POLL_S=60;let chart;
+const EVAL_API='https://whalesignal-eval.mv3sxp7x4fkv-6d9.workers.dev/leaderboard';
 function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
+function pct(n,h){return n?((100*h/n).toFixed(1)+'%'):'—'}
+function renderLeaderboard(b){
+  const badge=document.getElementById('lb-badge');
+  if(!b||!b.total){badge.textContent='no scored calls yet';return;}
+  badge.textContent=b.total+' scored calls';
+  const hz=b.by_horizon||{};
+  const cards=Object.keys(hz).map(h=>({l:h+' Accuracy',v:pct(hz[h].n,hz[h].hits),sub:hz[h].hits+'/'+hz[h].n+' hits'}));
+  document.getElementById('lb-cards').innerHTML=cards.map(c=>'<div class="ctr"><div class="ctr-l">'+c.l+'</div><div class="ctr-v">'+c.v+'</div><div class="ctr-sub">'+c.sub+'</div></div>').join('');
+  const mot=b.by_motive||{};
+  const rows=Object.keys(mot).sort((a,c)=>mot[c].n-mot[a].n).map(m=>'<tr><td>'+esc(m)+'</td><td class="mono">'+mot[m].n+'</td><td class="mono">'+pct(mot[m].n,mot[m].hits)+'</td></tr>');
+  document.getElementById('lb-motive').innerHTML=rows.join('')||'<tr><td colspan="3" style="text-align:center;color:var(--t3)">No motive data yet</td></tr>';
+}
+async function pollLeaderboard(){try{const r=await fetch(EVAL_API);if(!r.ok)throw 0;renderLeaderboard(await r.json());}catch(e){document.getElementById('lb-badge').textContent='offline';}}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 function render(data){
   if(!data){document.getElementById('stats-cards').innerHTML='<div class="none"><span class="e">🐋</span><p>No stats available. Could not connect to API.</p></div>';document.getElementById('dotTxt').textContent='offline';return;}
@@ -111,7 +129,8 @@ function render(data){
   if(chart)chart.destroy();
   chart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Whale Events',data:counts,backgroundColor:'#7170ff',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#62666d',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#62666d',font:{size:10}},beginAtZero:true}}}});
 }
-async function poll(){try{const r=await fetch(API);if(!r.ok)throw Error('http '+r.status);render(await r.json());document.getElementById('dot').className='dot live';}catch(e){document.getElementById('dot').className='dot stale';document.getElementById('dotTxt').textContent='offline';document.getElementById('stats-cards').innerHTML='<div class="err">Could not reach the stats endpoint.</div>';}}
+async function poll(){try{const r=await fetch(API);if(!r.ok)throw Error('http '+r.status);render(await r.json());document.getElementById('dot').className='dot live';}catch(e){document.getElementById('dot').className='dot stale';document.getElementById('dotTxt').textContent='offline';document.getElementById('stats-cards').innerHTML='<div class="err">Could not reach the stats endpoint.</div>';}
+pollLeaderboard().catch(()=>{});}
 function start(){poll();setInterval(poll,POLL_S*1000)}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 </script>
