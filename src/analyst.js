@@ -358,10 +358,10 @@ export async function callGemini(env, prompt, specificModel = null) {
 /** Call Groq. Returns the raw text response. Throws on error. */
 export async function callGroq(env, prompt, specificModel = null) {
   if (!env.GROQ_KEY) throw new Error("GROQ_KEY missing");
-  const primaryModel = specificModel || env.GROQ_MODEL || "openai/gpt-oss-120b";
+  const primaryModel = specificModel || env.GROQ_MODEL || "llama-3.3-70b-versatile";
   const candidateModels = specificModel
     ? [specificModel]
-    : [primaryModel, "openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"].filter(
+    : [primaryModel, "llama-3.3-70b-versatile", "llama-3.1-8b-instant"].filter(
         (m, i, arr) => m && arr.indexOf(m) === i
       );
 
@@ -369,7 +369,7 @@ export async function callGroq(env, prompt, specificModel = null) {
   for (const model of candidateModels) {
     const url = "https://api.groq.com/openai/v1/chat/completions";
     const ctl = new AbortController();
-    const tid = setTimeout(() => ctl.abort(), 12000);
+    const tid = setTimeout(() => ctl.abort(), 6000);
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -390,6 +390,9 @@ export async function callGroq(env, prompt, specificModel = null) {
         }),
         signal: ctl.signal,
       });
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`Groq auth error HTTP ${res.status}`);
+      }
       const rawText = await res.text();
       let j;
       try { j = JSON.parse(rawText); } catch { throw new Error(`Groq HTTP ${res.status}: ${rawText.slice(0, 200)}`); }
@@ -401,6 +404,9 @@ export async function callGroq(env, prompt, specificModel = null) {
       if (cand) return cand;
     } catch (e) {
       lastErr = e;
+      if (e.message.includes("Groq auth error") || e.message.includes("401") || e.message.includes("403")) {
+        break; // don't loop on bad auth
+      }
     } finally {
       clearTimeout(tid);
     }
@@ -410,6 +416,10 @@ export async function callGroq(env, prompt, specificModel = null) {
 
 /** Unified AI dispatcher: routes across xAI, Groq, and Gemini with automatic fallback. */
 export async function callAI(env, prompt) {
+  if (env.AI_PROVIDER === "gemini" && env.GEMINI_KEY) {
+    return await callGemini(env, prompt);
+  }
+
   if (env.XAI_API_KEY && env.AI_PROVIDER !== "gemini" && env.AI_PROVIDER !== "groq") {
     try {
       return await callXAI(env, prompt);

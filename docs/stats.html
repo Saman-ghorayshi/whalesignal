@@ -76,7 +76,7 @@ const API=`${BASE_API}/stats`;const POLL_S=60;let chart;
 function fmt(n){if(n==null)return'—';if(Math.abs(n)>=1e9)return'$'+(n/1e9).toFixed(1)+'B';if(Math.abs(n)>=1e6)return'$'+(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 function render(data){
-  if(!data||!data.ok){document.getElementById('stats-cards').innerHTML='<div class="none"><span class="e">🐋</span><p>No stats available yet. The scanner hasn\'t accumulated enough data.</p></div>';document.getElementById('dotTxt').textContent='no data';return;}
+  if(!data){document.getElementById('stats-cards').innerHTML='<div class="none"><span class="e">🐋</span><p>No stats available. Could not connect to API.</p></div>';document.getElementById('dotTxt').textContent='offline';return;}
   document.getElementById('dotTxt').textContent='live';
   const m=data.market||{};
   const cards=[
@@ -85,19 +85,28 @@ function render(data){
     {l:'24h Count',v:data.count_24h||0},
     {l:'7d Count',v:data.count_7d||0},
     {l:'Largest Transfer',v:fmt(data.largest_transfer)},
-    {l:'BTC Price',v:m.btc_price?'$'+Number(m.btc_price).toLocaleString():'—',sub:'F&G '+(m.fear_greed||'—')},
+    {l:'BTC Price',v:m.btc_price?'$'+Number(m.btc_price).toLocaleString():'—',sub:'F&G '+(m.fear_greed!=null?m.fear_greed:'—')},
   ];
   document.getElementById('stats-cards').innerHTML=cards.map(c=>'<div class="ctr"><div class="ctr-l">'+c.l+'</div><div class="ctr-v">'+c.v+'</div>'+(c.sub?'<div class="ctr-sub">'+c.sub+'</div>':'')+'</div>').join('');
   const sig=data.signals||{};
-  const total=(sig.bullish||0)+(sig.bearish||0)+(sig.neutral||0)||1;
   const sigs=[{cls:'b',lbl:'Bullish',n:sig.bullish||0},{cls:'r',lbl:'Bearish',n:sig.bearish||0},{cls:'n',lbl:'Neutral',n:sig.neutral||0}];
   document.getElementById('sig-bar').innerHTML=sigs.map(s=>'<div class="sig-pill"><span class="sig-dot '+s.cls+'"></span><span class="sig-lbl">'+s.lbl+'</span><span class="sig-num">'+s.n+'</span></div>').join('');
   const syms=data.top_symbols||[];
-  document.getElementById('sym-tbody').innerHTML=syms.length?syms.map(s=>'<tr><td>'+esc(s.symbol)+'</td><td class="mono">'+s.count+'</td><td class="mono">'+fmt(s.volume)+'</td></tr>').join(''):'<tr><td colspan="3" style="text-align:center;color:var(--t3)">No data yet</td></tr>';
+  document.getElementById('sym-tbody').innerHTML=syms.length?syms.map(s=>'<tr><td>'+esc(s.symbol)+'</td><td class="mono">'+s.count+'</td><td class="mono">'+fmt(s.volume)+'</td></tr>').join(''):'<tr><td colspan="3" style="text-align:center;color:var(--t3)">Scanning on-chain blocks...</td></tr>';
   const hourly=data.hourly||[];
-  document.getElementById('chart-badge').textContent=hourly.length+' buckets';
-  const labels=hourly.map(h=>new Date(h.hour).toLocaleTimeString('en-US',{hour:'numeric'}));
-  const counts=hourly.map(h=>h.count);
+  document.getElementById('chart-badge').textContent=hourly.length?(hourly.length+' buckets'):'live 24h window';
+  let labels=[];
+  let counts=[];
+  if(hourly.length>0){
+    labels=hourly.map(h=>new Date(h.hour_bucket||h.hour||Date.now()).toLocaleTimeString('en-US',{hour:'numeric'}));
+    counts=hourly.map(h=>h.count||0);
+  }else{
+    const now=Date.now();
+    for(let i=12;i>=0;i--){
+      labels.push(new Date(now-i*2*3600000).toLocaleTimeString('en-US',{hour:'numeric'}));
+      counts.push(0);
+    }
+  }
   const ctx=document.getElementById('hourlyChart').getContext('2d');
   if(chart)chart.destroy();
   chart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Whale Events',data:counts,backgroundColor:'#7170ff',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#62666d',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#62666d',font:{size:10}},beginAtZero:true}}}});

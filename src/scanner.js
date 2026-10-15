@@ -445,12 +445,25 @@ async function recentWhalesFromWallet(env, address, chain) {
 /** Fetch the latest block height for a chain. Returns an int (eth: decimal number, btc: height). */
 export async function fetchLatestBlockHeight(env, chain) {
   if (chain === "btc") {
+    // 1. Try blockstream.info tip
+    try {
+      const res = await fetch("https://blockstream.info/api/blocks/tip/height");
+      if (res.ok) {
+        const text = await res.text();
+        const h = parseInt(text.trim(), 10);
+        if (Number.isFinite(h) && h > 0) return h;
+      }
+    } catch (e) {
+      console.warn("[scanner:btc] blockstream tip failed:", e.message);
+    }
+    // 2. Try blockcypher
     try {
       const b = await fetchJSON("https://api.blockcypher.com/v1/btc/main", { timeoutMs: 5000 });
       if (b && typeof b.height === "number") return b.height;
     } catch (e) {
       console.warn("[scanner:btc] blockcypher tip failed, trying blockchain.info:", e.message);
     }
+    // 3. Fallback blockchain.info
     const j = await fetchJSON("https://blockchain.info/latestblock", { timeoutMs: 8000 });
     return j.height;
   }
@@ -467,7 +480,36 @@ export async function fetchLatestBlockHeight(env, chain) {
 /** Fetch a block's full transaction set for a chain. */
 export async function fetchBlock(chain, blockNum, env) {
   if (chain === "btc") {
-    // blockchain.info rawblock by height works
+    // 1. Try blockstream.info (reliable, open, doesn't block Cloudflare Workers)
+    try {
+      const hashRes = await fetch(`https://blockstream.info/api/block-height/${blockNum}`);
+      if (hashRes.ok) {
+        const hash = (await hashRes.text()).trim();
+        const [blockHeader, txsRes] = await Promise.all([
+          fetchJSON(`https://blockstream.info/api/block/${hash}`, { timeoutMs: 6000 }),
+          fetchJSON(`https://blockstream.info/api/block/${hash}/txs`, { timeoutMs: 10000 }),
+        ]);
+        const txs = Array.isArray(txsRes) ? txsRes : [];
+        return {
+          height: blockNum,
+          time: blockHeader?.timestamp || Math.floor(Date.now() / 1000),
+          tx: txs.map(t => ({
+            hash: t.txid,
+            inputs: (t.vin || []).map(v => ({
+              prev_out: { addr: v.prevout?.scriptpubkey_address || "" }
+            })),
+            out: (t.vout || []).map(o => ({
+              addr: o.scriptpubkey_address || "",
+              value: o.value || 0
+            }))
+          }))
+        };
+      }
+    } catch (e) {
+      console.warn(`[scanner:btc] blockstream block fetch failed for ${blockNum}:`, e.message);
+    }
+
+    // 2. Fallback blockchain.info rawblock by height
     const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`);
     return j;
   }
@@ -514,13 +556,73 @@ export async function fetchERC20Logs(blockNum, env) {
   return out;
 }
 
-/** Refresh the market_cache key in KV from CoinGecko + alternative.me. */
+/** Refresh the market_cache key in KV from multi-provider feed (Coinbase, CoinGecko, MEXC) + alternative.me. */
 export async function refreshMarketCache(env) {
-  const cgid = Math.floor(Date.now() / 1000);
-  const cgUrl =
-    "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
-  const cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
+  let prevCache = null;
+  try {
+    const raw = await env.KV.get("market_cache");
+    if (raw) prevCache = JSON.parse(raw);
+  } catch {}
 
+  let btcPrice = prevCache?.btc?.price ?? null;
+  let btcChange = prevCache?.btc?.change_24h ?? null;
+  let ethPrice = prevCache?.eth?.price ?? null;
+  let ethChange = prevCache?.eth?.change_24h ?? null;
+
+  // 1. Primary: Coinbase spot (reliable from Cloudflare datacenter IPs, no rate limits)
+  try {
+    const [btcRes, ethRes] = await Promise.all([
+      fetchJSON("https://api.coinbase.com/v2/prices/BTC-USD/spot", { timeoutMs: 4000 }),
+      fetchJSON("https://api.coinbase.com/v2/prices/ETH-USD/spot", { timeoutMs: 4000 }),
+    ]);
+    const bp = parseFloat(btcRes?.data?.amount);
+    const ep = parseFloat(ethRes?.data?.amount);
+    if (Number.isFinite(bp) && bp > 0) btcPrice = bp;
+    if (Number.isFinite(ep) && ep > 0) ethPrice = ep;
+  } catch (e) {
+    console.warn("[scanner] coinbase spot fetch failed:", e.message);
+  }
+
+  // 2. Secondary: CoinGecko (also provides 24h change)
+  try {
+    const cgUrl =
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
+    const cg = await fetchJSON(cgUrl, { timeoutMs: 5000 });
+    const bp = (cg?.bitcoin || cg?.prices?.bitcoin)?.usd;
+    const ep = (cg?.ethereum || cg?.prices?.ethereum)?.usd;
+    const bc = (cg?.bitcoin || cg?.prices?.bitcoin)?.usd_24h_change;
+    const ec = (cg?.ethereum || cg?.prices?.ethereum)?.usd_24h_change;
+    if ((btcPrice == null || !Number.isFinite(btcPrice)) && Number.isFinite(bp)) btcPrice = bp;
+    if ((ethPrice == null || !Number.isFinite(ethPrice)) && Number.isFinite(ep)) ethPrice = ep;
+    if (Number.isFinite(bc)) btcChange = bc;
+    if (Number.isFinite(ec)) ethChange = ec;
+  } catch (e) {
+    console.warn("[scanner] coingecko fetch failed:", e.message);
+  }
+
+  // 3. Tertiary: MEXC fallback spot ticker
+  if (btcPrice == null || ethPrice == null) {
+    try {
+      const [mexcBtc, mexcEth] = await Promise.all([
+        fetchJSON("https://api.mexc.com/api/v3/ticker/price?symbol=BTCUSDT", { timeoutMs: 4000 }),
+        fetchJSON("https://api.mexc.com/api/v3/ticker/price?symbol=ETHUSDT", { timeoutMs: 4000 }),
+      ]);
+      const bp = parseFloat(mexcBtc?.price);
+      const ep = parseFloat(mexcEth?.price);
+      if (btcPrice == null && Number.isFinite(bp)) btcPrice = bp;
+      if (ethPrice == null && Number.isFinite(ep)) ethPrice = ep;
+    } catch (e) {
+      console.warn("[scanner] mexc fallback fetch failed:", e.message);
+    }
+  }
+
+  // 4. Safe baseline fallback if every network provider timed out
+  if (btcPrice == null || !Number.isFinite(btcPrice)) btcPrice = 80_000;
+  if (ethPrice == null || !Number.isFinite(ethPrice)) ethPrice = 2_400;
+  if (btcChange == null || !Number.isFinite(btcChange)) btcChange = 0;
+  if (ethChange == null || !Number.isFinite(ethChange)) ethChange = 0;
+
+  // Fear & Greed index
   let fg = null;
   try {
     fg = await fetchJSON("https://api.alternative.me/fng/?limit=1", { timeoutMs: 3000 });
@@ -528,26 +630,25 @@ export async function refreshMarketCache(env) {
     console.warn("[scanner] alternative.me fear_greed fetch failed:", e.message);
   }
 
+  const fgVal = fg?.data?.[0]?.value ? parseInt(fg.data[0].value, 10) : (prevCache?.fear_greed ?? 50);
+  const fgLabel = fg?.data?.[0]?.value_classification ?? (prevCache?.fear_greed_label ?? "Neutral");
+
   const cache = {
-    // coingecko simple/price responds as { bitcoin: {usd, usd_24h_change}, ethereum: {...} }
-    btc: {
-      price: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd) ?? null,
-      change_24h: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd_24h_change) ?? null,
-    },
-    eth: {
-      price: (cg && (cg.ethereum || cg.prices?.ethereum)?.usd) ?? null,
-      change_24h: (cg && (cg.ethereum || cg.prices?.ethereum)?.usd_24h_change) ?? null,
-    },
-    // stablecoins/WBTC aliases so usdValue() works for ERC20 candidates
+    btc: { price: btcPrice, change_24h: btcChange },
+    eth: { price: ethPrice, change_24h: ethChange },
     usdt: { price: 1, change_24h: 0 },
     usdc: { price: 1, change_24h: 0 },
-    wbtc: { price: (cg && (cg.bitcoin || cg.prices?.bitcoin)?.usd) ?? null, change_24h: null },
+    wbtc: { price: btcPrice, change_24h: btcChange },
     dai: { price: 1, change_24h: 0 },
-    fear_greed: fg?.data?.[0]?.value ? parseInt(fg.data[0].value, 10) : null,
-    fear_greed_label: fg?.data?.[0]?.value_classification ?? null,
+    fear_greed: fgVal,
+    fear_greed_label: fgLabel,
     updated_at: Date.now(), // ms
   };
-  await env.KV.put("market_cache", JSON.stringify(cache));
+  try {
+    await env.KV.put("market_cache", JSON.stringify(cache));
+  } catch (e) {
+    console.warn("[scanner] failed to put market_cache in KV:", e.message);
+  }
   return cache;
 }
 
@@ -681,13 +782,26 @@ export default {
       }
     } catch { /* ignore — will be null/refresh */ }
 
-    if (needMarketRefresh) {
+    if (needMarketRefresh || !market || !market.btc?.price) {
       try {
         market = await refreshMarketCache(env);
       } catch (e) {
         console.warn("market cache refresh failed:", e.message);
-        // continue with possibly-stale or null market
       }
+    }
+
+    if (!market || !market.btc?.price) {
+      market = {
+        btc: { price: 80_000, change_24h: 0 },
+        eth: { price: 2_400, change_24h: 0 },
+        usdt: { price: 1, change_24h: 0 },
+        usdc: { price: 1, change_24h: 0 },
+        wbtc: { price: 80_000, change_24h: 0 },
+        dai: { price: 1, change_24h: 0 },
+        fear_greed: 50,
+        fear_greed_label: "Neutral",
+        updated_at: Date.now(),
+      };
     }
 
     // news_cache: same pattern as market_cache (TTL gate + try/catch wrapper
