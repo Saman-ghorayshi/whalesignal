@@ -1,0 +1,23 @@
+# wrangler.price.toml
+# Worker #5: market-data ingestion. Every 2 min: OHLCV → D1, TA snapshots →
+# KV (ta_cache:{SYM}), market-event detection → D1 + KV.
+# Deploy with:  npx wrangler deploy -c wrangler.price.toml
+
+name = "whalesignal-price"
+main = "src/price.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/2 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+database_id = "6e369b7a-a8df-4864-b8f5-7bdc171ecf3d"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "1b3b2a8763b0497880983d3e9d26f76a"
+
+# Secret: ADMIN_TOKEN (same value as the other workers, for /trigger)

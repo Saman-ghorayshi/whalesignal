@@ -13,6 +13,7 @@
 import { isAuthorizedAdmin } from "./worker-utils.js";
 
 const SOURCES = [
+  // Tier 1 — highest signal, every run
   { name: "coindesk", rss: "https://www.coindesk.com/arc/outboundfeeds/rss/", weight: 1.0 },
   { name: "cointelegraph", rss: "https://cointelegraph.com/rss", weight: 0.9 },
   { name: "theblock", rss: "https://www.theblock.co/rss.xml", weight: 0.9 },
@@ -20,7 +21,56 @@ const SOURCES = [
   { name: "cryptoslate", rss: "https://cryptoslate.com/feed/", weight: 0.7 },
   { name: "bitcoinmagazine", rss: "https://bitcoinmagazine.com/feed", weight: 0.7 },
   { name: "beincrypto", rss: "https://beincrypto.com/feed/", weight: 0.6 },
+  // Tier 2 — broad coverage, same cadence (cheap RSS pulls)
+  { name: "blockworks", rss: "https://blockworks.co/feed", weight: 0.6 },
+  { name: "dlnews", rss: "https://www.dlnews.com/feed", weight: 0.6 },
+  { name: "ambcrypto", rss: "https://ambcrypto.com/feed/", weight: 0.5 },
+  { name: "newsbtc", rss: "https://www.newsbtc.com/feed/", weight: 0.5 },
+  { name: "cryptopotato", rss: "https://cryptopotato.com/feed/", weight: 0.5 },
+  { name: "utoday", rss: "https://u.today/rss", weight: 0.5 },
+  { name: "coingape", rss: "https://coingape.com/feed/", weight: 0.5 },
+  { name: "bitcoinist", rss: "https://bitcoinist.com/feed/", weight: 0.5 },
+  { name: "dailyhodl", rss: "https://dailyhodl.com/feed/", weight: 0.5 },
+  { name: "coinjournal", rss: "https://coinjournal.net/feed/", weight: 0.5 },
 ];
+
+// topic → keywords. A headline can carry multiple topics.
+const TOPIC_KEYWORDS = [
+  ["etf", ["etf", "exchange-traded"]],
+  ["regulation", ["sec", "regulat", "lawsuit", "court", "ban", "congress", "cftc", "bill"]],
+  ["security", ["hack", "exploit", "phishing", "scam", "rug pull"]],
+  ["adoption", ["adoption", "partnership", "integration"]],
+  ["mining", ["mining", "miner", "hashrate", "halving"]],
+  ["defi", ["defi", "dex", "yield", "staking", "tvl"]],
+  ["macro", ["fed", "inflation", "interest rate", "recession", "central bank"]],
+  ["exchange", ["binance", "coinbase", "kraken", "bybit", "exchange"]],
+];
+
+export function tagTopics(text) {
+  const lower = ` ${String(text || "").toLowerCase()} `;
+  const found = [];
+  for (const [topic, kws] of TOPIC_KEYWORDS) {
+    if (kws.some((kw) => lower.includes(kw))) found.push(topic);
+  }
+  return found;
+}
+
+/** Normalized-title hash for cross-outlet dedupe clustering. Pure. */
+export function clusterId(title) {
+  const norm = String(title || "").toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((w) => w.length > 2 && !["the", "and", "for", "with", "from"].includes(w))
+    .sort()
+    .join(" ");
+  let h = 0;
+  for (let i = 0; i < norm.length; i++) {
+    h = (Math.imul(31, h) + norm.charCodeAt(i)) | 0;
+  }
+  return `c${(h >>> 0).toString(36)}`;
+}
 
 // keyword → symbol. Order matters: check multi-word / specific first.
 const SYMBOL_KEYWORDS = [
@@ -170,20 +220,33 @@ export async function runAggregation(env) {
     else console.warn("[news] source failed:", r.reason?.message);
   }
   const now = Date.now();
-  let inserted = 0;
+  let inserted = 0, duplicates = 0;
   for (const it of items) {
     const symbols = tagSymbols(`${it.title} ${it.summary}`);
+    const topics = tagTopics(`${it.title} ${it.summary}`);
     const sentiment = scoreSentiment(`${it.title} ${it.summary}`);
-    const importance = scoreImportance({
+    const cid = clusterId(it.title);
+    let importance = scoreImportance({
       sourceWeight: it.weight, publishedAt: it.publishedAt, symbols, title: it.title,
     });
+    // Dedupe: same story from another outlet in the last 24h → keep, but demote.
+    try {
+      const dup = await env.DB.prepare(
+        `SELECT id FROM news WHERE cluster_id = ? AND created_at > ? AND source != ? LIMIT 1`
+      ).bind(cid, now - 86400000, it.source).first();
+      if (dup) {
+        importance *= 0.25;
+        duplicates++;
+      }
+    } catch {}
     try {
       const r = await env.DB.prepare(
-        `INSERT OR IGNORE INTO news (url, title, source, published_at, symbols, sentiment, importance, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT OR IGNORE INTO news (url, title, source, published_at, symbols, sentiment, importance, created_at, topics, cluster_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         it.url.slice(0, 500), it.title.slice(0, 300), it.source,
-        it.publishedAt, paddedSymbols(symbols), +sentiment.toFixed(3), +importance.toFixed(3), now
+        it.publishedAt, paddedSymbols(symbols), +sentiment.toFixed(3), +importance.toFixed(3), now,
+        paddedSymbols(topics), cid
       ).run();
       if (r.meta.changes > 0) inserted++;
     } catch (e) {
@@ -208,8 +271,8 @@ export async function runAggregation(env) {
   } catch (e) {
     console.warn("[news] KV cache update failed:", e.message);
   }
-  console.log(`[news] aggregated ${items.length} items, ${inserted} new`);
-  return { fetched: items.length, inserted };
+  console.log(`[news] aggregated ${items.length} items, ${inserted} new, ${duplicates} cross-outlet dupes`);
+  return { fetched: items.length, inserted, duplicates };
 }
 
 /** Symbol-matched headlines near a timestamp, for the analyst. */
