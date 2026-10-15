@@ -47,7 +47,44 @@ CREATE TABLE IF NOT EXISTS analysis (
   created_at      INTEGER NOT NULL,
   ai_provider     TEXT,                            -- which engine produced this analysis
   ai_model        TEXT,                            -- which model produced this analysis
+  motive          TEXT,                            -- whale-intelligence: why they did it
+  motive_confidence REAL,
+  catalyst_title  TEXT,                            -- likely news catalyst
+  catalyst_url    TEXT,
+  ta_summary      TEXT,                            -- one-line technical snapshot
   FOREIGN KEY (whale_id) REFERENCES whales(id) ON DELETE CASCADE
+);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- news — aggregated crypto headlines for catalyst matching
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS news (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  url          TEXT UNIQUE NOT NULL,
+  title        TEXT NOT NULL,
+  source       TEXT NOT NULL,
+  published_at INTEGER,
+  symbols      TEXT NOT NULL DEFAULT ',',
+  sentiment    REAL NOT NULL DEFAULT 0,
+  importance   REAL NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_news_published ON news(published_at DESC);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- predictions — AI calls + price_at_detect for 24h outcome evaluation
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS predictions (
+  whale_id        INTEGER PRIMARY KEY REFERENCES whales(id) ON DELETE CASCADE,
+  signal          TEXT NOT NULL,
+  confidence      REAL NOT NULL,
+  motive          TEXT,
+  price_at_detect REAL,
+  detected_at     INTEGER NOT NULL,
+  horizon_24h_price  REAL,
+  horizon_24h_return REAL,
+  outcome          TEXT,
+  evaluated_at     INTEGER
 );
 
 -- ─────────────────────────────────────────────────────────────────────
