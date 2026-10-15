@@ -5,6 +5,7 @@ secrets.json
 .dev.vars
 .env
 *.local
+*.db
 
 # node
 node_modules/

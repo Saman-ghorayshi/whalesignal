@@ -13,6 +13,7 @@
 //   PUBLIC_CHANNEL — string, e.g. "@whalesignalnews"
 
 import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
+import { analyzeWalletPatterns, buildGraphPayload } from "./graph-analyst.js";
 
 /** shared JSON response helper for all public GET routes. */
 function jsonResponse(data, status = 200) {
@@ -186,8 +187,8 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   lines.push(`📊 Market: BTC ${btcP} (${btcChg}) | ${fg} | ETH ${ethP}`);
   lines.push(`🔮 Signal: ${sigEmoji} (confidence ${conf})`);
   if (analysis?.related_factor) lines.push(`📎 ${analysis.related_factor}`);
-  lines.push("");
   lines.push(`🔍 ${explorerLink}`);
+  lines.push(`🌐 Money-Flow Graph: https://samsha.github.io/whalesignal/wallet.html?addr=${whale.from_address}&chain=${whale.chain}`);
   return lines.join("\n");
 }
 
@@ -280,6 +281,89 @@ export async function fetchHandler(request, env, ctx) {
     }
   }
 
+  // ─── public GET /graph/:addr — forensic money-flow graph ─────────────
+  if (request.method === "GET" && path.startsWith("/graph/")) {
+    try {
+      const addr = decodeURIComponent(path.slice("/graph/".length)).toLowerCase();
+      const chain = url.searchParams.get("chain");
+      const { results: txs } = await env.DB.prepare(
+        "SELECT id, chain, tx_hash, from_address, to_address, amount, symbol, usd_value, tx_type, detected_at " +
+        "FROM whales WHERE (lower(from_address) = ? OR lower(to_address) = ?) " +
+        (chain ? "AND lower(chain) = ? " : "") +
+        "ORDER BY detected_at DESC LIMIT 100"
+      ).bind(...(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr])).all();
+
+      const addrs = new Set();
+      addrs.add(addr);
+      for (const t of txs || []) {
+        if (t.from_address) addrs.add(String(t.from_address).toLowerCase());
+        if (t.to_address) addrs.add(String(t.to_address).toLowerCase());
+      }
+      const addrList = Array.from(addrs);
+      const walletMap = new Map();
+      if (addrList.length > 0) {
+        for (let i = 0; i < addrList.length; i += 50) {
+          const chunk = addrList.slice(i, i + 50);
+          const placeholders = chunk.map(() => "?").join(",");
+          const { results: wRows } = await env.DB.prepare(
+            `SELECT address, label, type FROM wallets WHERE lower(address) IN (${placeholders})`
+          ).bind(...chunk).all();
+          for (const w of wRows || []) {
+            walletMap.set(String(w.address).toLowerCase(), w);
+          }
+        }
+      }
+
+      const payload = buildGraphPayload(txs || [], walletMap, addr);
+      return jsonResponse({ ok: true, ...payload });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /patterns/:addr — forensic deception analysis ────────
+  if (request.method === "GET" && path.startsWith("/patterns/")) {
+    try {
+      const addr = decodeURIComponent(path.slice("/patterns/".length)).toLowerCase();
+      const chain = url.searchParams.get("chain");
+      const { results: txs } = await env.DB.prepare(
+        "SELECT id, chain, tx_hash, from_address, to_address, amount, symbol, usd_value, tx_type, detected_at " +
+        "FROM whales WHERE (lower(from_address) = ? OR lower(to_address) = ?) " +
+        (chain ? "AND lower(chain) = ? " : "") +
+        "ORDER BY detected_at DESC LIMIT 100"
+      ).bind(...(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr])).all();
+
+      let market = null, news = null;
+      try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+      try { news = JSON.parse(await env.KV.get("news_cache") || "null"); } catch {}
+
+      const analysis = analyzeWalletPatterns(txs || [], addr, market, news);
+      return jsonResponse({ ok: true, ...analysis });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /test-ai — diagnostic live probe across AI engines ───
+  if (request.method === "GET" && path === "/test-ai") {
+    try {
+      let resp;
+      if (env.ANALYST_SERVICE) {
+        resp = await env.ANALYST_SERVICE.fetch(new Request("https://whalesignal-analyst/test-ai"));
+      } else {
+        const analystUrl = env.ANALYST_URL || "https://whalesignal-analyst.mv3sxp7x4fkv-6d9.workers.dev/test-ai";
+        resp = await fetch(analystUrl);
+      }
+      const data = await resp.json();
+      return jsonResponse(data, resp.status);
+    } catch (e) {
+      return jsonResponse({
+        ok: false,
+        error: `Could not reach analyst test endpoint: ${e.message}`,
+      }, 502);
+    }
+  }
+
   const expected = `/tg/${env.BOT_TOKEN || ""}`;
   if (path !== expected) {
     return errJson("not found", 404);
@@ -304,24 +388,41 @@ export async function fetchHandler(request, env, ctx) {
   // 8s AbortController cap, so this is fine for Phase 1. Phase 2 should switch
   // to `ctx.waitUntil(tgSendMessage(...))` and return 200 immediately so we
   // don't hold the request open for slow /latest queries.
-  const msg = update.message || update.channel_post;
+  // Channel posts are broadcasts, not interactive bot commands — NEVER reply to them!
+  if (update.channel_post || update.message?.chat?.type === "channel") {
+    return okJson({ ok: true, ignored: "channel_post" });
+  }
+
+  const msg = update.message;
   if (msg?.text) {
     const chatId = String(msg.chat.id);
     const from = msg.from?.username ? `@${msg.from.username}` : (msg.from?.first_name || "friend");
     const txt = msg.text.trim();
     const lc = txt.toLowerCase();
 
+    // If not a slash command:
+    if (!lc.startsWith("/")) {
+      if (msg.chat?.type === "private") {
+        await tgSendMessage(env.BOT_TOKEN, chatId, HELP_TEXT);
+        return okJson({ ok: true, handled: "help_fallback" });
+      }
+      return okJson({ ok: true, ignored: "non_command" });
+    }
+
+    // Strip bot mention: e.g. /ping@Whaletracker_sig_bot -> /ping
+    const cmd = lc.split("@")[0].split(/\s+/)[0];
+
     try {
-      if (lc === "/ping") {
+      if (cmd === "/ping") {
         await tgSendMessage(env.BOT_TOKEN, chatId,
           `🐋 WhaleSignal is alive. Ping received from ${from} at ${new Date().toISOString()}.`);
         return okJson({ ok: true, handled: "ping" });
       }
-      if (lc === "/help" || lc === "/start") {
+      if (cmd === "/help" || cmd === "/start") {
         await tgSendMessage(env.BOT_TOKEN, chatId, HELP_TEXT);
         return okJson({ ok: true, handled: "help" });
       }
-      if (lc === "/latest") {
+      if (cmd === "/latest") {
         // DM reply keeps 5-row behavior. Shared helper, limit=5.
         const rows = await latestRows(env, 5);
         let market = null;
@@ -330,9 +431,74 @@ export async function fetchHandler(request, env, ctx) {
         await tgSendMessage(env.BOT_TOKEN, chatId, reply);
         return okJson({ ok: true, handled: "latest" });
       }
-      // unknown
-      await tgSendMessage(env.BOT_TOKEN, chatId,
-        `I don't know that command yet. Try /help, /ping, or /latest.`);
+      if (cmd === "/stats") {
+        const [statsData, accuracyData, topSymbols, hourly, market] = await Promise.all([
+          getGlobalStats(env),
+          getSignalAccuracy(env),
+          getTopSymbols(env),
+          getHourlyDistribution(env),
+          getMarketSnapshot(env),
+        ]);
+        const payload = renderStatsJSON(statsData, accuracyData, topSymbols, hourly, market);
+        const reply = `📊 *WhaleSignal Intelligence Stats*\n\n` +
+          `• *24h Volume:* ${fmtUSD(payload.total_volume)}\n` +
+          `• *Whales Tracked:* ${payload.count_24h}\n` +
+          `• *Largest Move:* ${fmtUSD(payload.largest_transfer)}\n` +
+          `• *Signals:* 🟢 Bullish: ${payload.signals.bullish} | 🔴 Bearish: ${payload.signals.bearish} | ⚪ Neutral: ${payload.signals.neutral}\n` +
+          (payload.accuracy ? `• *Signal Accuracy:* ${payload.accuracy.rate_pct}%\n` : "") +
+          `\nUse /latest to view recent whale moves.`;
+        await tgSendMessage(env.BOT_TOKEN, chatId, reply);
+        return okJson({ ok: true, handled: "stats" });
+      }
+      if (cmd === "/check" || cmd === "/pattern" || cmd === "/graph") {
+        const parts = txt.split(/\s+/);
+        const targetAddr = parts[1]?.trim();
+        if (!targetAddr) {
+          await tgSendMessage(env.BOT_TOKEN, chatId,
+            "Please provide a wallet address to check. Example:\n/check 0x28c6c06298d514de13c02684fa65b7c0c1f723e4");
+          return okJson({ ok: true, handled: "check_missing_addr" });
+        }
+        const cleanAddr = targetAddr.toLowerCase();
+        const { results: txs } = await env.DB.prepare(
+          "SELECT id, chain, tx_hash, from_address, to_address, amount, symbol, usd_value, tx_type, detected_at " +
+          "FROM whales WHERE (lower(from_address) = ? OR lower(to_address) = ?) " +
+          "ORDER BY detected_at DESC LIMIT 50"
+        ).bind(cleanAddr, cleanAddr).all();
+
+        let market = null, news = null;
+        try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+        try { news = JSON.parse(await env.KV.get("news_cache") || "null"); } catch {}
+
+        const p = analyzeWalletPatterns(txs || [], cleanAddr, market, news);
+        const riskEmoji = p.deception_risk === "high" ? "🚨 HIGH RISK" : p.deception_risk === "medium" ? "⚠️ MEDIUM RISK" : "✅ LOW RISK";
+        const reply = [
+          `🕵️ WhaleSignal Forensic Report`,
+          `• Address: ${cleanAddr}`,
+          `• Risk Level: ${riskEmoji} (Score: ${p.deception_score}/100)`,
+          `• Profile: ${p.behavioral_profile}`,
+          `• Activity: In: ${fmtUSD(p.metrics.total_inflow_usd)} | Out: ${fmtUSD(p.metrics.total_outflow_usd)} | Net: ${fmtUSD(p.metrics.net_flow_usd)}`,
+          `• Counterparties: ${p.metrics.unique_counterparties} unique address(es)`,
+          p.wash_loops.length > 0 ? `• Wash Loops: ⚠️ ${p.wash_loops.length} round-trip loop(s) detected!` : null,
+          p.is_peeling_chain ? `• Peeling Chain: ⚠️ Layering across single-use addresses detected!` : null,
+          p.is_structuring ? `• Structuring: ⚠️ Rapid split transfers detected!` : null,
+          "",
+          `💡 Intent Analysis:`,
+          p.intent_summary,
+          "",
+          p.flags.length > 0 ? `🚩 Flags: ${p.flags.join(", ")}` : null,
+          "",
+          `🌐 Interactive Money-Flow Graph:`,
+          `https://samsha.github.io/whalesignal/wallet.html?addr=${cleanAddr}`,
+        ].filter(Boolean).join("\n");
+
+        await tgSendMessage(env.BOT_TOKEN, chatId, reply);
+        return okJson({ ok: true, handled: "check" });
+      }
+      // Unknown command: only reply if in a private DM
+      if (msg.chat?.type === "private") {
+        await tgSendMessage(env.BOT_TOKEN, chatId,
+          `I don't know that command yet. Try /help, /ping, /latest, /stats, or /check <addr>.`);
+      }
       return okJson({ ok: true, handled: "unknown" });
     } catch (e) {
       console.error("bot fetch handler failed:", e.message);
@@ -346,12 +512,14 @@ export async function fetchHandler(request, env, ctx) {
 
 const HELP_TEXT = `🐋 WhaleSignal — AI whale alerts
 
-Phase 1 (MVP). Commands:
-  /ping    — health check
-  /help    — this message
-  /latest  — recently posted whale moves
+Commands:
+  /ping          — health check
+  /help          — this message
+  /latest        — recently posted whale moves
+  /stats         — 24h market intelligence & signal stats
+  /check <addr>  — forensic wallet deception & money-flow report
 
-We post AI-enhanced whale alerts to our channel. Real-time DMs come in Phase 2.
+We post AI-enhanced whale alerts to our channel.
 Got a suggestion? Reply to this message.`;
 
 // ─── /latest helper (shared by DM /latest and GET /latest route) ───────
@@ -543,9 +711,7 @@ export async function historyRows(env, opts = {}) {
   sql += " ORDER BY w.detected_at DESC LIMIT ? OFFSET ?";
   binds.push(n, offset);
 
-  const stmt = env.DB.prepare(sql);
-  for (let i = 0; i < binds.length; i++) stmt.bind(binds[i]);
-  const { results } = await stmt.all();
+  const { results } = await env.DB.prepare(sql).bind(...binds).all();
   return results || [];
 }
 
@@ -582,9 +748,10 @@ export function renderHistoryJSON(rows, page, limit, total) {
  * this address (as sender or receiver). Two queries, one round trip each.
  */
 export async function walletProfile(env, address, chain = null) {
-  const addr = String(address || "").toLowerCase();
-  let sql = "SELECT address, chain, label, type, reputation, tx_count, total_volume, first_seen, last_seen FROM wallets WHERE address = ?";
-  const binds = [addr];
+  const rawAddr = String(address || "").trim();
+  const lowerAddr = rawAddr.toLowerCase();
+  let sql = "SELECT address, chain, label, type, reputation, tx_count, total_volume, first_seen, last_seen FROM wallets WHERE address = ? OR lower(address) = ?";
+  const binds = [rawAddr, lowerAddr];
   if (chain) { sql += " AND chain = ?"; binds.push(chain.toLowerCase()); }
   sql += " LIMIT 1";
   const profile = await env.DB.prepare(sql).bind(...binds).first();
@@ -595,10 +762,10 @@ export async function walletProfile(env, address, chain = null) {
     "w.usd_value, w.tx_type, w.detected_at, w.interesting_score, " +
     "a.signal, a.headline, a.confidence " +
     "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
-    "WHERE (w.from_address = ? OR w.to_address = ?) " +
+    "WHERE (w.from_address = ? OR w.to_address = ? OR lower(w.from_address) = ? OR lower(w.to_address) = ?) " +
     (chain ? "AND w.chain = ? " : "") +
     "ORDER BY w.detected_at DESC LIMIT 20"
-  ).bind(chain ? [addr, addr, chain.toLowerCase()] : [addr, addr]).all();
+  ).bind(...(chain ? [rawAddr, rawAddr, lowerAddr, lowerAddr, chain.toLowerCase()] : [rawAddr, rawAddr, lowerAddr, lowerAddr])).all();
 
   return { profile, txs: txs?.results || [] };
 }
@@ -674,7 +841,11 @@ export async function queueHandler(batch, env) {
   for (const m of batch.messages) {
     try {
       let body;
-      try { body = JSON.parse(m.body); } catch { body = {}; }
+      try {
+        body = typeof m.body === "string" ? JSON.parse(m.body) : (m.body || {});
+      } catch {
+        body = {};
+      }
       if (body.kind === "public_alert") {
         await postPublicAlert(env, body.whale_id);
       } else {

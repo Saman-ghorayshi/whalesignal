@@ -27,12 +27,14 @@ jobs:
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
           STARTING_BALANCE: "100"
         run: |
+          ALERTS_URL="${R2_ALERTS_URL:-https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev/history?limit=20}"
           python -m trading_loop.main \
             --db ./trades.db \
-            --alerts-url "$R2_ALERTS_URL" \
+            --alerts-url "$ALERTS_URL" \
             --testnet-key "$HL_TESTNET_KEY" \
             --starting-balance "$STARTING_BALANCE" \
-            --gemini-key "$GEMINI_KEY"
+            --gemini-key "$GEMINI_KEY" \
+            --once
 
       - name: Commit trades.db back to repo
         run: |

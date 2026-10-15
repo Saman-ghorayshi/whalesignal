@@ -125,7 +125,9 @@ footer a:hover{color:var(--t2)}
 </div>
 
 <script>
-const API = 'https://whalesignal-bot.samsha.workers.dev/latest?limit=6';
+const urlParams = new URLSearchParams(window.location.search);
+const BASE_API = urlParams.get('api') || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8787' : 'https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev');
+const API = `${BASE_API}/latest?limit=6`;
 const POLL_S = 30;
 let tid;
 
@@ -163,11 +165,14 @@ function render(data){
     const tagCls='tag-'+chain.toLowerCase();
     const confPct=al.confidence!=null?Math.round(al.confidence*100)+'%':'—';
     const txTag=al.tx_type==='exchange_inflow'?' → exchange':al.tx_type==='exchange_outflow'?' ← exchange':'';
-    return '<div class="ace '+cls+'"><div class="ace-grid">'+
+    const targetAddr=al.whale||al.to||'';
+    const linkUrl='wallet.html?addr='+encodeURIComponent(targetAddr)+(chain?'&chain='+chain.toLowerCase():'');
+    return '<a href="'+linkUrl+'" style="text-decoration:none;color:inherit;display:block">'+
+      '<div class="ace '+cls+'"><div class="ace-grid">'+
       '<i class="ace-icon">'+icon+'</i>'+
       '<div class="ace-body"><div class="ace-hl">'+esc(al.headline||'Whale move detected')+'</div><div class="ace-why">'+esc(al.interpretation||'')+'</div></div>'+
       '<div class="ace-right"><span class="ace-amt">'+fmt(al.usd_value)+' '+al.symbol+'</span><span><span class="tag-chain '+tagCls+'">'+chain.toUpperCase()+'</span>'+esc(txTag)+'</span></div></div>'+
-      '<div class="ace-ft"><span>'+emoji+' '+sig.charAt(0).toUpperCase()+sig.slice(1)+'</span><span>'+confPct+'</span><span>'+ago(al.detected_at)+'</span></div></div>';
+      '<div class="ace-ft"><span>'+emoji+' '+sig.charAt(0).toUpperCase()+sig.slice(1)+'</span><span>'+confPct+'</span><span>'+ago(al.detected_at)+'</span><span style="margin-left:auto;color:var(--a);font-weight:510">View Graph & Fraud Score →</span></div></div></a>';
   }).join('');
 }
 

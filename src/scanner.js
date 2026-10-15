@@ -25,7 +25,7 @@ import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor } from "./wor
 
 // consts (also overrideable via env)
 const DEFAULT_MIN_USD = 500_000;
-const DEFAULT_MAX_BLOCKS = 10;
+const DEFAULT_MAX_BLOCKS = 2; // Keep bounded to stay safely under Cloudflare Workers 50 subrequests limit
 // KV free tier = 1K writes/day. Scanner cron = 1/min (real cron floor), so
 // we must NOT write per-tick. Instead we decay-cache: refresh market_cache
 // only if the cached object is older than MARKET_CACHE_TTL_S. That gives us
@@ -34,14 +34,10 @@ const MARKET_CACHE_TTL_S = 300;
 const TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"; // Transfer(addr,a,uint256)
 
-// known stablecoin + tracked-token contract → symbol mapping (eth mainnet)
-// used by ERC20 log filtering. add as we expand chains.
+// Primary tracked stablecoin contracts (USDT + USDC represent >95% of ERC20 whale transfer volume)
 const TOKENS_BY_CONTRACT = {
   "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
-  "0x6b175474e89094c44da98b954eedeac495271d0f": "DAI",
-  "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "WBTC",
-  "0x514910771af9ca656af840dff83e8264ecf986ca": "LINK",
 };
 
 // ─── pure helpers (testable without env) ──────────────────────────────
@@ -449,12 +445,16 @@ async function recentWhalesFromWallet(env, address, chain) {
 /** Fetch the latest block height for a chain. Returns an int (eth: decimal number, btc: height). */
 export async function fetchLatestBlockHeight(env, chain) {
   if (chain === "btc") {
-    const j = await fetchJSON("https://blockchain.info/latestblock");
+    try {
+      const b = await fetchJSON("https://api.blockcypher.com/v1/btc/main", { timeoutMs: 5000 });
+      if (b && typeof b.height === "number") return b.height;
+    } catch (e) {
+      console.warn("[scanner:btc] blockcypher tip failed, trying blockchain.info:", e.message);
+    }
+    const j = await fetchJSON("https://blockchain.info/latestblock", { timeoutMs: 8000 });
     return j.height;
   }
   if (chain === "eth") {
-    // etherscan V2 (V1 was deprecated — returns "switch to V2 migration").
-    // V2 requires a key even for free tier; ETHSCAN_KEY env var is mandatory.
     const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
@@ -521,7 +521,12 @@ export async function refreshMarketCache(env) {
     "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
   const cg = await fetchJSON(cgUrl, { timeoutMs: 6000 });
 
-  const fg = await fetchJSON("https://api.alternative.me/fng/?limit=1", { timeoutMs: 4000 });
+  let fg = null;
+  try {
+    fg = await fetchJSON("https://api.alternative.me/fng/?limit=1", { timeoutMs: 3000 });
+  } catch (e) {
+    console.warn("[scanner] alternative.me fear_greed fetch failed:", e.message);
+  }
 
   const cache = {
     // coingecko simple/price responds as { bitcoin: {usd, usd_24h_change}, ethereum: {...} }
@@ -718,5 +723,25 @@ export default {
     }
     console.log("[scanner] tick done:", JSON.stringify(results));
     return results;
+  },
+
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (url.pathname === "/scan" || url.pathname === "/tick") {
+      const auth = request.headers.get("authorization") || url.searchParams.get("token");
+      if (env.ADMIN_TOKEN && auth !== `Bearer ${env.ADMIN_TOKEN}` && auth !== env.ADMIN_TOKEN) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      const results = await this.scheduled({}, env, ctx);
+      return new Response(JSON.stringify({ ok: true, results }), {
+        headers: { "content-type": "application/json" }
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, service: "whalesignal-scanner" }), {
+      headers: { "content-type": "application/json" }
+    });
   },
 };

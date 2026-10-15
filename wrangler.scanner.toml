@@ -26,13 +26,13 @@ queue = "whalesignal-q"
 binding = "DB"
 database_name = "whalesignal-db"
 # placeholder — replaced by deploy_all.py after `wrangler d1 create`
-database_id = "__FILL_ME__"
+database_id = "6e369b7a-a8df-4864-b8f5-7bdc171ecf3d"
 
 # KV binding — set id here OR let deploy_all.py inject it
 [[kv_namespaces]]
 binding = "KV"
 # placeholder — replaced by deploy_all.py after `wrangler kv namespace create`
-id = "__FILL_ME__"
+id = "1b3b2a8763b0497880983d3e9d26f76a"
 
 # Free Workers cron floor is once per minute. The plan targets every 30s;
 # that isn't achievable on a real cron trigger. We set every minute here.
