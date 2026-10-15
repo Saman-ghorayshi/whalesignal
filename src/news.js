@@ -12,6 +12,40 @@
 
 import { isAuthorizedAdmin } from "./worker-utils.js";
 
+/**
+ * CryptoPanic aggregator — the speed layer. CryptoPanic ingests hundreds of
+ * crypto outlets + social in near-real-time; one API call beats waiting on
+ * 10 slow RSS feeds. Free tier, no key needed (auth_token optional).
+ * Returns normalized items like fetchSource does.
+ */
+async function fetchCryptoPanic(env) {
+  const auth = env.NEWS_TOKEN ? `&auth_token=${env.NEWS_TOKEN}` : "";
+  const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot${auth}`;
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const res = await fetch(url, {
+      signal: ctl.signal,
+      headers: { "user-agent": "WhaleSignal/1.0 (news aggregator)" },
+    });
+    if (!res.ok) throw new Error(`CryptoPanic HTTP ${res.status}`);
+    const j = await res.json();
+    const now = Date.now();
+    return (j.results || []).map((p) => ({
+      title: String(p.title || "").slice(0, 300),
+      url: p.url || `https://cryptopanic.com/news/${p.id}/`,
+      publishedAt: p.published_at ? Date.parse(p.published_at) : now,
+      summary: "",
+      source: "cryptopanic",
+      // weight by source domain reputation when known, else 0.7
+      weight: 0.7,
+      panicVotes: { positive: p.votes?.positive || 0, negative: p.votes?.negative || 0 },
+    })).filter((it) => it.title && it.url);
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
 const SOURCES = [
   // Tier 1 — highest signal, every run
   { name: "coindesk", rss: "https://www.coindesk.com/arc/outboundfeeds/rss/", weight: 1.0 },
@@ -263,9 +297,9 @@ async function fetchSource(src) {
  * D1 writes are batched (Cloudflare caps subrequests/API calls per
  * invocation — per-item queries blow past it at 47 sources).
  */
-export async function runAggregation(env, sources = SOURCES) {
+export async function runAggregation(env, sources = SOURCES, extraItems = []) {
   const results = await Promise.allSettled(sources.map(fetchSource));
-  const items = [];
+  const items = [...extraItems];
   for (const r of results) {
     if (r.status === "fulfilled") items.push(...r.value);
     else console.warn("[news] source failed:", r.reason?.message);
@@ -374,13 +408,25 @@ export async function getRelevantNews(env, { symbol, detectedAt, windowMs = 12 *
 
 export default {
   async scheduled(event, env, ctx) {
-    // Macro/world tier runs on the 15-min cadence (slower-moving, fewer
-    // subrequests per tick); crypto tiers run every 5 min.
-    const isMacroTick = event.cron === "*/15 * * * *";
-    const sources = isMacroTick
-      ? SOURCES.filter((s) => s.macro)
-      : SOURCES.filter((s) => !s.macro);
-    ctx.waitUntil(runAggregation(env, sources));
+    // Three cadences:
+    //   */2  — speed layer: Tier-1 crypto RSS + CryptoPanic aggregator
+    //   */5  — crypto long tail (tiers 2-4)
+    //   */15 — macro/world tier (slow-moving)
+    const cron = event.cron || "";
+    if (cron.startsWith("*/2")) {
+      const tier1 = SOURCES.filter((s) => !s.macro && (s.weight || 0) >= 0.8);
+      ctx.waitUntil((async () => {
+        let panicItems = [];
+        try { panicItems = await fetchCryptoPanic(env); }
+        catch (e) { console.warn("[news] cryptopanic failed:", e.message); }
+        await runAggregation(env, tier1, panicItems);
+      })());
+    } else if (cron.startsWith("*/5")) {
+      const tail = SOURCES.filter((s) => !s.macro && (s.weight || 0) < 0.8);
+      ctx.waitUntil(runAggregation(env, tail));
+    } else {
+      ctx.waitUntil(runAggregation(env, SOURCES.filter((s) => s.macro)));
+    }
   },
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -389,10 +435,18 @@ export default {
         return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 });
       }
       const tier = url.searchParams.get("tier");
-      const sources = tier === "macro"
-        ? SOURCES.filter((s) => s.macro)
-        : tier === "crypto" ? SOURCES.filter((s) => !s.macro) : SOURCES;
-      const r = await runAggregation(env, sources);
+      let sources, extra = [];
+      if (tier === "macro") {
+        sources = SOURCES.filter((s) => s.macro);
+      } else if (tier === "fast") {
+        sources = SOURCES.filter((s) => !s.macro && (s.weight || 0) >= 0.8);
+        try { extra = await fetchCryptoPanic(env); } catch (e) { console.warn("[news] cryptopanic failed:", e.message); }
+      } else if (tier === "crypto") {
+        sources = SOURCES.filter((s) => !s.macro);
+      } else {
+        sources = SOURCES;
+      }
+      const r = await runAggregation(env, sources, extra);
       return new Response(JSON.stringify({ ok: true, ...r }), { headers: { "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ ok: true, worker: "whalesignal-news", status: "healthy" }), {
