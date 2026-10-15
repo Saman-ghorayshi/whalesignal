@@ -1046,6 +1046,121 @@ export async function scanChain(env, chain, market, budget = null) {
   return { chain, processed, newWhales: newlyCounted, primed: false };
 }
 
+// ─── TRON (USDT) — timestamp-based event polling ─────────────────────
+// TRON produces a block every ~3s (28k/day) — block-by-block scanning is
+// infeasible. Instead we poll TronGrid's TRC-20 Transfer events for USDT,
+// which is where virtually all TRON whale value moves. State tracks the
+// max block_timestamp seen (stored in scanner_state.last_block as ms).
+
+const TRON_USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+const TRON_USDT_DECIMALS = 6;
+
+/** Fetch USDT Transfer events since sinceMs (TronGrid, free, no key). */
+export async function fetchTronEvents(sinceMs, limit = 200) {
+  const url =
+    `https://api.trongrid.io/v1/contracts/${TRON_USDT_CONTRACT}/events` +
+    `?event_name=Transfer&limit=${limit}&order_by=block_timestamp,desc` +
+    `&min_block_timestamp=${sinceMs}`;
+  const j = await fetchJSON(url, { timeoutMs: 10000 });
+  if (!j || j.success !== true || !Array.isArray(j.data)) {
+    throw new Error(`TronGrid: bad response (success=${j?.success})`);
+  }
+  return j.data;
+}
+
+/** Parse TronGrid Transfer events into whale candidates. Pure. */
+export function extractCandidatesTRON(events) {
+  const out = [];
+  for (const e of events || []) {
+    const r = e.result || {};
+    const raw = r.value;
+    if (raw == null) continue;
+    const amount = Number(raw) / 10 ** TRON_USDT_DECIMALS;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const from = String(r.from || "").toLowerCase();
+    const to = String(r.to || "").toLowerCase();
+    if (!from || !to) continue;
+    out.push({
+      chain: "tron",
+      symbol: "USDT",
+      tx_hash: String(e.transaction_id || ""),
+      from_address: from,
+      to_address: to,
+      amount,
+      usd_value: amount, // USDT ≈ $1
+      block_number: e.block_number ?? null,
+      block_time: e.block_timestamp ?? null,
+      detected_at: Date.now(),
+      is_self_transfer: from === to,
+      contract_address: TRON_USDT_CONTRACT,
+    });
+  }
+  return out;
+}
+
+/**
+ * Scan TRON USDT transfers since the last-seen timestamp.
+ * Idempotent: UNIQUE(chain, tx_hash, symbol) + INSERT OR IGNORE.
+ */
+export async function scanTron(env, market, budget = null) {
+  const chain = "tron";
+  const minUsd = parseEnvInt(env.MIN_USD, DEFAULT_MIN_USD);
+  let state = await getState(env, chain);
+  const now = Date.now();
+
+  // First run: prime from now (don't backfill history on deploy).
+  if (state.last_block == null) {
+    // ensure the scanner_state row exists
+    try {
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO scanner_state (chain, last_block, last_scan) VALUES (?, ?, ?)"
+      ).bind(chain, now, now).run();
+    } catch {}
+    console.log(`[scanner:tron] first run — priming last_block=${now}`);
+    await persistState(env, chain, now, 0, 0);
+    return { chain, processed: 0, newWhales: 0, primed: true };
+  }
+
+  const sinceMs = Number(state.last_block) || now - 120000;
+  let events;
+  try {
+    if (budget && budget.remaining <= 0) {
+      console.warn("[scanner:tron] subrequest budget exhausted — skipping tick");
+      return { chain, processed: 0, newWhales: 0, primed: false };
+    }
+    if (budget) budget.remaining--;
+    events = await fetchTronEvents(sinceMs + 1);
+  } catch (e) {
+    console.warn("[scanner:tron] fetch failed:", e.message);
+    throw e;
+  }
+
+  const walletMap = await loadWalletMap(env);
+  const candidates = extractCandidatesTRON(events);
+  const whales = classifyWhales(filterWhales(candidates, minUsd), walletMap);
+
+  let newWhales = 0;
+  let maxTs = sinceMs;
+  for (const w of whales) {
+    try {
+      const fromKey = String(w.from_address).toLowerCase();
+      const walletInfo = walletMap.get(fromKey) ?? null;
+      const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
+      const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
+      if (inserted) newWhales++;
+    } catch (e) {
+      console.warn(`[scanner:tron] whale insert failed:`, e.message);
+    }
+  }
+  // Advance the watermark past everything we saw (even sub-threshold —
+  // re-fetching them every tick would be pure waste).
+  for (const c of candidates) {
+    if (c.block_time && c.block_time > maxTs) maxTs = c.block_time;
+  }
+  await persistState(env, chain, maxTs, 0, newWhales);
+  return { chain, processed: events.length, newWhales, primed: false };
+}
+
 // ─── entry ─────────────────────────────────────────────────────────────
 
 export default {
@@ -1115,9 +1230,13 @@ export default {
     const budget = { remaining: SCAN_SUBREQUEST_BUDGET };
 
     const results = [];
-    for (const chain of ["btc", "eth"]) {
+    for (const chain of ["btc", "eth", "tron"]) {
       try {
-        results.push(await scanChain(env, chain, market, budget));
+        results.push(
+          chain === "tron"
+            ? await scanTron(env, market, budget)
+            : await scanChain(env, chain, market, budget)
+        );
       } catch (e) {
         console.error(`[scanner:${chain}] scan failed:`, e.message);
         await bumpErrors(env, chain);
