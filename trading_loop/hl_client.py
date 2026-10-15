@@ -28,9 +28,9 @@ class HLClient:
         self.account = Account.from_key(wallet_private_key)
         self.address = self.account.address
         url = TESTNET_URL if testnet else MAINNET_URL
-        self.info = Info(url, skip_ws=True)
+        self.info = Info(url)
         self.exchange = Exchange(
-            self.account, url, account_address=self.address, skip_ws=True
+            self.account, url, account_address=self.address
         )
         self._sz_decimals_cache = {}
 
