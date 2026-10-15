@@ -48,7 +48,7 @@ body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSys
 <header><div class="hdr"><span class="logo"><i>🐋</i>WhaleSignal Studio</span><span class="live"><span class="dot"></span><span id="dotTxt">loading</span></span></div></header>
 <div class="con">
   <div id="err"></div>
-  <div class="sec-t">Pick a whale</div>
+  <div class="sec-t" id="pickSecT">Pick a whale</div>
   <div class="queue" id="queue"></div>
   <div id="brief"></div>
   <div class="sec-t">Virality checklist</div>
@@ -70,10 +70,24 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m||'Cop
 function copy(t){navigator.clipboard.writeText(t).then(()=>toast()).catch(()=>toast('Copy failed'))}
 function fmtT(ts){const d=new Date(ts);const h=Math.floor((Date.now()-ts)/60000);return h<1?'just now':h<60?h+'m ago':Math.floor(h/60)+'h ago'}
 function renderQueue(){
-  document.getElementById('queue').innerHTML=briefs.map((b,i)=>{
+  const qEl = document.getElementById('queue');
+  const tEl = document.getElementById('pickSecT');
+  // Only show the picker when there's actually a choice to make
+  if (briefs.length <= 1) {
+    qEl.style.display = 'none';
+    if (tEl) tEl.style.display = 'none';
+    if (briefs.length === 0) {
+      qEl.style.display = 'block';
+      qEl.innerHTML = '<div class="empty"><div class="e">🐋</div><p>No big whales yet.<br>Check back soon.</p></div>';
+    }
+    return;
+  }
+  qEl.style.display = 'flex';
+  if (tEl) tEl.style.display = 'block';
+  qEl.innerHTML = briefs.map((b,i)=>{
     const m=b.meta;
     return '<div class="qcard'+(i===cur?' on':'')+'" onclick="pick('+i+')"><div class="amt">$'+(m.usd_value>=1e6?(m.usd_value/1e6).toFixed(1)+'M':(m.usd_value/1e3).toFixed(0)+'K')+'</div><div class="sub">'+esc(m.symbol)+' → '+esc(m.to)+'<br>'+fmtT(m.detected_at||Date.now())+'</div></div>';
-  }).join('')||'<div class="empty"><div class="e">🐋</div><p>No big whales yet.<br>Check back soon.</p></div>';
+  }).join('');
 }
 function pick(i){cur=i;renderQueue();renderBrief()}
 function renderBrief(){
