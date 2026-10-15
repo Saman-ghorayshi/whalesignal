@@ -18,6 +18,18 @@ import * as bot from "../src/bot.js";
 export function makeWorld() {
   const DB = new MockD1();
   DB.execFile("schema/whalesignal.sql");
+  // Apply incremental migrations so the mock DB matches production D1.
+  for (const m of [
+    "001_whales_composite_unique.sql",
+    "002_scanner_state_tx_offset.sql",
+    "003_analyst_fixes.sql",
+    "004_fix_analysis_fk.sql",
+    "005_news_predictions.sql",
+    "006_market_data.sql",
+    "007_causal.sql",
+  ]) {
+    try { DB.execFile(`schema/migrations/${m}`); } catch (e) { /* idempotent */ }
+  }
 
   // Seed wallet labels so classifyWhales stamps exchange_inflow/outflow.
   // The fixture block addresses (Binance-looking dest) need to be labeled

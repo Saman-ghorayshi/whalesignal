@@ -254,6 +254,19 @@ export function formatAlert(whale, analysis, market, opts = {}) {
     lines.push(`📰 Catalyst: ${sanitizeAIText(analysis.catalyst_title, 160)}${curl}`);
   }
   if (analysis?.ta_summary) lines.push(`📈 TA: ${sanitizeAIText(analysis.ta_summary, 300)}`);
+  // Causal chain: what led here (news → sentiment → whale).
+  if (analysis?.causal_chain) {
+    try {
+      const chain = JSON.parse(analysis.causal_chain);
+      if (Array.isArray(chain) && chain.length > 1) {
+        const shown = chain.slice(-4, -1); // exclude the whale itself (already the alert)
+        if (shown.length) {
+          lines.push("⛓ What led here:");
+          for (const l of shown) lines.push(`${l.icon || "•"} ${sanitizeAIText(l.text, 110)}`);
+        }
+      }
+    } catch {}
+  }
   lines.push(`🔍 ${explorerLink}`);
   // BT13: org drift — real repo is saman-ghorayshi/whalesignal.
   lines.push(`🌐 Money-Flow Graph: https://saman-ghorayshi.github.io/whalesignal/wallet.html?addr=${whale.from_address}&chain=${whale.chain}`);
@@ -1058,7 +1071,8 @@ async function postPublicAlert(env, whaleId, chartUrl = null) {
   // Load whale + analysis (incl. whale-intelligence fields)
   const whale = await env.DB.prepare(
     `SELECT w.*, a.headline, a.interpretation, a.signal, a.confidence, a.related_factor,
-            a.motive, a.motive_confidence, a.catalyst_title, a.catalyst_url, a.ta_summary
+            a.motive, a.motive_confidence, a.catalyst_title, a.catalyst_url, a.ta_summary,
+            a.causal_chain, a.regime
      FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id
      WHERE w.id = ?`
   ).bind(whaleId).first();

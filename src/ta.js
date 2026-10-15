@@ -86,6 +86,149 @@ export function swingLevels(klines, lookback = 48) {
   };
 }
 
+// ─── pro indicators ─────────────────────────────────────────────────
+
+/** Average True Range — the market's per-candle volatility in price units. */
+export function atr(klines, period = 14) {
+  if (!klines || klines.length < period + 1) return null;
+  const trs = [];
+  for (let i = 1; i < klines.length; i++) {
+    const h = klines[i].h, l = klines[i].l, pc = klines[i - 1].c;
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  const recent = trs.slice(-period);
+  return recent.reduce((a, b) => a + b, 0) / period;
+}
+
+/** VWAP over the klines (typical price × volume). Institutional benchmark. */
+export function vwap(klines) {
+  if (!klines || !klines.length) return null;
+  let pv = 0, v = 0;
+  for (const k of klines) {
+    const tp = (k.h + k.l + k.c) / 3;
+    pv += tp * (k.v || 0); v += (k.v || 0);
+  }
+  return v > 0 ? pv / v : null;
+}
+
+/** Stochastic RSI — where RSI sits in its recent range (0-100). */
+export function stochRsi(closes, rsiPeriod = 14, stochPeriod = 14) {
+  if (!closes || closes.length < rsiPeriod + stochPeriod) return null;
+  const rsis = [];
+  for (let i = rsiPeriod; i <= closes.length; i++) {
+    const r = rsi(closes.slice(0, i), rsiPeriod);
+    if (r == null) return null;
+    rsis.push(r);
+  }
+  const slice = rsis.slice(-stochPeriod);
+  const lo = Math.min(...slice), hi = Math.max(...slice);
+  if (hi === lo) return 50;
+  return ((rsis[rsis.length - 1] - lo) / (hi - lo)) * 100;
+}
+
+/** On-Balance Volume — cumulative volume flow. Rising = accumulation. */
+export function obv(klines) {
+  if (!klines || klines.length < 2) return null;
+  let o = 0;
+  for (let i = 1; i < klines.length; i++) {
+    if (klines[i].c > klines[i - 1].c) o += klines[i].v || 0;
+    else if (klines[i].c < klines[i - 1].c) o -= klines[i].v || 0;
+  }
+  return o;
+}
+
+/** OBV trend over the last N values: rising/falling/flat. */
+export function obvTrend(klines, lookback = 10) {
+  if (!klines || klines.length < lookback + 1) return null;
+  const vals = [];
+  for (let i = klines.length - lookback; i <= klines.length; i++) {
+    vals.push(obv(klines.slice(0, i)));
+  }
+  const first = vals[0], last = vals[vals.length - 1];
+  if (last == null || first == null) return null;
+  const chg = first !== 0 ? (last - first) / Math.abs(first) : 0;
+  return chg > 0.05 ? "rising" : chg < -0.05 ? "falling" : "flat";
+}
+
+/**
+ * Fibonacci retracement levels from the swing high/low.
+ * Returns {levels: [{ratio, price}], position} — where price sits.
+ */
+export function fibonacci(klines, lookback = 72) {
+  const { support: lo, resistance: hi } = swingLevels(klines, lookback);
+  if (lo == null || hi == null || hi <= lo) return null;
+  const price = klines[klines.length - 1].c;
+  const range = hi - lo;
+  const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  const levels = ratios.map((r) => ({ ratio: r, price: hi - range * r }));
+  // nearest level below/above price
+  let position = "mid";
+  if (price > hi) position = "above_swing_high";
+  else if (price < lo) position = "below_swing_low";
+  else {
+    const below = levels.filter((l) => l.price <= price).pop();
+    position = below ? `above_fib_${below.ratio}` : "mid";
+  }
+  return { levels: levels.map((l) => ({ ratio: l.ratio, price: +l.price.toFixed(2) })), position };
+}
+
+/**
+ * ADX — trend STRENGTH (0-100), direction-agnostic.
+ * <20 = ranging, 20-40 = trending, >40 = strong trend.
+ */
+export function adx(klines, period = 14) {
+  if (!klines || klines.length < period * 2 + 1) return null;
+  const dmPlus = [], dmMinus = [], trs = [];
+  for (let i = 1; i < klines.length; i++) {
+    const up = klines[i].h - klines[i - 1].h;
+    const dn = klines[i - 1].l - klines[i].l;
+    dmPlus.push(up > dn && up > 0 ? up : 0);
+    dmMinus.push(dn > up && dn > 0 ? dn : 0);
+    trs.push(Math.max(
+      klines[i].h - klines[i].l,
+      Math.abs(klines[i].h - klines[i - 1].c),
+      Math.abs(klines[i].l - klines[i - 1].c)
+    ));
+  }
+  const smooth = (arr) => {
+    let s = arr.slice(0, period).reduce((a, b) => a + b, 0);
+    const out = [s];
+    for (let i = period; i < arr.length; i++) s = s - s / period + arr[i], out.push(s);
+    return out;
+  };
+  const sPlus = smooth(dmPlus), sMinus = smooth(dmMinus), sTr = smooth(trs);
+  const dx = [];
+  for (let i = 0; i < sPlus.length; i++) {
+    if (!sTr[i]) continue;
+    const pdi = (sPlus[i] / sTr[i]) * 100, mdi = (sMinus[i] / sTr[i]) * 100;
+    dx.push(sTr[i] === 0 ? 0 : (Math.abs(pdi - mdi) / (pdi + mdi || 1)) * 100);
+  }
+  if (!dx.length) return null;
+  const recent = dx.slice(-period);
+  const adxVal = recent.reduce((a, b) => a + b, 0) / recent.length;
+  // direction from the last PDI/MDI
+  const i = sPlus.length - 1;
+  const dir = sPlus[i] >= sMinus[i] ? "up" : "down";
+  return { value: +adxVal.toFixed(1), direction: dir };
+}
+
+/** Volatility regime: current ATR vs its own history percentile. */
+export function volatilityRegime(klines, period = 14) {
+  if (!klines || klines.length < 60) return null;
+  const atrs = [];
+  for (let i = period + 1; i <= klines.length; i++) {
+    atrs.push(atr(klines.slice(0, i), period));
+  }
+  const cur = atrs[atrs.length - 1];
+  const sorted = [...atrs].sort((a, b) => a - b);
+  const pct = sorted.findIndex((v) => v >= cur) / sorted.length;
+  return {
+    atr: +cur.toFixed(2),
+    percentile: +pct.toFixed(2),
+    regime: pct > 0.8 ? "high_vol" : pct < 0.2 ? "low_vol" : "normal_vol",
+  };
+}
+
 // ─── klines fetching ────────────────────────────────────────────────
 
 /**
@@ -335,11 +478,18 @@ export function summarizeTA(snap) {
   const bits = [
     `$${snap.price.toLocaleString("en-US", { maximumFractionDigits: 0 })} (${snap.change24h >= 0 ? "+" : ""}${snap.change24h}%/24h)`,
     `RSI ${snap.rsi14 ?? "n/a"}`,
-    snap.trend,
-    snap.bbPos === "near_upper" ? "hugging upper Bollinger" : snap.bbPos === "near_lower" ? "hugging lower Bollinger" : "mid Bollinger",
+    snap.regime ? `regime: ${snap.regime.replace(/_/g, " ")}` : snap.trend,
+    snap.bbPos === "near_upper" || snap.bbPos === "above_upper" ? "hugging upper Bollinger" : snap.bbPos === "near_lower" || snap.bbPos === "below_lower" ? "hugging lower Bollinger" : "mid Bollinger",
   ];
   if (snap.volumeSpike) bits.push("volume spike");
   if (snap.macdBullish === true) bits.push("MACD bullish");
   else if (snap.macdBullish === false) bits.push("MACD bearish");
+  if (snap.adx) bits.push(`ADX ${snap.adx.value} ${snap.adx.direction}`);
+  if (snap.aboveVwap === true) bits.push("above VWAP");
+  else if (snap.aboveVwap === false) bits.push("below VWAP");
+  if (snap.stochRsi != null) bits.push(`StochRSI ${snap.stochRsi}`);
+  if (snap.obvTrend && snap.obvTrend !== "flat") bits.push(`OBV ${snap.obvTrend}`);
+  if (snap.fib) bits.push(`fib ${snap.fib.position.replace(/_/g, " ")}`);
+  if (snap.volRegime && snap.volRegime.regime !== "normal_vol") bits.push(snap.volRegime.regime.replace(/_/g, " "));
   return bits.join(" · ");
 }

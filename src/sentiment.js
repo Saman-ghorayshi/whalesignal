@@ -94,6 +94,64 @@ async function newsSentiment24h(env) {
   }
 }
 
+/**
+ * Deribit BTC options put/call open-interest ratio (free public API).
+ * High P/C = hedging/fear; low = complacency/greed.
+ */
+async function fetchDeribitPutCall() {
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const res = await fetch(
+      "https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=BTC&kind=option",
+      { signal: ctl.signal }
+    );
+    if (!res.ok) throw new Error(`Deribit HTTP ${res.status}`);
+    const j = await res.json();
+    const books = j.result || [];
+    let putOI = 0, callOI = 0;
+    for (const b of books) {
+      const oi = b.open_interest || 0;
+      // instrument_name like BTC-27DEC24-100000-P (P=put, C=call)
+      const kind = (b.instrument_name || "").split("-").pop();
+      if (kind === "P") putOI += oi;
+      else if (kind === "C") callOI += oi;
+    }
+    if (callOI <= 0) throw new Error("Deribit: no call OI");
+    return { ratio: putOI / callOI, putOI, callOI };
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+/**
+ * US spot BTC ETF daily net flow (Farside Investors, free HTML page).
+ * Best-effort scrape: returns $M net flow for the latest day, or null.
+ */
+async function fetchEtfFlow() {
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const res = await fetch("https://farside.co.uk/btc/", {
+      signal: ctl.signal,
+      headers: { "user-agent": "Mozilla/5.0 (compatible; WhaleSignal/1.0)" },
+    });
+    if (!res.ok) throw new Error(`Farside HTTP ${res.status}`);
+    const html = await res.text();
+    // The page has a "Total" row with the latest net flow like "$ 1,234.5"
+    // or "(123.4)" for negative. We grab the last $-figure in the totals area.
+    const totalsIdx = html.toLowerCase().lastIndexOf("total");
+    const tail = totalsIdx > 0 ? html.slice(totalsIdx, totalsIdx + 2000) : html;
+    const m = tail.match(/\(?\$?\s?([\d,]+\.\d)\)?/);
+    if (!m) throw new Error("Farside: no flow figure");
+    const val = parseFloat(m[1].replace(/,/g, ""));
+    const negative = m[0].includes("(");
+    return { net_usd_m: negative ? -val : val };
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
 export function compositeLabel(v) {
   if (v <= -0.6) return "extreme_fear";
   if (v <= -0.2) return "fear";
@@ -104,11 +162,13 @@ export function compositeLabel(v) {
 
 export async function runSentimentTick(env) {
   const now = Date.now();
-  const [fg, fundingBTC, fundingETH, news] = await Promise.all([
+  const [fg, fundingBTC, fundingETH, news, deribit, etf] = await Promise.all([
     fetchFearGreed().catch((e) => (console.warn("[sentiment] F&G failed:", e.message), null)),
     fetchFunding("BTC").catch((e) => (console.warn("[sentiment] BTC funding failed:", e.message), null)),
     fetchFunding("ETH").catch((e) => (console.warn("[sentiment] ETH funding failed:", e.message), null)),
     newsSentiment24h(env),
+    fetchDeribitPutCall().catch((e) => (console.warn("[sentiment] Deribit failed:", e.message), null)),
+    fetchEtfFlow().catch((e) => (console.warn("[sentiment] ETF flow failed:", e.message), null)),
   ]);
 
   // normalize each to -1..1
@@ -117,8 +177,12 @@ export async function runSentimentTick(env) {
   const fundAvg = [fundingBTC, fundingETH].filter((x) => x != null);
   const fundAvgN = fundAvg.length ? fundAvg.reduce((a, r) => a + fundN(r), 0) / fundAvg.length : 0;
   const newsN = Math.max(-1, Math.min(1, news.value || 0));
+  // put/call: ~0.7 neutral; >1 fear, <0.5 greed → map to -1..1 (inverted)
+  const pcN = deribit ? Math.max(-1, Math.min(1, (0.7 - deribit.ratio) / 0.5)) : 0;
+  // ETF flow: +$500M/day = strong greed; -$500M = strong fear
+  const etfN = etf ? Math.max(-1, Math.min(1, etf.net_usd_m / 500)) : 0;
 
-  const composite = +(0.4 * fgN + 0.3 * fundAvgN + 0.3 * newsN).toFixed(3);
+  const composite = +(0.3 * fgN + 0.25 * fundAvgN + 0.2 * newsN + 0.15 * pcN + 0.1 * etfN).toFixed(3);
   const snap = {
     t: now,
     fear_greed: fg?.value ?? null,
@@ -127,6 +191,8 @@ export async function runSentimentTick(env) {
     funding_eth: fundingETH,
     news_sentiment: +newsN.toFixed(3),
     news_count: news.n,
+    put_call_ratio: deribit ? +deribit.ratio.toFixed(3) : null,
+    etf_net_usd_m: etf ? +etf.net_usd_m.toFixed(1) : null,
     composite,
     label: compositeLabel(composite),
   };
@@ -146,7 +212,7 @@ export async function runSentimentTick(env) {
   } catch (e) {
     console.warn("[sentiment] KV write failed:", e.message);
   }
-  console.log(`[sentiment] tick: F&G ${snap.fear_greed} | fund BTC ${snap.funding_btc} | news ${snap.news_sentiment} (${snap.news_count}) → ${snap.label} (${snap.composite})`);
+  console.log(`[sentiment] tick: F&G ${snap.fear_greed} | fund BTC ${snap.funding_btc} | P/C ${snap.put_call_ratio} | ETF $${snap.etf_net_usd_m}M | news ${snap.news_sentiment} (${snap.news_count}) → ${snap.label} (${snap.composite})`);
   return snap;
 }
 
