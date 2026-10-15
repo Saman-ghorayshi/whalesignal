@@ -52,12 +52,20 @@ const TOKENS_BY_CONTRACT = {
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
 };
 
+// BSC (BNB Chain) BEP-20 tokens — same mechanism, different contracts
+const BSC_TOKENS_BY_CONTRACT = {
+  "0x55d398a42c2eb92d0c9b299338aa7b8ed9f114a": "USDT",
+  "0x8ac7230481977290e4d55a9c6e547a2b9df2a54c": "USDC",
+  "0x7130d40692f8b028100d12b8546c800a15e65430": "BUSD",
+};
+
 // ─── tunables ─────────────────────────────────────────────────────────
 
 // Confirmation depth: never trust the unconfirmed tip. A reorged "$50M
 // whale" alert is a credibility-killer; a 1-2 block lag costs nothing on a
 // 1/min cadence.
-const CONFIRMATIONS = { btc: 1, eth: 2 };
+const CONFIRMATIONS = { btc: 1, eth: 2, bsc: 3, tron: 1, solana: 1 };
+const EVM_CHAIN_IDS = { eth: 1, bsc: 56 };
 
 // Workers allow 50 subrequests per invocation. Market+news+tip overhead is
 // ~9-12, so the scan phase gets the rest. Shared across both chains per tick.
@@ -237,27 +245,28 @@ export function extractCandidatesBTC(block, market) {
  * and are filtered by extractERC20Candidates (separate, 1 additional RPC).
  * Pure.
  */
-export function extractCandidatesETH(block, market) {
+export function extractCandidatesETH(block, market, chain = "eth") {
   const out = [];
   if (!block || !Array.isArray(block.transactions)) return out;
+  const nativeSym = chain === "bsc" ? "BNB" : "ETH";
   for (const tx of block.transactions) {
     if (typeof tx === "string") continue; // we asked for full txs
     if (!tx.hash) continue;
     if (tx.to == null) continue; // contract creation — a deployment, not a transfer
-    const amount = hexToAmount(tx.value, 18); // wei -> ETH, BigInt-exact
+    const amount = hexToAmount(tx.value, 18); // wei -> native, BigInt-exact
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const from = tx.from || "";
     const to = tx.to || "";
     out.push({
-      chain: "eth",
+      chain,
       tx_hash: tx.hash,
       from_address: from,
       to_address: to,
       amount,
-      symbol: "ETH",
+      symbol: nativeSym,
       block_number: parseInt(block.number, 16),
       block_time: parseInt(block.timestamp, 16) * 1000,
-      usd_value: usdValue(amount, "ETH", market),
+      usd_value: usdValue(amount, nativeSym, market),
       is_self_transfer: from && from.toLowerCase() === to.toLowerCase() ? 1 : 0,
     });
   }
@@ -268,13 +277,14 @@ export function extractCandidatesETH(block, market) {
  * Filter ERC20 Transfer logs (from eth_getLogs filtered by topic0) into candidates.
  * Pure. `logs` = array of log entries with topics=[topic0, from, to] and data=hex amount.
  */
-export function extractERC20Candidates(logs, market) {
+export function extractERC20Candidates(logs, market, chain = "eth") {
   const out = [];
   if (!Array.isArray(logs)) return out;
   for (const lg of logs) {
     if (!Array.isArray(lg.topics) || lg.topics.length < 3) continue;
     const contract = (lg.address || "").toLowerCase();
-    const sym = TOKENS_BY_CONTRACT[contract];
+    const tokenMap = chain === "bsc" ? BSC_TOKENS_BY_CONTRACT : TOKENS_BY_CONTRACT;
+    const sym = tokenMap[contract];
     if (!sym) continue; // not a tracked token
     // topics are 32-byte hex words; from = bytes12..32, to likewise
     const from = "0x" + (lg.topics[1] || "").slice(26);
@@ -284,7 +294,7 @@ export function extractERC20Candidates(logs, market) {
     const amount = hexToAmount(lg.data, decimals); // BigInt-exact, NaN on malformed
     if (!Number.isFinite(amount)) continue;
     out.push({
-      chain: "eth",
+      chain,
       tx_hash: lg.transactionHash,
       from_address: from,
       to_address: to,
@@ -647,11 +657,23 @@ export async function fetchLatestBlockHeight(env, chain) {
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
     );
-    // A rate-limited/erroring etherscan returns {result: <error string>};
-    // parseInt gives NaN, which used to silently zero-out the whole scan.
     const h = parseInt(j?.result, 16);
     if (!Number.isFinite(h) || h <= 0) {
       throw new Error(`eth_blockNumber returned garbage: ${String(j?.result).slice(0, 120)}`);
+    }
+    return h;
+  }
+  if (chain === "bsc") {
+    // Etherscan V2 free doesn't cover BSC — use public BSC RPC
+    const r = await fetch("https://bsc-dataseed.binance.org", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+    });
+    const j = await r.json();
+    const h = parseInt(j?.result, 16);
+    if (!Number.isFinite(h) || h <= 0) {
+      throw new Error(`bsc blockNumber returned garbage: ${String(j?.result).slice(0, 120)}`);
     }
     return h;
   }
@@ -742,6 +764,21 @@ export async function fetchBlock(chain, blockNum, env, opts = {}) {
     block.nextTxIndex = 0;
     return block;
   }
+  if (chain === "bsc") {
+    const hex = "0x" + Number(blockNum).toString(16);
+    if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
+    const r = await fetch("https://bsc-dataseed.binance.org", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [hex, true] }),
+    });
+    const j = await r.json();
+    const block = j.result;
+    if (!block) throw new Error(`bsc block ${blockNum} not found`);
+    block.txComplete = true;
+    block.nextTxIndex = 0;
+    return block;
+  }
   throw new Error(`unsupported chain: ${chain}`);
 }
 
@@ -757,22 +794,44 @@ export async function fetchBlock(chain, blockNum, env, opts = {}) {
  * toBlock actually be honoured. Cost: |TOKENS_BY_CONTRACT| calls per block
  * (currently 2: USDT + USDC) — well within 5 req/s free-tier cap.
  */
-export async function fetchERC20Logs(blockNum, env, budget = null) {
+export async function fetchERC20Logs(blockNum, env, budget = null, chain = "eth") {
   const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
   const fromBlock = "0x" + Number(blockNum).toString(16);
   const toBlock = fromBlock;
   const out = [];
-  for (const contract of Object.keys(TOKENS_BY_CONTRACT)) {
+  const tokenMap = chain === "bsc" ? BSC_TOKENS_BY_CONTRACT : TOKENS_BY_CONTRACT;
+  for (const contract of Object.keys(tokenMap)) {
     if (!takeSubrequest(budget)) break; // out of budget — return what we have
-    const url = `https://api.etherscan.io/v2/api?chainid=1&module=logs&action=getLogs` +
-      `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
-      `&address=${contract}&topic0=${TRANSFER_TOPIC}${key}`;
+    let logsJson;
+    if (chain === "bsc") {
+      // Public BSC RPC — eth_getLogs
+      const r = await fetch("https://bsc-dataseed.binance.org", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+          params: [{ fromBlock, toBlock, address: contract, topics: [TRANSFER_TOPIC] }],
+        }),
+      });
+      logsJson = await r.json();
+    } else {
+      const chainid = EVM_CHAIN_IDS[chain] || 1;
+      const url = `https://api.etherscan.io/v2/api?chainid=${chainid}&module=logs&action=getLogs` +
+        `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
+        `&address=${contract}&topic0=${TRANSFER_TOPIC}${key}`;
+      try {
+        logsJson = await fetchJSON(url, { timeoutMs: 12000 });
+      } catch (e) {
+        console.warn(`erc20 logs fetch failed for ${contract}:`, e.message);
+        continue;
+      }
+    }
     try {
-      const j = await fetchJSON(url, { timeoutMs: 12000 });
+      const j = logsJson;
       if (Array.isArray(j.result)) out.push(...j.result);
     } catch (e) {
       // degrade gracefully — skip this token for this block
-      console.warn(`erc20 logs fetch failed for ${contract}:`, e.message);
+      console.warn(`erc20 logs parse failed for ${contract}:`, e.message);
     }
   }
   return out;
@@ -790,17 +849,22 @@ export async function refreshMarketCache(env) {
   let btcChange = prevCache?.btc?.change_24h ?? null;
   let ethPrice = prevCache?.eth?.price ?? null;
   let ethChange = prevCache?.eth?.change_24h ?? null;
+  let bnbPrice = prevCache?.bnb?.price ?? null;
+  let bnbChange = prevCache?.bnb?.change_24h ?? null;
 
   // 1. Primary: Coinbase spot (reliable from Cloudflare datacenter IPs, no rate limits)
   try {
-    const [btcRes, ethRes] = await Promise.all([
+    const [btcRes, ethRes, bnbRes] = await Promise.all([
       fetchJSON("https://api.coinbase.com/v2/prices/BTC-USD/spot", { timeoutMs: 4000 }),
       fetchJSON("https://api.coinbase.com/v2/prices/ETH-USD/spot", { timeoutMs: 4000 }),
+      fetchJSON("https://api.coinbase.com/v2/prices/BNB-USD/spot", { timeoutMs: 4000 }),
     ]);
     const bp = parseFloat(btcRes?.data?.amount);
     const ep = parseFloat(ethRes?.data?.amount);
+    const np = parseFloat(bnbRes?.data?.amount);
     if (Number.isFinite(bp) && bp > 0) btcPrice = bp;
     if (Number.isFinite(ep) && ep > 0) ethPrice = ep;
+    if (Number.isFinite(np) && np > 0) bnbPrice = np;
   } catch (e) {
     console.warn("[scanner] coinbase spot fetch failed:", e.message);
   }
@@ -808,34 +872,41 @@ export async function refreshMarketCache(env) {
   // 2. Secondary: CoinGecko (also provides 24h change)
   try {
     const cgUrl =
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true";
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,binancecoin&vs_currencies=usd&include_24hr_change=true";
     const cg = await fetchJSON(cgUrl, {
       timeoutMs: 5000,
       headers: { "User-Agent": "WhaleSignal/1.0 (price monitor; contact: github.com/saman-ghorayshi/whalesignal)" },
     });
     const bp = (cg?.bitcoin || cg?.prices?.bitcoin)?.usd;
     const ep = (cg?.ethereum || cg?.prices?.ethereum)?.usd;
+    const np = (cg?.binancecoin || cg?.prices?.binancecoin)?.usd;
     const bc = (cg?.bitcoin || cg?.prices?.bitcoin)?.usd_24h_change;
     const ec = (cg?.ethereum || cg?.prices?.ethereum)?.usd_24h_change;
+    const nc = (cg?.binancecoin || cg?.prices?.binancecoin)?.usd_24h_change;
     if ((btcPrice == null || !Number.isFinite(btcPrice)) && Number.isFinite(bp)) btcPrice = bp;
     if ((ethPrice == null || !Number.isFinite(ethPrice)) && Number.isFinite(ep)) ethPrice = ep;
+    if ((bnbPrice == null || !Number.isFinite(bnbPrice)) && Number.isFinite(np)) bnbPrice = np;
     if (Number.isFinite(bc)) btcChange = bc;
     if (Number.isFinite(ec)) ethChange = ec;
+    if (Number.isFinite(nc)) bnbChange = nc;
   } catch (e) {
     console.warn("[scanner] coingecko fetch failed:", e.message);
   }
 
   // 3. Tertiary: MEXC fallback spot ticker
-  if (btcPrice == null || ethPrice == null) {
+  if (btcPrice == null || ethPrice == null || bnbPrice == null) {
     try {
-      const [mexcBtc, mexcEth] = await Promise.all([
+      const [mexcBtc, mexcEth, mexcBnb] = await Promise.all([
         fetchJSON("https://api.mexc.com/api/v3/ticker/price?symbol=BTCUSDT", { timeoutMs: 4000 }),
         fetchJSON("https://api.mexc.com/api/v3/ticker/price?symbol=ETHUSDT", { timeoutMs: 4000 }),
+        fetchJSON("https://api.mexc.com/api/v3/ticker/price?symbol=BNBUSDT", { timeoutMs: 4000 }),
       ]);
       const bp = parseFloat(mexcBtc?.price);
       const ep = parseFloat(mexcEth?.price);
+      const np = parseFloat(mexcBnb?.price);
       if (btcPrice == null && Number.isFinite(bp)) btcPrice = bp;
       if (ethPrice == null && Number.isFinite(ep)) ethPrice = ep;
+      if (bnbPrice == null && Number.isFinite(np)) bnbPrice = np;
     } catch (e) {
       console.warn("[scanner] mexc fallback fetch failed:", e.message);
     }
@@ -844,8 +915,10 @@ export async function refreshMarketCache(env) {
   // 4. Safe baseline fallback if every network provider timed out
   if (btcPrice == null || !Number.isFinite(btcPrice)) btcPrice = 80_000;
   if (ethPrice == null || !Number.isFinite(ethPrice)) ethPrice = 2_400;
+  if (bnbPrice == null || !Number.isFinite(bnbPrice)) bnbPrice = 570;
   if (btcChange == null || !Number.isFinite(btcChange)) btcChange = 0;
   if (ethChange == null || !Number.isFinite(ethChange)) ethChange = 0;
+  if (bnbChange == null || !Number.isFinite(bnbChange)) bnbChange = 0;
 
   // Fear & Greed index
   let fg = null;
@@ -863,6 +936,7 @@ export async function refreshMarketCache(env) {
   const cache = {
     btc: { price: btcPrice, change_24h: btcChange },
     eth: { price: ethPrice, change_24h: ethChange },
+    bnb: { price: bnbPrice, change_24h: bnbChange },
     usdt: { price: 1, change_24h: 0 },
     usdc: { price: 1, change_24h: 0 },
     wbtc: { price: btcPrice, change_24h: btcChange },
@@ -1000,13 +1074,13 @@ export async function scanChain(env, chain, market, budget = null) {
       const candidates =
         chain === "btc"
           ? extractCandidatesBTC(block, market)
-          : extractCandidatesETH(block, market);
+          : extractCandidatesETH(block, market, chain);
 
       // for ETH, also pull ERC20 Transfer logs (extra RPCs, budget-bounded)
       let erc20 = [];
-      if (chain === "eth") {
-        const logs = await fetchERC20Logs(cursor, env, budget);
-        erc20 = extractERC20Candidates(logs, market).map((c) => ({
+      if (chain === "eth" || chain === "bsc") {
+        const logs = await fetchERC20Logs(cursor, env, budget, chain);
+        erc20 = extractERC20Candidates(logs, market, chain).map((c) => ({
           ...c,
           block_time: parseInt(block?.timestamp, 16) * 1000 || null,
         }));
@@ -1233,7 +1307,7 @@ export default {
     const budget = { remaining: SCAN_SUBREQUEST_BUDGET };
 
     const results = [];
-    for (const chain of ["btc", "eth", "tron", "solana"]) {
+    for (const chain of ["btc", "eth", "bsc", "tron", "solana"]) {
       try {
         results.push(
           chain === "tron"
