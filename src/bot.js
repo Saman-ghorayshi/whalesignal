@@ -552,6 +552,47 @@ export async function fetchHandler(request, env, ctx) {
     }
   }
 
+  // ─── /admin/sol-wallets — manage Solana watchlist ───────────────────
+  // GET: list. POST {address,label,type}: add. DELETE ?address=: deactivate.
+  // Gated with ?key=<ADMIN_TOKEN>. 404 (not 403) to avoid leaking it.
+  if (path === "/admin/sol-wallets") {
+    const gateSecret = env.ADMIN_TOKEN || "";
+    const key = url.searchParams.get("key") || "";
+    if (!gateSecret || !secretsEqual(key, gateSecret)) {
+      return errJson("not found", 404);
+    }
+    try {
+      if (request.method === "GET") {
+        const rows = await env.DB.prepare(
+          "SELECT address, label, type, active, last_check, last_sig FROM sol_wallets ORDER BY added_at DESC"
+        ).all();
+        return okJson({ ok: true, wallets: rows.results || [] });
+      }
+      if (request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const address = (body.address || "").trim();
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
+          return errJson("invalid solana address", 400);
+        }
+        await env.DB.prepare(
+          `INSERT INTO sol_wallets (address, label, type, added_at, active)
+           VALUES (?, ?, ?, ?, 1)
+           ON CONFLICT(address) DO UPDATE SET label=excluded.label, type=excluded.type, active=1`
+        ).bind(address, body.label || "", body.type || "unknown", Date.now()).run();
+        return okJson({ ok: true, address });
+      }
+      if (request.method === "DELETE") {
+        const address = url.searchParams.get("address") || "";
+        await env.DB.prepare("UPDATE sol_wallets SET active = 0 WHERE address = ?")
+          .bind(address).run();
+        return okJson({ ok: true, deactivated: address });
+      }
+      return errJson("method not allowed", 405);
+    } catch (e) {
+      return errJson(e.message, 500);
+    }
+  }
+
   const expected = `/tg/${env.BOT_TOKEN || ""}`;
   if (path !== expected) {
     return errJson("not found", 404);

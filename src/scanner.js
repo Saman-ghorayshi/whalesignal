@@ -33,6 +33,7 @@
 //   MAX_BLOCKS — string, overrides default 2
 
 import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor } from "./worker-utils.js";
+import { scanSolana } from "./solana.js";
 
 // consts (also overrideable via env)
 const DEFAULT_MIN_USD = 500_000;
@@ -1232,12 +1233,14 @@ export default {
     const budget = { remaining: SCAN_SUBREQUEST_BUDGET };
 
     const results = [];
-    for (const chain of ["btc", "eth", "tron"]) {
+    for (const chain of ["btc", "eth", "tron", "solana"]) {
       try {
         results.push(
           chain === "tron"
             ? await scanTron(env, market, budget)
-            : await scanChain(env, chain, market, budget)
+            : chain === "solana"
+              ? await scanSolana(env, market, budget)
+              : await scanChain(env, chain, market, budget)
         );
       } catch (e) {
         console.error(`[scanner:${chain}] scan failed:`, e.message);
