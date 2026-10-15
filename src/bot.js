@@ -323,6 +323,9 @@ export async function fetchHandler(request, env, ctx) {
   // content the bot posts to a public Telegram channel. Read-only, CORS
   // open so the github.io demo page can fetch() it cross-origin.
   if (request.method === "GET" && path === "/latest") {
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const rl = await checkRateLimit(env, `http:/latest:${ip}`, 30, 60);
+    if (rl.limited) return rateLimited();
     const limit = url.searchParams.get("limit") || 1;
     try {
       const rows = await latestRows(env, limit);
@@ -376,6 +379,9 @@ export async function fetchHandler(request, env, ctx) {
   // ?id= for a specific whale, otherwise the latest score>=50 whale.
   // KV-first (content_briefs cache), D1 fallback.
   if (request.method === "GET" && path === "/content") {
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const rl = await checkRateLimit(env, `http:/content:${ip}`, 30, 60);
+    if (rl.limited) return rateLimited();
     try {
       const id = url.searchParams.get("id");
       if (!id) {
