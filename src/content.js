@@ -55,13 +55,13 @@ export function buildContentBrief(whale, analysis = null) {
     "Big money moving. The question is always: why now?";
   const signalLine = SIGNAL_LINES[signal] || SIGNAL_LINES.neutral;
 
-  // ── 30-second spoken script ──
-  const script = [
-    `${usd} worth of ${sym} just moved from ${fromLabel} to ${toLabel}.`,
-    take,
-    signalLine + (confidence ? ` I'm about ${confidence}% on this one.` : ""),
-    "One move doesn't make a trend — but whales don't move for no reason. Follow for the next one.",
-  ].join(" ");
+  // ── 30-second spoken script, as timed beats ──
+  const beats = [
+    { t: "0–3s", label: "HOOK", text: `${usd} worth of ${sym} just moved from ${fromLabel} to ${toLabel}.` },
+    { t: "3–20s", label: "THE TAKE", text: `${take} ${signalLine}${confidence ? ` I'm about ${confidence}% on this one.` : ""}` },
+    { t: "20–30s", label: "CTA", text: "One move doesn't make a trend — but whales don't move for no reason. Follow for the next one." },
+  ];
+  const script = beats.map((b) => b.text).join(" ");
 
   // ── Caption ──
   const caption = [
@@ -80,6 +80,7 @@ export function buildContentBrief(whale, analysis = null) {
     whale_id: whale.id,
     hook,
     script,
+    beats,
     caption,
     hashtags,
     chart_hint: `Use the whale chart for ${sym} (already generated with the alert).`,
@@ -91,6 +92,7 @@ export function buildContentBrief(whale, analysis = null) {
       confidence,
       from: fromLabel,
       to: toLabel,
+      detected_at: whale.detected_at || null,
     },
   };
 }

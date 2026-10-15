@@ -399,6 +399,27 @@ export async function fetchHandler(request, env, ctx) {
     }
   }
 
+  // ─── public GET /content/queue — last N content briefs ──
+  if (request.method === "GET" && path === "/content/queue") {
+    try {
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "5", 10) || 5, 20);
+      const whales = await env.DB.prepare(
+        `SELECT * FROM whales WHERE interesting_score >= 50
+         ORDER BY detected_at DESC LIMIT ?`
+      ).bind(limit).all();
+      const briefs = [];
+      for (const w of whales.results || []) {
+        const analysis = await env.DB.prepare(
+          "SELECT * FROM analysis WHERE whale_id = ?"
+        ).bind(w.id).first();
+        briefs.push(buildContentBrief(w, analysis));
+      }
+      return jsonResponse({ ok: true, count: briefs.length, briefs });
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
   // ─── public GET /wallet/:addr — wallet profile + recent txs ─────────
   if (request.method === "GET" && path.startsWith("/wallet/")) {
     try {
