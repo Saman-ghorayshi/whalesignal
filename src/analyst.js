@@ -845,9 +845,9 @@ export async function analyzeOne(env, msg) {
       source = result.provider;
       parsed = parseAnalysis(result.text);
       if (!parsed) {
-        console.error(`[analyst:${whale_id}] AI response was not parseable JSON; raw head: ${(result.text || "").slice(0, 300)}`);
+        console.error(`[analyst:${whale_id}] AI response was not parseable JSON; provider=${result.provider} model=${result.model}; raw head: ${(result.text || "").slice(0, 300)}`);
         await markFailed(env, whale_id);
-        return { ok: false, error: "AI response was not parseable JSON" };
+        return { ok: false, error: "AI response was not parseable JSON", provider: result.provider, model: result.model };
       }
       // B2: semantic guards — reject empty fields, downgrade contradictions,
       // cap confidence by available evidence.
