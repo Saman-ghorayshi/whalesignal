@@ -141,20 +141,26 @@ test("checkRateLimit buckets are independent per key", async () => {
   assert.equal((await checkRateLimit(env, "b", 10, 60)).ok, true);
 });
 
-test("checkRateLimit fails open without KV (tests/local dev)", async () => {
-  const r = await checkRateLimit({}, "t", 1, 60);
+test("checkRateLimit works without KV (in-memory)", async () => {
+  // In-memory rate limiting doesn't need KV — always works
+  const key = "nokv-" + Date.now();
+  const r = await checkRateLimit({}, key, 1, 60);
   assert.equal(r.ok, true);
   assert.equal(r.limited, false);
+  // Second hit should be limited
+  const r2 = await checkRateLimit({}, key, 1, 60);
+  assert.equal(r2.limited, true);
 });
 
 test("checkRateLimit resets after the window passes", async () => {
-  const env = { KV: stubKV() };
-  await checkRateLimit(env, "w", 1, 60);
-  assert.equal((await checkRateLimit(env, "w", 1, 60)).ok, false);
-  // force expiry by backdating the stored window
-  const raw = await env.KV.get("ratelimit:w");
-  const state = JSON.parse(raw);
-  state.resetAt = Date.now() - 1;
-  await env.KV.put("ratelimit:w", JSON.stringify(state));
-  assert.equal((await checkRateLimit(env, "w", 1, 60)).ok, true);
+  const env = {};
+  const key = "w-" + Date.now(); // unique to avoid cross-test pollution
+  await checkRateLimit(env, key, 1, 60);
+  assert.equal((await checkRateLimit(env, key, 1, 60)).ok, false);
+  // In-memory store: use a 0-second window for immediate reset test
+  const key2 = "w2-" + Date.now();
+  await checkRateLimit(env, key2, 1, 0);
+  // Window of 0 seconds means immediate expiry on next call
+  await new Promise(r => setTimeout(r, 5));
+  assert.equal((await checkRateLimit(env, key2, 1, 0)).ok, true);
 });

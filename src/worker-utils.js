@@ -314,32 +314,27 @@ export function isAuthorizedAdmin(request, env) {
  * @param {number} maxHits — allowed hits per window
  * @param {number} windowSec — window length in seconds
  */
+// In-memory rate limit store (per-isolate). No KV writes — prevents
+// KV write-quota exhaustion attacks. Per-isolate is fine for best-effort
+// rate limiting; a determined attacker with many IPs was already bypassing
+// per-IP limits anyway.
+const _rlStore = new Map();
+
 export async function checkRateLimit(env, key, maxHits = 10, windowSec = 60) {
-  const kv = env?.KV;
-  if (!kv || typeof kv.get !== "function") {
-    console.warn("[ratelimit] KV missing — check skipped (fail open)");
-    return { ok: true, limited: false };
-  }
-  const kvKey = `ratelimit:${key}`;
-  let state = null;
-  try {
-    const raw = await kv.get(kvKey);
-    if (raw) state = JSON.parse(raw);
-  } catch {
-    state = null;
-  }
   const now = Date.now();
-  const put = async (s) => {
-    const ttl = Math.max(1, Math.ceil(((s.resetAt || now) - now) / 1000));
-    try {
-      await kv.put(kvKey, JSON.stringify(s), { expirationTtl: Math.min(ttl, windowSec) });
-    } catch (e) {
-      console.warn("[ratelimit] KV put failed:", e.message);
+  const rlKey = `rl:${key}`;
+  let state = _rlStore.get(rlKey);
+
+  // Cleanup expired entries opportunistically (avoid unbounded growth)
+  if (_rlStore.size > 10000) {
+    for (const [k, v] of _rlStore) {
+      if (v.resetAt && now >= v.resetAt) _rlStore.delete(k);
+      if (_rlStore.size <= 5000) break;
     }
-  };
+  }
+
   if (!state || typeof state.count !== "number" || (state.resetAt && now >= state.resetAt)) {
-    const fresh = { count: 1, resetAt: now + windowSec * 1000 };
-    await put(fresh);
+    _rlStore.set(rlKey, { count: 1, resetAt: now + windowSec * 1000 });
     return { ok: true, limited: false, remaining: maxHits - 1 };
   }
   if (state.count >= maxHits) {
@@ -350,6 +345,6 @@ export async function checkRateLimit(env, key, maxHits = 10, windowSec = 60) {
     };
   }
   state.count += 1;
-  await put(state);
+  _rlStore.set(rlKey, state);
   return { ok: true, limited: false, remaining: maxHits - state.count };
 }
