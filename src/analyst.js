@@ -366,6 +366,10 @@ Return JSON:
   "interpretation": "2-3 sentences: state what the structured facts indicate. Cite specific facts. If insufficient evidence, say so explicitly.",
   "signal": "bullish" | "bearish" | "neutral",
   "confidence": 0.0-1.0 float — only above 0.7 if 3+ supporting facts exist,
+
+CRITICAL FORMAT RULES (the output is parsed by code, not read by a human):
+- "signal" MUST be exactly one of these three lowercase words: bullish, bearish, neutral. No other text.
+- "confidence" MUST be a number between 0 and 1 (e.g. 0.65). Never a word like "high".
   "related_factor": "the single most relevant fact (e.g. 'exchange inflow during market fear' or 'insufficient data')"
 }`;
 }
@@ -841,7 +845,7 @@ export async function analyzeOne(env, msg) {
       source = result.provider;
       parsed = parseAnalysis(result.text);
       if (!parsed) {
-        console.error(`[analyst:${whale_id}] AI response was not parseable JSON`);
+        console.error(`[analyst:${whale_id}] AI response was not parseable JSON; raw head: ${(result.text || "").slice(0, 300)}`);
         await markFailed(env, whale_id);
         return { ok: false, error: "AI response was not parseable JSON" };
       }
