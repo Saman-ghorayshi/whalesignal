@@ -55,8 +55,15 @@ const TOPIC_KEYWORDS = [
   ["adoption", ["adoption", "partnership", "integration"]],
   ["mining", ["mining", "miner", "hashrate", "halving"]],
   ["defi", ["defi", "dex", "yield", "staking", "tvl"]],
-  ["macro", ["fed", "inflation", "interest rate", "recession", "central bank"]],
+  ["macro", ["fed", "fomc", "inflation", "cpi", "interest rate", "rate cut", "rate hike", "recession", "central bank", "powell", "jobs report", "gdp"]],
   ["exchange", ["binance", "coinbase", "kraken", "bybit", "exchange"]],
+  // world/macro coverage — the "what news we did not follow" layer
+  ["geopolitics", ["war", "missile", "airstrike", "sanction", "ceasefire", "invasion", "military", "nato", "taiwan", "ukraine", "gaza", "iran", "kremlin"]],
+  ["us", ["white house", "trump", "biden", "congress", "senate", "treasury", "washington"]],
+  ["china", ["china", "chinese", "beijing", "pboc", "yuan", "xi jinping"]],
+  ["business", ["ceo", "earnings", "merger", "acquisition", "ipo", "bankruptcy", "billionaire", "dies", "passed away", "resigns", "fired"]],
+  ["energy", ["oil", "opec", "crude", "gas prices", "energy"]],
+  ["markets", ["s&p", "nasdaq", "dow jones", "stock market", "wall street", "gold", "treasury yield"]],
 ];
 
 export function tagTopics(text) {
@@ -189,7 +196,7 @@ export function scoreSentiment(text) {
   return Math.max(-1, Math.min(1, (score / 3) * (0.5 + 0.5 * norm)));
 }
 
-export function scoreImportance({ sourceWeight, publishedAt, symbols, title }) {
+export function scoreImportance({ sourceWeight, publishedAt, symbols, title, topics }) {
   let imp = sourceWeight;
   if (publishedAt) {
     const ageH = (Date.now() - publishedAt) / 3600000;
@@ -198,6 +205,10 @@ export function scoreImportance({ sourceWeight, publishedAt, symbols, title }) {
     imp *= 0.7; // undated = less trustworthy
   }
   if (symbols && symbols.length) imp *= 1.2;
+  // Macro/geopolitical shocks move crypto even without a symbol tag —
+  // a Fed decision or a war headline deserves crypto relevance.
+  const macroTopics = ["macro", "geopolitics", "us", "china", "markets", "energy"];
+  if (topics && topics.some((t) => macroTopics.includes(t))) imp *= 1.35;
   const lower = String(title || "").toLowerCase();
   if (BREAKING_WORDS.some((w) => lower.includes(w))) imp *= 1.4;
   return Math.min(1, imp);
@@ -240,7 +251,7 @@ export async function runAggregation(env) {
     const sentiment = scoreSentiment(`${it.title} ${it.summary}`);
     const cid = clusterId(it.title);
     let importance = scoreImportance({
-      sourceWeight: it.weight, publishedAt: it.publishedAt, symbols, title: it.title,
+      sourceWeight: it.weight, publishedAt: it.publishedAt, symbols, title: it.title, topics,
     });
     // Dedupe: same story from another outlet in the last 24h → keep, but demote.
     try {

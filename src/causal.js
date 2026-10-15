@@ -28,14 +28,16 @@ export async function buildChain(env, whale, ta = null) {
   const end = whale.detected_at || Date.now();
   const start = end - WINDOW_MS;
 
-  // 1. News — top 3 by importance, symbol-matched, in window
+  // 1. News — top by importance in window: symbol-matched first, then
+  // high-importance macro/geopolitical shocks (they move crypto too).
   try {
     const rows = await env.DB.prepare(
-      `SELECT title, source, published_at, sentiment, importance
+      `SELECT title, source, published_at, sentiment, importance, topics
        FROM news
        WHERE published_at BETWEEN ? AND ?
-         AND symbols LIKE ?
-       ORDER BY importance DESC LIMIT 3`
+         AND (symbols LIKE ? OR (importance > 0.5 AND topics LIKE '%macro%')
+              OR (importance > 0.5 AND topics LIKE '%geopolitics%'))
+       ORDER BY importance DESC LIMIT 4`
     ).bind(start, end, `%,${sym},%`).all();
     for (const n of rows.results || []) {
       links.push({
