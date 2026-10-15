@@ -1,0 +1,23 @@
+# wrangler.eval.toml
+# Worker #7: the learning loop. Hourly: scores matured predictions (1h/6h/24h
+# horizons) against D1 price history, rebuilds the public leaderboard.
+# Deploy with:  npx wrangler deploy -c wrangler.eval.toml
+
+name = "whalesignal-eval"
+main = "src/eval.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["7 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+database_id = "6e369b7a-a8df-4864-b8f5-7bdc171ecf3d"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "1b3b2a8763b0497880983d3e9d26f76a"
+
+# Secret: ADMIN_TOKEN (same value as the other workers, for /trigger)
