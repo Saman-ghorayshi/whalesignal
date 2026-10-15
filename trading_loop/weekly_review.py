@@ -24,9 +24,13 @@ import time
 import sqlite3
 import httpx
 
-from trading_loop.llm import call_llm, extract_json
+from trading_loop.llm import (
+    call_llm, extract_json, MODEL_REVIEW_9ROUTER, MODEL_REVIEW_GEMINI,
+)
+from trading_loop.memory import apply_migrations
 
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
+MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
 WEEK_MS = 7 * 86400000
 
 
@@ -35,6 +39,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     with open(SCHEMA_PATH) as f:
         db.executescript(f.read())
+    apply_migrations(db, MIGRATIONS_DIR)
+    db.commit()
     return db
 
 
@@ -111,13 +117,21 @@ def build_review_prompt(week_data: dict, stats: dict) -> str:
         for b in week_data["beliefs"]
     ) or "(none yet — first week)"
 
-    return f"""You are reviewing a paper-trading bot's last 7 days. The bot copies
-Hyperliquid testnet trades made by whale wallets when whalesignal's on-chain
-alert system flags the same whale moving on L1.
+    return f"""You are reviewing a paper-trading bot's last 7 days. How the bot
+actually works:
 
-The bot TRADES only when it sees a whale alert AND a matching HL position
-opened by the same wallet within 30 minutes. It used the FinCon
-self-critique pattern last week and wrote beliefs you'll see below.
+- whalesignal's on-chain scanner flags large BTC/ETH transfers (whale alerts).
+- For each alert the bot runs ONE LLM bull/bear debate and gets a decision:
+  COPY (side long/short, size_pct, TP_pct, SL_pct, leverage, confidence) or SKIP.
+- Risk guards then apply: max 10% of starting balance per trade, max 10
+  concurrent positions, total open exposure capped at 50% of starting,
+  minimum stated confidence 0.30, mandatory stop-loss, daily circuit breaker.
+- If it passes, the bot paper-copies the chosen direction on Hyperliquid
+  testnet. Each trade carries its own TP/SL into the close logic.
+- The whale's recent Hyperliquid fills are fetched as CONTEXT for the LLM
+  only. There is NO fill-matching gate: the bot does NOT require the whale
+  to hold a matching HL position before trading. It trades the alert's
+  interpreted direction, not the whale's actual position.
 
 ## This Week's Trades
 {trades_str}
@@ -149,8 +163,13 @@ Constraints:
   rule, not a paragraph.
 - updated_scores: only change scores for whales with >= 3 trades this week.
   Score changes should reflect actual win rate + PnL, not vibes.
-- weekly_summary: write TO Samsha, the human operator. Say "you" not "the bot."
-  Tell him what worked, what didn't, and what you changed for next week."""
+- weekly_summary: write TO the human operator. Say "you" not "the bot."
+  Tell them what worked, what didn't, and what you changed for next week.
+- Optional: if this week's results suggest the bot should only trade when the
+  whale ALSO shows a matching Hyperliquid fill within ~30 minutes of the
+  alert (a "fill-matching gate" — not currently implemented), say so
+  explicitly in one belief. That is the highest-leverage design question
+  facing this system."""
 
 
 # ─── write back ──────────────────────────────────────────────────────
@@ -189,9 +208,28 @@ def apply_review(db: sqlite3.Connection, review: dict, now_ms: int):
             new_score = float(us.get("new_score", 0.5))
         except (ValueError, TypeError):
             continue
+        new_score = max(0.0, min(1.0, new_score))  # clamp to [0, 1]
+        # Refresh aggregates from the actual trade history so the row is
+        # meaningful even for whales that never had a score row (T8: the old
+        # UPDATE-only path was a silent no-op for new whales).
+        agg = db.execute(
+            "SELECT COUNT(*) AS cnt, "
+            "SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) AS wins, "
+            "COALESCE(SUM(pnl_usd), 0) AS pnl "
+            "FROM paper_trades WHERE whale = ? AND closed_at IS NOT NULL",
+            (whale,),
+        ).fetchone()
         db.execute(
-            "UPDATE whale_scores SET score = ?, last_updated = ? WHERE whale = ?",
-            (new_score, now_ms, whale),
+            "INSERT INTO whale_scores "
+            "(whale, trade_count, win_count, total_pnl_usd, score, last_updated) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(whale) DO UPDATE SET "
+            "trade_count = excluded.trade_count, "
+            "win_count = excluded.win_count, "
+            "total_pnl_usd = excluded.total_pnl_usd, "
+            "score = excluded.score, "
+            "last_updated = excluded.last_updated",
+            (whale, agg["cnt"], agg["wins"], agg["pnl"], new_score, now_ms),
         )
 
     # insert weekly_review row (audit trail)
@@ -244,8 +282,11 @@ def run(args):
         with open(args.llm_stub) as f:
             review = json.load(f)
     else:
+        # T12: pick the review model for the ACTIVE backend — a 9Router model
+        # id sent to Gemini is a guaranteed 404.
+        model = MODEL_REVIEW_GEMINI if args.gemini_key else MODEL_REVIEW_9ROUTER
         review = call_llm(prompt, base_url=args.llm, gemini_key=args.gemini_key,
-                         model="nvidia/z-ai/glm-5.2")
+                         model=model)
 
     print("[review] LLM response:")
     print(json.dumps(review, indent=2))

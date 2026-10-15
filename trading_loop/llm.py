@@ -71,6 +71,14 @@ def extract_json(text: str) -> dict:
     # strip code fences
     if s.startswith("```"):
         s = s.replace("```json", "").replace("```", "").strip()
+    # fast path: the whole thing is already clean JSON (avoids the
+    # brace-slicing below, which breaks on prose containing { }).
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
     first = s.find("{")
     last = s.rfind("}")
     if first < 0 or last <= first:
@@ -118,18 +126,24 @@ def _call_9router(prompt: str, base_url: str, model: str,
 def _call_gemini_direct(prompt: str, gemini_key: str, model: str,
                          timeout: float, max_retries: int) -> dict:
     """Call Google Gemini API directly with multi-model fallback."""
-    candidate_models = [model, "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.7-flash"]
+    # NOTE: keep this list short and real. flash-lite was deliberately
+    # excluded (too dumb per module docstring); speculative model names
+    # just burn round-trips on 404s.
+    candidate_models = [model, "gemini-flash-latest"]
     # Deduplicate while preserving order
     seen = set()
     candidate_models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
     last_err = None
     for m in candidate_models:
-        url = f"{GEMINI_BASE}/models/{m}:generateContent?key={gemini_key}"
+        url = f"{GEMINI_BASE}/models/{m}:generateContent"
         for attempt in range(max_retries + 1):
             try:
                 resp = httpx.post(
                     url,
+                    # T13: key in header, not URL query — query keys land in
+                    # exception messages, logs, and process listings.
+                    headers={"x-goog-api-key": gemini_key},
                     json={
                         "contents": [{"parts": [{"text": prompt}]}],
                         "generationConfig": {"responseMimeType": "application/json"},

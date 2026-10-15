@@ -236,8 +236,41 @@ def set_secret(worker_name, secret_name, secret_val, dry=False):
         print(f"  ! warning: could not set secret {secret_name}: {r.stderr.strip() or r.stdout.strip()}")
 
 
+def ensure_secret_env(name: str, prompt_text: str, dry: bool = False):
+    """Prompt for a secret env var when it's missing (skippable with Enter).
+
+    Values typed here live only in os.environ for this process — they are
+    piped to `wrangler secret put` via stdin, never written to disk.
+    Never prompts in dry-run (nothing would consume the value).
+    """
+    if os.environ.get(name) or dry:
+        return
+    try:
+        v = input(f"{prompt_text} [Enter to skip]: ").strip()
+    except EOFError:
+        v = ""
+    if v:
+        os.environ[name] = v
+
+
 def sync_secrets(dry=False):
     print("\n--- Syncing secrets to workers ---")
+    # T3: the worker→Actions dispatch (fireGitHubDispatch in bot.js) was dead
+    # because GH_PAT/GH_REPO were never provisioned. Prompt when missing.
+    ensure_secret_env(
+        "GH_PAT",
+        "GitHub fine-grained PAT (for repository_dispatch → trading loop)",
+        dry=dry,
+    )
+    ensure_secret_env(
+        "GH_REPO",
+        "GitHub repo for the dispatch, as owner/repo",
+        dry=dry,
+    )
+    gh_repo = os.environ.get("GH_REPO", "")
+    if gh_repo and not re.match(r"^[\w.-]+/[\w.-]+$", gh_repo):
+        print(f"  ! warning: GH_REPO {gh_repo!r} doesn't look like owner/repo — "
+              f"dispatch will 404")
     secrets = {
         "scanner": {
             "ETHSCAN_KEY": os.environ.get("ETHSCAN_KEY"),
@@ -250,6 +283,8 @@ def sync_secrets(dry=False):
         "bot": {
             "BOT_TOKEN": os.environ.get("BOT_TOKEN"),
             "ADMIN_TOKEN": os.environ.get("ADMIN_TOKEN"),
+            "GH_PAT": os.environ.get("GH_PAT"),
+            "GH_REPO": os.environ.get("GH_REPO"),
         },
     }
     for worker, kv in secrets.items():

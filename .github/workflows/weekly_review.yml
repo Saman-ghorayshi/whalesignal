@@ -11,12 +11,19 @@ on:
 permissions:
   contents: write
 
+# Same reasoning as trade.yml: serialize runs that push trades.db.
+concurrency:
+  group: trade-loop
+  cancel-in-progress: false
+
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -40,6 +47,7 @@ jobs:
         run: |
           git config user.name "whalesignal-bot"
           git config user.email "bot@whalesignal"
-          git add trades.db
+          git pull --rebase --autostash || echo "::warning::rebase failed — pushing anyway"
+          git add -f trades.db
           git commit -m "trades.db: weekly review applied [skip ci]" || true
-          git push
+          git push || echo "::warning::push failed — next run's rebase will pick it up"

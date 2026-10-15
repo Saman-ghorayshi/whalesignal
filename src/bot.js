@@ -12,19 +12,50 @@
 //   BOT_TOKEN — secret, Telegram bot token (wrangler secret put)
 //   PUBLIC_CHANNEL — string, e.g. "@whalesignalnews"
 
-import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, mdEscape, nowMs } from "./worker-utils.js";
+import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit } from "./worker-utils.js";
 import { analyzeWalletPatterns, buildGraphPayload } from "./graph-analyst.js";
 
+/** CORS headers shared by all public GET/OPTIONS routes (BT11: no drift). */
+function corsHeaders(extra = {}) {
+  return {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Cache-Control": "no-cache",
+    ...extra,
+  };
+}
+
 /** shared JSON response helper for all public GET routes. */
-function jsonResponse(data, status = 200) {
+function jsonResponse(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "no-cache",
-    },
+    headers: corsHeaders(extraHeaders),
   });
+}
+
+/**
+ * Defer a Telegram send past the webhook response (BT9).
+ * Telegram retries non-200 webhook responses; if a send succeeded but the
+ * response was lost, the retry produced a duplicate reply. So: never hold
+ * the webhook open for a send. ctx.waitUntil lets the worker finish the
+ * send after returning 200. Send failures are logged, not 502'd — the user
+ * may miss one reply, but they never get two.
+ * In non-worker envs (tests) without ctx.waitUntil, the promise is returned
+ * floating (with a catch attached, so no unhandled rejection).
+ */
+function replySoon(ctx, sendPromise) {
+  const safe = Promise.resolve(sendPromise).catch((e) =>
+    console.error("[bot] deferred reply failed:", e?.message || e)
+  );
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(safe);
+  return safe;
+}
+
+/** Validate "owner/repo" shape before interpolating GH_REPO into a URL (BT6/S5). */
+export function isValidGhRepo(s) {
+  return typeof s === "string" && /^[\w.-]+\/[\w.-]+$/.test(s);
 }
 
 // ─── R2 alert export (for paper-trading consumer) ─────────────────────
@@ -78,7 +109,15 @@ async function postAlertToR2(env, alertJSON) {
     if (obj) existing = await obj.text();
   } catch (e) { /* file may not exist yet */ }
   const ndjsonLine = JSON.stringify(alertJSON) + "\n";
-  await env.ALERTS_R2.put(key, existing + ndjsonLine);
+  try {
+    await env.ALERTS_R2.put(key, existing + ndjsonLine);
+  } catch (e) {
+    // BT5: a failed export must NEVER trigger a Telegram repost. The alert is
+    // already delivered to the channel; the trading loop can backfill from
+    // GET /history. Swallow here — the atomic delivered-claim in
+    // postPublicAlert already prevents a retry from re-sending.
+    console.warn(`[bot] R2 export failed (alert kept, not reposted): ${e.message}`);
+  }
 }
 
 // ─── GitHub Actions trigger (repository_dispatch) ────────────────────
@@ -88,20 +127,30 @@ async function postAlertToR2(env, alertJSON) {
  * This triggers the trade.yml workflow in the whalesignal repo.
  *
  * Requires env.GH_PAT (GitHub Personal Access Token, repo scope) and
- * env.GH_REPO (e.g. "samsha/whalesignal"). Both set as CF Worker secrets.
+ * env.GH_REPO (e.g. "saman-ghorayshi/whalesignal"). Both set as CF Worker secrets.
  *
  * Fire-and-forget: if the POST fails, we log but don't throw — the alert
  * is already posted to Telegram and R2. The trading loop will pick it up
  * on the next manual or scheduled GH Actions run anyway.
  */
 export async function fireGitHubDispatch(env, alertJSON) {
-  if (!env.GH_PAT || !env.GH_REPO) return; // not configured — skip
+  if (!env.GH_PAT) return; // not configured — skip
+  if (!isValidGhRepo(env.GH_REPO)) {
+    // BT6/S5: a malformed GH_REPO used to produce a confusing 404 that was
+    // swallowed by the fire-and-forget catch. Validate the owner/repo shape
+    // up front instead.
+    console.warn(`[bot] GH_REPO malformed (${JSON.stringify(env.GH_REPO)}) — skipping dispatch`);
+    return;
+  }
   try {
     const resp = await fetch(
       `https://api.github.com/repos/${env.GH_REPO}/dispatches`,
       {
         method: "POST",
         headers: {
+          // BT6: GitHub's API requires a User-Agent header; without it every
+          // request 403s. Workers' fetch does not add one by default.
+          "User-Agent": "whalesignal-bot/1.0",
           Authorization: `Bearer ${env.GH_PAT}`,
           "Content-Type": "application/json",
           Accept: "application/vnd.github+json",
@@ -146,10 +195,18 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   const fromShort = shortAddr(whale.from_address);
   const toShort = shortAddr(whale.to_address);
 
+  // BT12: blockchain.com/tx/<hash> does not resolve — use mempool.space.
   const explorerBase = opts.explorerBase || (whale.chain === "btc"
-    ? "https://blockchain.com/tx/"
+    ? "https://mempool.space/tx/"
     : "https://etherscan.io/tx/");
   const explorerLink = `${explorerBase}${whale.tx_hash}`;
+
+  // S2: headline/interpretation are LLM-generated (untrusted). Strip control
+  // characters and cap length before they reach the public channel. The
+  // channel sends plain text (no parse_mode), so there is no markup vector,
+  // but phishing-flavored prose and multi-KB ramblings are still cut here.
+  const headline = sanitizeAIText(analysis?.headline, 200);
+  const interpretation = sanitizeAIText(analysis?.interpretation, 2000);
 
   const sig = (analysis?.signal || "neutral").toLowerCase();
   const sigEmoji = sig === "bullish" ? "🟢 BULLISH" : sig === "bearish" ? "🔴 BEARISH" : "⚪ NEUTRAL";
@@ -175,10 +232,10 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   lines.push(`📍 ${whale.chain} → ${toShort}`);
   if (whale.block_number) lines.push(`🧱 Block ${whale.block_number.toString()}`);
   lines.push("");
-  if (analysis?.headline || analysis?.interpretation) {
+  if (headline || interpretation) {
     lines.push("🧠 AI Analysis:");
-    if (analysis.headline) lines.push(analysis.headline);
-    if (analysis.interpretation) lines.push(analysis.interpretation);
+    if (headline) lines.push(headline);
+    if (interpretation) lines.push(interpretation);
     lines.push("");
   } else {
     lines.push("🧠 AI Analysis: (pending)");
@@ -186,9 +243,10 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   }
   lines.push(`📊 Market: BTC ${btcP} (${btcChg}) | ${fg} | ETH ${ethP}`);
   lines.push(`🔮 Signal: ${sigEmoji} (confidence ${conf})`);
-  if (analysis?.related_factor) lines.push(`📎 ${analysis.related_factor}`);
+  if (analysis?.related_factor) lines.push(`📎 ${sanitizeAIText(analysis.related_factor, 200)}`);
   lines.push(`🔍 ${explorerLink}`);
-  lines.push(`🌐 Money-Flow Graph: https://samsha.github.io/whalesignal/wallet.html?addr=${whale.from_address}&chain=${whale.chain}`);
+  // BT13: org drift — real repo is saman-ghorayshi/whalesignal.
+  lines.push(`🌐 Money-Flow Graph: https://saman-ghorayshi.github.io/whalesignal/wallet.html?addr=${whale.from_address}&chain=${whale.chain}`);
   return lines.join("\n");
 }
 
@@ -203,12 +261,21 @@ const TX_TYPE_LABEL = {
 // ─── fetch (Telegram webhook) ─────────────────────────────────────────
 
 export async function fetchHandler(request, env, ctx) {
-  // Simple secret-path check. Telegram also signs updates, but on free tier
-  // and a side project a secret path is enough. Plan says /tg/<bot_token>
-  // is what we tell Telegram as the webhook URL — that token in the URL is
-  // only known to Telegram.
   const url = new URL(request.url);
   const path = url.pathname;
+
+  // ─── OPTIONS preflight for the public GET routes (BT11) ──────────────
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
 
   // ─── public GET /latest?limit=N  (Phase 3 of ship runbook) ───────────
   // NO auth. The alert row carries no secret — it's the same
@@ -236,14 +303,8 @@ export async function fetchHandler(request, env, ctx) {
       let market = null;
       try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
       const payload = renderStatsJSON(stats, bySymbol, hourly, market);
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=60",
-        },
-      });
+      // BT11: use the shared helper so CORS/Cache-Control can't drift.
+      return jsonResponse(payload, 200, { "Cache-Control": "public, max-age=60" });
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
@@ -260,8 +321,9 @@ export async function fetchHandler(request, env, ctx) {
         signal: url.searchParams.get("signal"),
         min_usd: url.searchParams.get("min_usd"),
       };
-      const rows = await historyRows(env, opts);
-      const payload = renderHistoryJSON(rows, opts.page, opts.limit, rows.length);
+      // BT7: total is a real COUNT(*) with the same filters, not the page size.
+      const [rows, total] = await Promise.all([historyRows(env, opts), historyCount(env, opts)]);
+      const payload = renderHistoryJSON(rows, opts.page, opts.limit, total);
       return jsonResponse(payload);
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
@@ -344,15 +406,26 @@ export async function fetchHandler(request, env, ctx) {
     }
   }
 
-  // ─── public GET /test-ai — diagnostic live probe across AI engines ───
+  // ─── GET /test-ai — diagnostic live probe across AI engines ─────────
+  // S3: this proxy burns AI quota on the analyst with every hit, so it is
+  // NOT public. Gate with ?key=<ADMIN_TOKEN>. Fail closed: if no secret is
+  // configured, the endpoint stays dark. 404 (not 403) to avoid leaking it.
   if (request.method === "GET" && path === "/test-ai") {
+    const gateSecret = env.ADMIN_TOKEN || env.WEBHOOK_SECRET || "";
+    const key = url.searchParams.get("key") || "";
+    if (!gateSecret || !secretsEqual(key, gateSecret)) {
+      return errJson("not found", 404);
+    }
     try {
       let resp;
+      // The analyst's /test-ai is itself gated — forward our already-verified
+      // admin key so the proxy doesn't 401 against the analyst.
+      const fwdKey = encodeURIComponent(key);
       if (env.ANALYST_SERVICE) {
-        resp = await env.ANALYST_SERVICE.fetch(new Request("https://whalesignal-analyst/test-ai"));
+        resp = await env.ANALYST_SERVICE.fetch(new Request(`https://whalesignal-analyst/test-ai?key=${fwdKey}`));
       } else {
         const analystUrl = env.ANALYST_URL || "https://whalesignal-analyst.mv3sxp7x4fkv-6d9.workers.dev/test-ai";
-        resp = await fetch(analystUrl);
+        resp = await fetch(`${analystUrl}?key=${fwdKey}`);
       }
       const data = await resp.json();
       return jsonResponse(data, resp.status);
@@ -371,7 +444,21 @@ export async function fetchHandler(request, env, ctx) {
 
   if (request.method !== "POST") {
     // Telegram GETs the webhook for setup — return ok so it doesn't error.
+    // (No secret check on GET: Telegram's setup probe carries no header; the
+    // token in the path is the auth here.)
     return okJson({ ok: true, service: "whalesignal-bot" });
+  }
+
+  // S1: verify Telegram's X-Telegram-Bot-Api-Secret-Token header (set via
+  // setWebhook's secret_token). Token-in-path alone lands in CF request logs
+  // and proxy logs; the header check means a leaked URL is not enough to
+  // forge updates, spam users, or burn D1/KV quota. Constant-time compare,
+  // 404 (not 403) on mismatch to avoid leaking the endpoint's existence.
+  if (env.WEBHOOK_SECRET) {
+    const got = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+    if (!secretsEqual(got, env.WEBHOOK_SECRET)) {
+      return errJson("not found", 404);
+    }
   }
 
   let update;
@@ -381,13 +468,6 @@ export async function fetchHandler(request, env, ctx) {
     return errJson("invalid json", 400);
   }
 
-  // DM commands. Phase 1 has /ping, /help, /latest.
-  //
-  // NOTE: we send the reply synchronously inside the webhook request here.
-  // Telegram's webhook timeout is generous (~60s) and our sendMessage has an
-  // 8s AbortController cap, so this is fine for Phase 1. Phase 2 should switch
-  // to `ctx.waitUntil(tgSendMessage(...))` and return 200 immediately so we
-  // don't hold the request open for slow /latest queries.
   // Channel posts are broadcasts, not interactive bot commands — NEVER reply to them!
   if (update.channel_post || update.message?.chat?.type === "channel") {
     return okJson({ ok: true, ignored: "channel_post" });
@@ -400,10 +480,21 @@ export async function fetchHandler(request, env, ctx) {
     const txt = msg.text.trim();
     const lc = txt.toLowerCase();
 
+    // BT10: per-chat sliding-window rate limit (10 commands/min). The webhook
+    // URL is effectively public once token-in-path is known, and /check does
+    // a 50-row D1 scan + 2 KV reads per hit. 429 → Telegram retries later.
+    const rl = await checkRateLimit(env, `tgcmd:${chatId}`, 10, 60);
+    if (!rl.ok) {
+      const r = rateLimited();
+      if (rl.retryAfterSec) r.headers.set("retry-after", String(rl.retryAfterSec));
+      return r;
+    }
+
     // If not a slash command:
     if (!lc.startsWith("/")) {
       if (msg.chat?.type === "private") {
-        await tgSendMessage(env.BOT_TOKEN, chatId, HELP_TEXT);
+        // BT9: reply via waitUntil, return 200 immediately (see replySoon).
+        replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(HELP_TEXT)));
         return okJson({ ok: true, handled: "help_fallback" });
       }
       return okJson({ ok: true, ignored: "non_command" });
@@ -414,12 +505,12 @@ export async function fetchHandler(request, env, ctx) {
 
     try {
       if (cmd === "/ping") {
-        await tgSendMessage(env.BOT_TOKEN, chatId,
-          `🐋 WhaleSignal is alive. Ping received from ${from} at ${new Date().toISOString()}.`);
+        replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId,
+          `🐋 WhaleSignal is alive. Ping received from ${from} at ${new Date().toISOString()}.`));
         return okJson({ ok: true, handled: "ping" });
       }
       if (cmd === "/help" || cmd === "/start") {
-        await tgSendMessage(env.BOT_TOKEN, chatId, HELP_TEXT);
+        replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(HELP_TEXT)));
         return okJson({ ok: true, handled: "help" });
       }
       if (cmd === "/latest") {
@@ -428,34 +519,41 @@ export async function fetchHandler(request, env, ctx) {
         let market = null;
         try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
         const reply = renderLatestReply(rows, market);
-        await tgSendMessage(env.BOT_TOKEN, chatId, reply);
+        replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(reply)));
         return okJson({ ok: true, handled: "latest" });
       }
       if (cmd === "/stats") {
-        const [statsData, accuracyData, topSymbols, hourly, market] = await Promise.all([
-          getGlobalStats(env),
-          getSignalAccuracy(env),
-          getTopSymbols(env),
-          getHourlyDistribution(env),
-          getMarketSnapshot(env),
+        // BT1: the old code called five functions that don't exist
+        // (getGlobalStats, getSignalAccuracy, getTopSymbols,
+        // getHourlyDistribution, getMarketSnapshot) → ReferenceError → 502,
+        // and Telegram retried the webhook on every hit. Reuse the same
+        // helpers the public GET /stats route uses, and map the args to
+        // renderStatsJSON(stats, bySymbol, hourly, market) correctly.
+        const [stats, bySymbol, hourly] = await Promise.all([
+          statsRows(env), statsBySymbol(env), statsHourly(env),
         ]);
-        const payload = renderStatsJSON(statsData, accuracyData, topSymbols, hourly, market);
-        const reply = `📊 *WhaleSignal Intelligence Stats*\n\n` +
-          `• *24h Volume:* ${fmtUSD(payload.total_volume)}\n` +
-          `• *Whales Tracked:* ${payload.count_24h}\n` +
-          `• *Largest Move:* ${fmtUSD(payload.largest_transfer)}\n` +
-          `• *Signals:* 🟢 Bullish: ${payload.signals.bullish} | 🔴 Bearish: ${payload.signals.bearish} | ⚪ Neutral: ${payload.signals.neutral}\n` +
-          (payload.accuracy ? `• *Signal Accuracy:* ${payload.accuracy.rate_pct}%\n` : "") +
+        let market = null;
+        try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
+        const payload = renderStatsJSON(stats, bySymbol, hourly, market);
+        // BT3: plain text (no Markdown). The old reply used *bold* markers
+        // while the channel deliberately sends no parse_mode — one convention.
+        const reply = `📊 WhaleSignal Intelligence Stats\n\n` +
+          `• 24h Volume: ${fmtUSD(payload.total_volume)}\n` +
+          `• Whales Tracked: ${payload.count_24h}\n` +
+          `• Largest Move: ${fmtUSD(payload.largest_transfer)}\n` +
+          `• Signals: 🟢 Bullish: ${payload.signals.bullish} | 🔴 Bearish: ${payload.signals.bearish} | ⚪ Neutral: ${payload.signals.neutral}\n` +
+          // accuracy.rate, not rate_pct — renderStatsJSON emits { evaluated, correct, rate }.
+          (payload.accuracy ? `• Signal Accuracy: ${payload.accuracy.rate}%\n` : "") +
           `\nUse /latest to view recent whale moves.`;
-        await tgSendMessage(env.BOT_TOKEN, chatId, reply);
+        replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(reply)));
         return okJson({ ok: true, handled: "stats" });
       }
       if (cmd === "/check" || cmd === "/pattern" || cmd === "/graph") {
         const parts = txt.split(/\s+/);
         const targetAddr = parts[1]?.trim();
         if (!targetAddr) {
-          await tgSendMessage(env.BOT_TOKEN, chatId,
-            "Please provide a wallet address to check. Example:\n/check 0x28c6c06298d514de13c02684fa65b7c0c1f723e4");
+          replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId,
+            truncateTelegram("Please provide a wallet address to check. Example:\n/check 0x28c6c06298d514de13c02684fa65b7c0c1f723e4")));
           return okJson({ ok: true, handled: "check_missing_addr" });
         }
         const cleanAddr = targetAddr.toLowerCase();
@@ -464,6 +562,15 @@ export async function fetchHandler(request, env, ctx) {
           "FROM whales WHERE (lower(from_address) = ? OR lower(to_address) = ?) " +
           "ORDER BY detected_at DESC LIMIT 50"
         ).bind(cleanAddr, cleanAddr).all();
+
+        // Second-pass fix: /check on an unknown address used to 502
+        // (analyzeWalletPatterns returned empty metrics → property access
+        // threw → Telegram retried the webhook). Answer honestly instead.
+        if (!txs || txs.length === 0) {
+          replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId,
+            `🕵️ No whale transactions found for ${cleanAddr} yet.\nThe scanner only tracks moves over the USD threshold — check back after the next alert, or try /latest.`));
+          return okJson({ ok: true, handled: "check_no_txs" });
+        }
 
         let market = null, news = null;
         try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
@@ -483,24 +590,27 @@ export async function fetchHandler(request, env, ctx) {
           p.is_structuring ? `• Structuring: ⚠️ Rapid split transfers detected!` : null,
           "",
           `💡 Intent Analysis:`,
-          p.intent_summary,
+          sanitizeAIText(p.intent_summary, 1500),
           "",
           p.flags.length > 0 ? `🚩 Flags: ${p.flags.join(", ")}` : null,
           "",
           `🌐 Interactive Money-Flow Graph:`,
-          `https://samsha.github.io/whalesignal/wallet.html?addr=${cleanAddr}`,
+          // BT13: org drift — real repo is saman-ghorayshi/whalesignal.
+          `https://saman-ghorayshi.github.io/whalesignal/wallet.html?addr=${cleanAddr}`,
         ].filter(Boolean).join("\n");
 
-        await tgSendMessage(env.BOT_TOKEN, chatId, reply);
+        replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(reply)));
         return okJson({ ok: true, handled: "check" });
       }
       // Unknown command: only reply if in a private DM
       if (msg.chat?.type === "private") {
-        await tgSendMessage(env.BOT_TOKEN, chatId,
-          `I don't know that command yet. Try /help, /ping, /latest, /stats, or /check <addr>.`);
+        replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId,
+          truncateTelegram(`I don't know that command yet. Try /help, /ping, /latest, /stats, or /check <addr>.`)));
       }
       return okJson({ ok: true, handled: "unknown" });
     } catch (e) {
+      // Only genuine failures reach here (DB errors etc.) — no Telegram send
+      // happened, so Telegram retrying the webhook can't duplicate a reply.
       console.error("bot fetch handler failed:", e.message);
       return errJson("tg error: " + e.message, 502);
     }
@@ -690,29 +800,52 @@ export function renderStatsJSON(stats, bySymbol, hourly, market = null) {
 // ─── /history endpoint ─────────────────────────────────────────────────
 
 /**
+ * Shared WHERE clause for the /history page query and its COUNT(*).
+ * BT7: total must use the SAME filters as the page, or pagination lies.
+ * @returns {{ where: string, binds: any[] }}
+ */
+function historyWhere(opts = {}) {
+  const { chain = null, symbol = null, signal = null, min_usd = null } = opts;
+  let where = "WHERE w.analysis_status IN ('done', 'skipped')";
+  const binds = [];
+  if (chain) { where += " AND w.chain = ?"; binds.push(String(chain).toLowerCase()); }
+  if (symbol) { where += " AND w.symbol = ?"; binds.push(String(symbol).toUpperCase()); }
+  if (signal) { where += " AND a.signal = ?"; binds.push(String(signal).toLowerCase()); }
+  if (min_usd != null && min_usd !== "") { where += " AND w.usd_value >= ?"; binds.push(Number(min_usd)); }
+  return { where, binds };
+}
+
+/**
  * Paginated history query. Filters: chain, symbol, signal, min_usd.
  * Sort: detected_at DESC. Returns joined whale+analysis rows.
  */
 export async function historyRows(env, opts = {}) {
-  const { page = 1, limit = 20, chain = null, symbol = null, signal = null, min_usd = null } = opts;
+  const { page = 1, limit = 20 } = opts;
   const n = Math.max(1, Math.min(100, Math.trunc(Number(limit) || 20)));
   const offset = Math.max(0, (Math.trunc(Number(page) || 1) - 1) * n);
 
-  let sql = "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
+  const { where, binds } = historyWhere(opts);
+  const sql = "SELECT w.id, w.chain, w.tx_hash, w.from_address, w.to_address, w.amount, w.symbol, " +
     "w.usd_value, w.tx_type, w.block_number, w.detected_at, w.interesting_score, " +
     "a.headline, a.interpretation, a.signal, a.confidence, a.related_factor " +
     "FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " +
-    "WHERE w.analysis_status IN ('done', 'skipped')";
-  const binds = [];
-  if (chain) { sql += " AND w.chain = ?"; binds.push(chain.toLowerCase()); }
-  if (symbol) { sql += " AND w.symbol = ?"; binds.push(symbol.toUpperCase()); }
-  if (signal) { sql += " AND a.signal = ?"; binds.push(signal.toLowerCase()); }
-  if (min_usd) { sql += " AND w.usd_value >= ?"; binds.push(Number(min_usd)); }
-  sql += " ORDER BY w.detected_at DESC LIMIT ? OFFSET ?";
-  binds.push(n, offset);
+    where + " ORDER BY w.detected_at DESC LIMIT ? OFFSET ?";
 
-  const { results } = await env.DB.prepare(sql).bind(...binds).all();
+  const { results } = await env.DB.prepare(sql).bind(...binds, n, offset).all();
   return results || [];
+}
+
+/**
+ * COUNT(*) with the same filters as historyRows — the real /history total.
+ * The old code passed the current page's row count as `total`, which broke
+ * any frontend pagination built on it.
+ */
+export async function historyCount(env, opts = {}) {
+  const { where, binds } = historyWhere(opts);
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS cnt FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id " + where
+  ).bind(...binds).first();
+  return row?.cnt ?? 0;
 }
 
 /** Pure. Build the /history JSON payload. */
@@ -775,6 +908,9 @@ export function renderWalletJSON(profile, txs) {
   if (!profile) {
     return { ok: false, reason: "wallet not in database", address: null, txs: [] };
   }
+  // BT8: EVM addresses are cased inconsistently between tables (checksummed
+  // in wallets, lowercase in whales). Compare lowercased or in/out flips.
+  const pAddr = String(profile.address || "").toLowerCase();
   return {
     ok: true,
     address: profile.address,
@@ -786,22 +922,25 @@ export function renderWalletJSON(profile, txs) {
     total_volume: profile.total_volume ?? 0,
     first_seen: profile.first_seen ?? null,
     last_seen: profile.last_seen ?? null,
-    recent_txs: (txs || []).map((t) => ({
-      id: t.id,
-      chain: (t.chain || "?").toUpperCase(),
-      tx_hash: t.tx_hash,
-      direction: t.from_address === profile.address ? "out" : "in",
-      counterpart: t.from_address === profile.address ? t.to_address : t.from_address,
-      amount: t.amount,
-      symbol: t.symbol,
-      usd_value: t.usd_value,
-      tx_type: t.tx_type,
-      detected_at: t.detected_at,
-      interesting_score: t.interesting_score ?? 0,
-      signal: t.signal || null,
-      headline: t.headline || null,
-      confidence: t.confidence ?? null,
-    })),
+    recent_txs: (txs || []).map((t) => {
+      const isOut = String(t.from_address || "").toLowerCase() === pAddr;
+      return {
+        id: t.id,
+        chain: (t.chain || "?").toUpperCase(),
+        tx_hash: t.tx_hash,
+        direction: isOut ? "out" : "in",
+        counterpart: isOut ? t.to_address : t.from_address,
+        amount: t.amount,
+        symbol: t.symbol,
+        usd_value: t.usd_value,
+        tx_type: t.tx_type,
+        detected_at: t.detected_at,
+        interesting_score: t.interesting_score ?? 0,
+        signal: t.signal || null,
+        headline: t.headline || null,
+        confidence: t.confidence ?? null,
+      };
+    }),
   };
 }
 
@@ -816,10 +955,12 @@ export async function countCluster(env, toAddress, chain, detectedAt, currentWha
   if (!toAddress || !chain || !detectedAt) return 0;
   const windowMs = 15 * 60 * 1000; // 15 min
   const since = detectedAt - windowMs;
+  // Second-pass fix: EVM addresses are cased inconsistently, so compare
+  // lowercased — otherwise same-address transfers are missed by the cluster.
   const row = await env.DB.prepare(
     "SELECT COUNT(*) AS cnt FROM whales " +
-    "WHERE to_address = ? AND chain = ? AND detected_at >= ? AND detected_at <= ? AND id != ?"
-  ).bind(toAddress, chain, since, detectedAt + windowMs, currentWhaleId).first();
+    "WHERE lower(to_address) = ? AND chain = ? AND detected_at >= ? AND detected_at <= ? AND id != ?"
+  ).bind(String(toAddress).toLowerCase(), chain, since, detectedAt + windowMs, currentWhaleId).first();
   return row?.cnt || 0;
 }
 
@@ -847,7 +988,13 @@ export async function queueHandler(batch, env) {
         body = {};
       }
       if (body.kind === "public_alert") {
-        await postPublicAlert(env, body.whale_id);
+        // Second-pass fix: a message with no whale_id can never succeed —
+        // ack it instead of burning all max_retries on a poison message.
+        if (body.whale_id == null) {
+          console.warn("[bot] public_alert without whale_id — acking poison message");
+        } else {
+          await postPublicAlert(env, body.whale_id);
+        }
       } else {
         console.warn("[bot] unknown queue kind:", body.kind);
       }
@@ -860,6 +1007,27 @@ export async function queueHandler(batch, env) {
 }
 
 async function postPublicAlert(env, whaleId) {
+  const chatId = env.PUBLIC_CHANNEL;
+
+  // BT2 — ATOMIC DELIVERED-CLAIM, FIRST, BEFORE ANY NETWORK I/O.
+  // The old code did check → send → insert: if the Telegram post succeeded
+  // but R2/GH threw (or a retry raced a concurrent batch), the delivered row
+  // was never written and the alert posted twice. Now we INSERT OR IGNORE
+  // first and only proceed when meta.changes === 1 (we won the claim).
+  // A retry or concurrent invocation sees changes === 0 and skips — no
+  // double-post, ever. Trade-off: this is at-most-once delivery. If the
+  // Telegram send itself fails after the claim, the retry skips the alert
+  // instead of risking a duplicate; a rare miss beats a duplicate on a
+  // public channel. (delivered PK is (whale_id, chat_id) — the IGNORE is
+  // the claim.)
+  const claim = await env.DB.prepare(
+    "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
+  ).bind(whaleId, chatId, Date.now()).run();
+  if (!claim || claim.meta?.changes !== 1) {
+    console.log(`[bot] whale ${whaleId} already claimed/delivered to ${chatId} — skipping`);
+    return;
+  }
+
   // Load whale + analysis
   const whale = await env.DB.prepare(
     `SELECT w.*, a.headline, a.interpretation, a.signal, a.confidence, a.related_factor
@@ -869,16 +1037,6 @@ async function postPublicAlert(env, whaleId) {
   if (!whale) throw new Error(`whale ${whaleId} not found`);
   if (!whale.analysis_status || whale.analysis_status === "failed") {
     throw new Error(`whale ${whaleId} analysis not done (status=${whale.analysis_status})`);
-  }
-
-  // dedupe per channel — Queues guarantee at-least-once, so re-delivery happens
-  const chatId = env.PUBLIC_CHANNEL;
-  const existing = await env.DB.prepare(
-    "SELECT 1 FROM delivered WHERE whale_id = ? AND chat_id = ?"
-  ).bind(whaleId, chatId).first();
-  if (existing) {
-    console.log(`[bot] whale ${whaleId} already delivered to ${chatId} — skipping`);
-    return;
   }
 
   let market = null;
@@ -897,18 +1055,17 @@ async function postPublicAlert(env, whaleId) {
   }, market);
   if (clusterNote) text = clusterNote + "\n" + text;
 
-  await tgSendMessage(env.BOT_TOKEN, chatId, text, { parse_mode: "" /* plain text */ });
+  // BT3+BT4: plain text (parse_mode omitted), truncated to Telegram's limit.
+  await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
 
-  // R2 export for the Python trading loop (trading_loop.py polls this)
+  // R2 export for the Python trading loop (trading_loop.py polls this).
+  // postAlertToR2 swallows its own errors (BT5) — a failed export can never
+  // trigger a repost now that the delivered row is claimed up front.
   const alertJSON = buildAlertJSON(whale, market);
   if (alertJSON) await postAlertToR2(env, alertJSON);
 
   // Fire GitHub Actions (triggers trade.yml via repository_dispatch)
   if (alertJSON) await fireGitHubDispatch(env, alertJSON);
-
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO delivered (whale_id, chat_id, delivered_at) VALUES (?, ?, ?)"
-  ).bind(whaleId, chatId, Date.now()).run();
 }
 
 // ─── default export (entry) ──────────────────────────────────────────

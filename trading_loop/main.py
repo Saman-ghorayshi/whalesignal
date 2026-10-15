@@ -20,7 +20,8 @@ import sqlite3
 
 from trading_loop.memory import (
     recent_trades_for_whale, whale_beliefs, global_beliefs, whale_score,
-    new_signals, mark_processed, record_trade, open_trades, close_trade,
+    new_signals, mark_processed, record_trade, record_skip, open_trades,
+    close_trade, apply_migrations,
 )
 from trading_loop.risk_manager import (
     check as risk_check, Decision as RiskDecision, RiskState,
@@ -29,6 +30,11 @@ from trading_loop.risk_manager import (
 from trading_loop.llm import call_llm, extract_json
 
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
+MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
+
+# Only these L1 chains map 1:1 onto a Hyperliquid perp. Anything else
+# (SOL, ARB, ...) would silently trade the wrong coin — skip instead.
+SUPPORTED_COINS = ("BTC", "ETH")
 
 
 # ─── init ─────────────────────────────────────────────────────────────
@@ -38,8 +44,50 @@ def init_db(db_path: str) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     with open(SCHEMA_PATH) as f:
         db.executescript(f.read())
+    apply_migrations(db, MIGRATIONS_DIR)
     db.commit()
     return db
+
+
+# ─── HL response parsing ──────────────────────────────────────────────
+
+def extract_order_id(resp: dict) -> str:
+    """Best-effort order id from the hyperliquid-python-sdk response.
+
+    Wire shape: {"response": {"type": "order", "data": {"statuses": [
+        {"resting": {"oid": N}} | {"filled": {"oid": N, "avgPx": "..."}}]}}}
+    """
+    try:
+        statuses = (resp or {}).get("response", {}).get("data", {}).get("statuses", [])
+        for st in statuses:
+            if not isinstance(st, dict):
+                continue
+            for key in ("filled", "resting"):
+                inner = st.get(key)
+                if isinstance(inner, dict) and "oid" in inner:
+                    return str(inner["oid"])
+        return str(statuses[0]) if statuses else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def extract_fill_price(resp: dict):
+    """Best-effort average fill price from a market_open response.
+
+    Returns float or None. Prefer the exchange-reported fill over a
+    post-order mid — the mid can move between order and query.
+    """
+    try:
+        statuses = (resp or {}).get("response", {}).get("data", {}).get("statuses", [])
+        for st in statuses:
+            if not isinstance(st, dict):
+                continue
+            filled = st.get("filled")
+            if isinstance(filled, dict) and filled.get("avgPx") not in (None, ""):
+                return float(filled["avgPx"])
+    except Exception:
+        pass
+    return None
 
 
 # ─── prompt building (Paper 1: bull/bear debate in ONE call) ─────────
@@ -146,7 +194,25 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
     """Process one signal: LLM debate → risk check → execute → record."""
 
     whale = signal["whale"]
-    alert = json.loads(signal["raw_json"]) if signal["raw_json"] else signal
+
+    # T10: a corrupt raw_json must dead-letter, not poison the loop forever.
+    try:
+        alert = json.loads(signal["raw_json"]) if signal["raw_json"] else signal
+    except (json.JSONDecodeError, TypeError) as e:
+        print(f"  signal {signal['id']}: corrupt raw_json ({e}) — dead-lettering",
+              file=sys.stderr)
+        record_skip(db, signal["id"], f"corrupt raw_json: {e}")
+        db.commit()
+        return
+
+    # T19: live mode with no HL client would record entry_price=0.0 zombie
+    # trades. Dead-letter before spending an LLM call.
+    if not dry_run and hl is None:
+        print(f"  signal {signal['id']}: live mode but no HL client "
+              f"(missing --testnet-key) — skipping", file=sys.stderr)
+        record_skip(db, signal["id"], "live mode without HL client")
+        db.commit()
+        return
 
     # Read memory (FinMem L2 + L3)
     recent = recent_trades_for_whale(db, whale)
@@ -174,23 +240,49 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
     else:
         decision = call_llm(prompt, base_url=llm_base_url, gemini_key=gemini_key)
 
-    # Parse decision
-    verdict = decision.get("decision", "SKIP").upper().strip()
-    confidence = decision.get("confidence", 0.0)
+    # Parse decision — every field is LLM output, so every field is suspect.
+    # T10: garbage here dead-letters the signal instead of retrying forever.
+    if not isinstance(decision, dict):
+        print(f"  signal {signal['id']}: LLM returned non-dict "
+              f"({type(decision).__name__}) — dead-lettering", file=sys.stderr)
+        record_skip(db, signal["id"], f"LLM returned {type(decision).__name__}")
+        db.commit()
+        return
+
+    verdict = str(decision.get("decision", "SKIP")).upper().strip()
 
     if verdict == "SKIP":
-        print(f"  signal {signal['id']}: SKIP (confidence {confidence})")
+        print(f"  signal {signal['id']}: SKIP")
         mark_processed(db, signal["id"])
         db.commit()
         return
 
-    # COPY — run risk checks
-    side = decision.get("side", "long").lower()
-    size_pct = float(decision.get("size_pct", 5))
-    tp_pct = float(decision.get("TP_pct", decision.get("tp_pct", 3)))
-    sl_pct = decision.get("SL_pct", decision.get("sl_pct"))
-    sl_pct = float(sl_pct) if sl_pct is not None else None
-    leverage = int(decision.get("leverage", 1))
+    # COPY — validate the decision fields before touching money.
+    try:
+        side_raw = decision.get("side", "long")
+        side = str(side_raw).lower().strip()
+        size_pct = float(decision.get("size_pct", 5))
+        tp_pct = float(decision.get("TP_pct", decision.get("tp_pct", 3)))
+        sl_raw = decision.get("SL_pct", decision.get("sl_pct"))
+        sl_pct = float(sl_raw) if sl_raw is not None else None
+        leverage = int(decision.get("leverage", 1))
+        conf_raw = decision.get("confidence")
+        confidence = float(conf_raw) if conf_raw is not None else None
+    except (ValueError, TypeError) as e:
+        print(f"  signal {signal['id']}: unparseable decision field ({e}) — "
+              f"dead-lettering", file=sys.stderr)
+        record_skip(db, signal["id"], f"bad decision field: {e}")
+        db.commit()
+        return
+
+    # T11: NEVER silently default to SHORT on an LLM typo ("buy", "long-ish",
+    # "l0ng"...). Anything not exactly long/short skips loudly.
+    if side not in ("long", "short"):
+        print(f"  signal {signal['id']}: invalid side {side_raw!r} — skipping",
+              file=sys.stderr)
+        record_skip(db, signal["id"], f"invalid side: {side_raw!r}")
+        db.commit()
+        return
 
     rd = RiskDecision(
         side=side, size_pct=size_pct, tp_pct=tp_pct, sl_pct=sl_pct, leverage=leverage,
@@ -218,42 +310,57 @@ def decide_and_trade(db, signal, hl, llm_base_url, starting_balance, dry_run=Fal
         return
 
     # Execute on HL testnet
-    coin = alert.get("chain", "BTC").upper()
-    if coin == "ETH":
-        coin = "ETH"
-    elif coin == "BTC":
-        coin = "BTC"
-    sz = check_result.adjusted["size_usd"]
+    coin = str(alert.get("chain", "BTC")).upper()
+    if coin not in SUPPORTED_COINS:
+        print(f"  signal {signal['id']}: unsupported coin {coin!r} — skipping",
+              file=sys.stderr)
+        record_skip(db, signal["id"], f"unsupported coin: {coin!r}")
+        db.commit()
+        return
+
+    size_usd = check_result.adjusted["size_usd"]
 
     hl_order_id = "dry-run"
     entry_price = 0.0
     if hl and not dry_run:
         try:
             is_buy = (side == "long")
-            resp = hl.open_market(coin, is_buy, sz)
-            hl_order_id = resp.get("response", {}).get("data", {}).get("oid", "unknown")
             entry_price = hl.mid_price(coin)
-            print(f"  signal {signal['id']}: COPY {side} {sz} {coin} @ ~{entry_price} (oid={hl_order_id})")
+            # T1: Hyperliquid wants COIN units — convert, don't pass USD.
+            sz = hl.usd_to_sz(coin, size_usd, entry_price)
+            resp = hl.open_market(coin, is_buy, sz)
+            hl_order_id = extract_order_id(resp)          # T14
+            fill_price = extract_fill_price(resp)         # T14
+            if fill_price:
+                entry_price = fill_price  # exchange truth beats post-order mid
+            print(f"  signal {signal['id']}: COPY {side} {sz} {coin} "
+                  f"(~${size_usd:.2f}) @ ~{entry_price} (oid={hl_order_id})")
         except Exception as e:
+            # Covers order failure AND below-$10-minimum (usd_to_sz raises).
             print(f"  signal {signal['id']}: HL order failed — {e}", file=sys.stderr)
-            mark_processed(db, signal["id"])
+            record_skip(db, signal["id"], f"HL order failed: {e}")
             db.commit()
             return
     elif dry_run:
         entry_price = alert.get("market", {}).get(f"{coin.lower()}_price") or 0
         if entry_price == 0:
             entry_price = 63000  # snapshot for dry run (testnet hedge value)
-        print(f"  signal {signal['id']}: COPY (dry-run) {side} {sz} {coin} @ ~{entry_price}")
+        print(f"  signal {signal['id']}: COPY (dry-run) {side} ~${size_usd:.2f} {coin} @ ~{entry_price}")
 
-    # Record trade
+    # Record trade — in EVERY mode (live trades used to vanish: the old
+    # record sat where only dry-run could reach it).
     record_trade(db, {
         "signal_id": signal["id"],
         "whale": whale,
         "side": side,
-        "size_usd": sz,
+        "size_usd": size_usd,
         "entry_price": entry_price,
         "coin": coin,
         "leverage": check_result.adjusted["leverage"],
+        # T4: persist the risk-adjusted TP/SL so closes honor the debate,
+        # not hardcoded 3%/5%.
+        "tp_pct": check_result.adjusted["tp_pct"],
+        "sl_pct": check_result.adjusted["sl_pct"],
         "opened_at": now_ms,
         "bear_case": decision.get("bearish_case", ""),
         "bullish_case": decision.get("bullish_case", ""),
@@ -294,9 +401,10 @@ def check_and_close_trades(db, hl, dry_run=False):
         else:
             pnl_pct = (entry - current_price) / entry * 100
 
-        # check TP/SL/time
-        tp = 3.0   # embedded in trade — but we simplfy: no column for it, check in state
-        sl = 5.0
+        # check TP/SL/time — T4: honor the per-trade TP/SL persisted at open
+        # (falls back to the old 3%/5% defaults for pre-migration trades).
+        tp = t.get("tp_pct") or 3.0
+        sl = t.get("sl_pct") or 5.0
         close_reason = None
 
         if pnl_pct >= tp:
@@ -307,12 +415,11 @@ def check_and_close_trades(db, hl, dry_run=False):
             close_reason = "time"
 
         if close_reason:
-            sz = t["size_usd"]
-            pnl_usd = sz * pnl_pct / 100
-            hl_resp = "dry-run"
+            pnl_usd = t["size_usd"] * pnl_pct / 100
             if hl and not dry_run:
                 try:
-                    hl.close_market(coin, sz)
+                    # T15: no sz → SDK closes the ENTIRE position for the coin.
+                    hl.close_market(coin)
                 except Exception as e:
                     print(f"  close failed for trade {t['id']}: {e}", file=sys.stderr)
                     continue

@@ -14,7 +14,7 @@
 CREATE TABLE IF NOT EXISTS whales (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   chain         TEXT    NOT NULL,                  -- 'btc' | 'eth'
-  tx_hash       TEXT    NOT NULL UNIQUE,           -- dedupe across scans
+  tx_hash       TEXT    NOT NULL,
   from_address  TEXT    NOT NULL,
   to_address    TEXT    NOT NULL,
   amount        REAL    NOT NULL,                  -- raw token amount
@@ -22,9 +22,16 @@ CREATE TABLE IF NOT EXISTS whales (
   usd_value     REAL    NOT NULL,                  -- amount * price at detect time
   tx_type       TEXT,                              -- exchange_inflow | exchange_outflow | wallet_to_wallet | exchange_internal | unknown
   block_number  INTEGER,
-  block_time    INTEGER,                           -- on-chain block timestamp (epoch s)
+  block_time    INTEGER,                           -- on-chain block timestamp (epoch ms)
   detected_at   INTEGER NOT NULL,                  -- our detect time (epoch ms)
-  analysis_status TEXT NOT NULL DEFAULT 'pending'  -- pending | done | failed | skipped
+  analysis_status TEXT NOT NULL DEFAULT 'pending', -- pending | analyzed | done | failed | skipped
+  interesting_score INTEGER NOT NULL DEFAULT 0,    -- 0-100 rule-based score (gates AI)
+  price_at_detect REAL,                            -- price snapshot for AI accuracy eval
+  is_self_transfer INTEGER NOT NULL DEFAULT 0,     -- 1 = consolidation/self-move (all change or from==to)
+  contract_address TEXT,                           -- ERC20 contract for token transfers, else NULL
+  alert_queued_at INTEGER,                         -- analyst claim flag for at-least-once BOTQ send
+  -- One tx can move native ETH *and* ERC20s: each is its own whale row.
+  UNIQUE (chain, tx_hash, symbol)
 );
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -38,6 +45,8 @@ CREATE TABLE IF NOT EXISTS analysis (
   confidence      REAL,                            -- 0.0 - 1.0
   related_factor  TEXT,
   created_at      INTEGER NOT NULL,
+  ai_provider     TEXT,                            -- which engine produced this analysis
+  ai_model        TEXT,                            -- which model produced this analysis
   FOREIGN KEY (whale_id) REFERENCES whales(id) ON DELETE CASCADE
 );
 
@@ -68,7 +77,8 @@ CREATE TABLE IF NOT EXISTS scanner_state (
   last_block    INTEGER,                           -- last block fully processed
   last_scan     INTEGER,                           -- epoch ms of last successful scan
   total_whales  INTEGER NOT NULL DEFAULT 0,        -- lifetime count
-  errors        INTEGER NOT NULL DEFAULT 0         -- consecutive error count (for alerting later)
+  errors        INTEGER NOT NULL DEFAULT 0,        -- consecutive error count (for alerting later)
+  tx_offset     INTEGER NOT NULL DEFAULT 0        -- BTC pagination resume point into (last_block+1)
 );
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -83,7 +93,7 @@ CREATE TABLE IF NOT EXISTS delivered (
 );
 
 -- ─────────────────────────────────────────────────────────────────────
--- Sprint 1 additions — additive ALTERs, safe on every deploy.
+-- Additive ALTERs for columns NOT folded into the CREATE TABLEs above.
 -- ─────────────────────────────────────────────────────────────────────
 -- SQLite ALTER TABLE ADD COLUMN ignores a missing IF NOT EXISTS,
 -- and D1 doesn't support it either. We guard with a pragma check in
@@ -91,13 +101,15 @@ CREATE TABLE IF NOT EXISTS delivered (
 -- run through the wrapper. If you run this file raw in a sqlite shell
 -- after already adding the columns, you get "duplicate column name" —
 -- which is harmless noise, not data loss.
-ALTER TABLE whales ADD COLUMN interesting_score INTEGER NOT NULL DEFAULT 0;
+--
+-- (whales.interesting_score and whales.price_at_detect used to live here;
+-- they are now in the CREATE TABLE above. Databases created from the old
+-- schema must run schema/migrations/001_whales_composite_unique.sql.)
 ALTER TABLE wallets ADD COLUMN reputation TEXT;
 
 -- ─────────────────────────────────────────────────────────────────────
--- Sprint 3 additions — price snapshot at detect time for AI accuracy.
+-- Sprint 3 additions — AI accuracy evaluation columns.
 -- ─────────────────────────────────────────────────────────────────────
-ALTER TABLE whales ADD COLUMN price_at_detect REAL;
 ALTER TABLE analysis ADD COLUMN prediction_outcome TEXT;
 ALTER TABLE analysis ADD COLUMN price_at_eval REAL;
 ALTER TABLE analysis ADD COLUMN evaluated_at INTEGER;
