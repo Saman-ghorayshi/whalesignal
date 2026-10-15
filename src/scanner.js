@@ -59,13 +59,18 @@ const BSC_TOKENS_BY_CONTRACT = {
   "0x7130d40692f8b028100d12b8546c800a15e65430": "BUSD",
 };
 
+// Base (Coinbase L2) — native USDC
+const BASE_TOKENS_BY_CONTRACT = {
+  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "USDC",
+};
+
 // ─── tunables ─────────────────────────────────────────────────────────
 
 // Confirmation depth: never trust the unconfirmed tip. A reorged "$50M
 // whale" alert is a credibility-killer; a 1-2 block lag costs nothing on a
 // 1/min cadence.
-const CONFIRMATIONS = { btc: 1, eth: 2, bsc: 3, tron: 1, solana: 1 };
-const EVM_CHAIN_IDS = { eth: 1, bsc: 56 };
+const CONFIRMATIONS = { btc: 1, eth: 2, bsc: 3, base: 2, tron: 1, solana: 1 };
+const EVM_CHAIN_IDS = { eth: 1, bsc: 56, base: 8453 };
 
 // Workers allow 50 subrequests per invocation. Market+news+tip overhead is
 // ~9-12, so the scan phase gets the rest. Shared across both chains per tick.
@@ -248,7 +253,7 @@ export function extractCandidatesBTC(block, market) {
 export function extractCandidatesETH(block, market, chain = "eth") {
   const out = [];
   if (!block || !Array.isArray(block.transactions)) return out;
-  const nativeSym = chain === "bsc" ? "BNB" : "ETH";
+  const nativeSym = chain === "bsc" ? "BNB" : "ETH"; // base uses ETH
   for (const tx of block.transactions) {
     if (typeof tx === "string") continue; // we asked for full txs
     if (!tx.hash) continue;
@@ -283,7 +288,7 @@ export function extractERC20Candidates(logs, market, chain = "eth") {
   for (const lg of logs) {
     if (!Array.isArray(lg.topics) || lg.topics.length < 3) continue;
     const contract = (lg.address || "").toLowerCase();
-    const tokenMap = chain === "bsc" ? BSC_TOKENS_BY_CONTRACT : TOKENS_BY_CONTRACT;
+    const tokenMap = chain === "bsc" ? BSC_TOKENS_BY_CONTRACT : chain === "base" ? BASE_TOKENS_BY_CONTRACT : TOKENS_BY_CONTRACT;
     const sym = tokenMap[contract];
     if (!sym) continue; // not a tracked token
     // topics are 32-byte hex words; from = bytes12..32, to likewise
@@ -663,6 +668,20 @@ export async function fetchLatestBlockHeight(env, chain) {
     }
     return h;
   }
+  if (chain === "base") {
+    // Etherscan V2 free doesn't cover Base — use public Base RPC
+    const r = await fetch("https://mainnet.base.org", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+    });
+    const j = await r.json();
+    const h = parseInt(j?.result, 16);
+    if (!Number.isFinite(h) || h <= 0) {
+      throw new Error(`base blockNumber returned garbage: ${String(j?.result).slice(0, 120)}`);
+    }
+    return h;
+  }
   if (chain === "bsc") {
     // Etherscan V2 free doesn't cover BSC — use public BSC RPC
     const r = await fetch("https://bsc-dataseed.binance.org", {
@@ -764,6 +783,21 @@ export async function fetchBlock(chain, blockNum, env, opts = {}) {
     block.nextTxIndex = 0;
     return block;
   }
+  if (chain === "base") {
+    const hex = "0x" + Number(blockNum).toString(16);
+    if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
+    const r = await fetch("https://mainnet.base.org", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [hex, true] }),
+    });
+    const j = await r.json();
+    const block = j.result;
+    if (!block) throw new Error(`base block ${blockNum} not found`);
+    block.txComplete = true;
+    block.nextTxIndex = 0;
+    return block;
+  }
   if (chain === "bsc") {
     const hex = "0x" + Number(blockNum).toString(16);
     if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
@@ -799,13 +833,14 @@ export async function fetchERC20Logs(blockNum, env, budget = null, chain = "eth"
   const fromBlock = "0x" + Number(blockNum).toString(16);
   const toBlock = fromBlock;
   const out = [];
-  const tokenMap = chain === "bsc" ? BSC_TOKENS_BY_CONTRACT : TOKENS_BY_CONTRACT;
+  const tokenMap = chain === "bsc" ? BSC_TOKENS_BY_CONTRACT : chain === "base" ? BASE_TOKENS_BY_CONTRACT : TOKENS_BY_CONTRACT;
   for (const contract of Object.keys(tokenMap)) {
     if (!takeSubrequest(budget)) break; // out of budget — return what we have
     let logsJson;
-    if (chain === "bsc") {
-      // Public BSC RPC — eth_getLogs
-      const r = await fetch("https://bsc-dataseed.binance.org", {
+    if (chain === "bsc" || chain === "base") {
+      // Public RPC — eth_getLogs
+      const rpcUrl = chain === "bsc" ? "https://bsc-dataseed.binance.org" : "https://mainnet.base.org";
+      const r = await fetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1307,7 +1342,7 @@ export default {
     const budget = { remaining: SCAN_SUBREQUEST_BUDGET };
 
     const results = [];
-    for (const chain of ["btc", "eth", "bsc", "tron", "solana"]) {
+    for (const chain of ["btc", "eth", "bsc", "base", "tron", "solana"]) {
       try {
         results.push(
           chain === "tron"
