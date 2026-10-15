@@ -474,12 +474,13 @@ function asRateLimited(message) {
 /** Call Gemini. Returns { text, model }. Throws on error. */
 export async function callGemini(env, prompt, specificModel = null) {
   if (!env.GEMINI_KEY) throw new Error("GEMINI_KEY missing");
-  // A1: default to the documented model (config.example.json: gemini-2.0-flash).
-  // Fallbacks are real model IDs only — no speculative gemini-3.x names.
-  const primaryModel = specificModel || env.GEMINI_MODEL || "gemini-2.0-flash";
+  // A1: default to gemini-2.5-flash (verified live 2026-10-15 via models.list;
+  // gemini-2.0-flash was retired by Google and 404s). Fallbacks are real,
+  // currently-available model IDs only.
+  const primaryModel = specificModel || env.GEMINI_MODEL || "gemini-2.5-flash";
   const candidateModels = specificModel
     ? [specificModel]
-    : [primaryModel, "gemini-flash-latest"].filter(
+    : [primaryModel, "gemini-flash-latest", "gemini-3.7-flash"].filter(
         (m, i, arr) => m && arr.indexOf(m) === i
       );
   let lastErr = null;
@@ -948,7 +949,7 @@ Return JSON:
   if (env.GEMINI_KEY) {
     results.engines.gemini_models = {};
     const modelsToProbe = [
-      "gemini-2.0-flash",
+      "gemini-2.5-flash",
       "gemini-flash-latest",
     ];
     for (const m of modelsToProbe) {
@@ -1038,6 +1039,33 @@ export default {
           });
         }
         throw e;
+      }
+    }
+    // Admin: re-drive analysis for a single whale (e.g. after a model outage
+    // marked rows 'failed'). Gated by ADMIN_TOKEN like /test-ai. Resets a
+    // 'failed' row to 'pending' first so analyzeOne will process it.
+    const analyzeMatch = url.pathname.match(/^\/analyze\/(\d+)$/);
+    if (analyzeMatch) {
+      if (!isAuthorizedAdmin(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const whaleId = parseInt(analyzeMatch[1], 10);
+      try {
+        await env.DB.prepare(
+          "UPDATE whales SET analysis_status = 'pending' WHERE id = ? AND analysis_status = 'failed'"
+        ).bind(whaleId).run();
+        const r = await analyzeOne(env, { whale_id: whaleId });
+        return new Response(JSON.stringify({ ok: true, whale_id: whaleId, result: r }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, whale_id: whaleId, error: e.message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
       }
     }
     return new Response(JSON.stringify({ ok: true, worker: "whalesignal-analyst", status: "healthy" }), {
