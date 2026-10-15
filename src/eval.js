@@ -21,9 +21,9 @@
 import { isAuthorizedAdmin } from "./worker-utils.js";
 
 const HORIZONS = [
-  { key: "1h", ms: 3600000, noisePct: 0.3 },
-  { key: "6h", ms: 6 * 3600000, noisePct: 0.75 },
-  { key: "24h", ms: 24 * 3600000, noisePct: 1.5 },
+  { key: "1h", ms: 3600000, noisePct: 0.3, ocol: "outcome_1h", pcol: "horizon_1h_price", rcol: "horizon_1h_return" },
+  { key: "6h", ms: 6 * 3600000, noisePct: 0.75, ocol: "outcome_6h", pcol: "horizon_6h_price", rcol: "horizon_6h_return" },
+  { key: "24h", ms: 24 * 3600000, noisePct: 1.5, ocol: "outcome", pcol: "horizon_24h_price", rcol: "horizon_24h_return" },
 ];
 
 /** Nearest 1h candle close at or before t (D1 prices). */
@@ -62,7 +62,7 @@ export async function runEvalTick(env) {
         `SELECT p.whale_id, p.signal, p.confidence, p.motive, p.price_at_detect,
                 p.detected_at, w.symbol
          FROM predictions p JOIN whales w ON w.id = p.whale_id
-         WHERE p.detected_at < ? AND p.outcome_${h.key} IS NULL
+         WHERE p.detected_at < ? AND p.${h.ocol} IS NULL
            AND p.signal IN ('bullish', 'bearish')
          LIMIT 200`
       ).bind(cutoff).all();
@@ -79,8 +79,8 @@ export async function runEvalTick(env) {
         const ret = ((p1 - p0) / p0) * 100;
         const outcome = grade(p.signal, ret, h.noisePct);
         await env.DB.prepare(
-          `UPDATE predictions SET horizon_${h.key}_price = ?, horizon_${h.key}_return = ?,
-             outcome_${h.key} = ?, evaluated_at = ? WHERE whale_id = ?`
+          `UPDATE predictions SET ${h.pcol} = ?, ${h.rcol} = ?,
+             ${h.ocol} = ?, evaluated_at = ? WHERE whale_id = ?`
         ).bind(p1, +ret.toFixed(3), outcome, now, p.whale_id).run();
         scored++;
       } catch (e) {
@@ -112,9 +112,9 @@ async function buildLeaderboard(env) {
   try {
     for (const h of HORIZONS) {
       const rows = await env.DB.prepare(
-        `SELECT signal, confidence, motive, outcome_${h.key} AS o,
-                horizon_${h.key}_return AS r
-         FROM predictions WHERE outcome_${h.key} IS NOT NULL`
+        `SELECT signal, confidence, motive, ${h.ocol} AS o,
+                ${h.rcol} AS r
+         FROM predictions WHERE ${h.ocol} IS NOT NULL`
       ).all();
       const rs = rows.results || [];
       const scored = rs.filter((x) => x.o === "hit" || x.o === "miss");
