@@ -374,9 +374,17 @@ export async function fetchHandler(request, env, ctx) {
   // ─── public GET /content — content brief for the latest big whale ──
   // Returns a human-ready brief: hook, 30s spoken script, caption, hashtags.
   // ?id= for a specific whale, otherwise the latest score>=50 whale.
+  // KV-first (content_briefs cache), D1 fallback.
   if (request.method === "GET" && path === "/content") {
     try {
       const id = url.searchParams.get("id");
+      if (!id) {
+        try {
+          const raw = await env.KV.get("content_briefs");
+          const list = raw ? JSON.parse(raw) : [];
+          if (list.length) return jsonResponse({ ok: true, brief: list[0], cached: true });
+        } catch {}
+      }
       let whale;
       if (id) {
         whale = await env.DB.prepare("SELECT * FROM whales WHERE id = ?").bind(id).first();
@@ -400,9 +408,17 @@ export async function fetchHandler(request, env, ctx) {
   }
 
   // ─── public GET /content/queue — last N content briefs ──
+  // KV-first (content_briefs cache written at alert time), D1 fallback.
   if (request.method === "GET" && path === "/content/queue") {
     try {
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "5", 10) || 5, 20);
+      try {
+        const raw = await env.KV.get("content_briefs");
+        const list = raw ? JSON.parse(raw) : [];
+        if (list.length) {
+          return jsonResponse({ ok: true, count: Math.min(list.length, limit), briefs: list.slice(0, limit), cached: true });
+        }
+      } catch {}
       const whales = await env.DB.prepare(
         `SELECT * FROM whales WHERE interesting_score >= 50
          ORDER BY detected_at DESC LIMIT ?`
@@ -1165,6 +1181,20 @@ async function postPublicAlert(env, whaleId, chartUrl = null) {
     }
   } else {
     await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
+  }
+
+  // Content studio: cache the brief in KV so /content/queue works even
+  // when D1 is down (and faster anyway). Keep last 10.
+  try {
+    const brief = buildContentBrief(whale, {
+      motive: whale.motive, signal: whale.signal, confidence: whale.confidence,
+    });
+    const raw = await env.KV.get("content_briefs");
+    const list = raw ? JSON.parse(raw) : [];
+    list.unshift(brief);
+    await env.KV.put("content_briefs", JSON.stringify(list.slice(0, 10)), { expirationTtl: 86400 });
+  } catch (e) {
+    console.warn("[bot] brief KV cache failed:", e.message);
   }
 
   // R2 export for the Python trading loop (trading_loop.py polls this).
