@@ -45,6 +45,28 @@ const SOURCES = [
   { name: "reddit_bitcoin", rss: "https://www.reddit.com/r/Bitcoin/.rss", weight: 0.3 },
   { name: "reddit_ethereum", rss: "https://www.reddit.com/r/ethereum/.rss", weight: 0.3 },
   { name: "reddit_crypto", rss: "https://www.reddit.com/r/CryptoCurrency/.rss", weight: 0.3 },
+  // Tier 5 — macro/world. Verified working Oct 2026. These explain WHY whales
+  // move: FOMC, CPI, wars, SEC actions, earnings. Rare items get higher weight
+  // because when they fire, they move everything.
+  { name: "fed_press", rss: "https://www.federalreserve.gov/feeds/press_all.xml", weight: 0.8 },
+  { name: "sec_press", rss: "https://www.sec.gov/news/pressreleases.rss", weight: 0.8 },
+  { name: "cnbc_top", rss: "https://www.cnbc.com/id/100003114/device/rss/rss.html", weight: 0.6 },
+  { name: "cnbc_earnings", rss: "https://www.cnbc.com/id/15839135/device/rss/rss.html", weight: 0.6 },
+  { name: "marketwatch_top", rss: "https://www.marketwatch.com/rss/topstories", weight: 0.6 },
+  { name: "forexlive", rss: "https://www.forexlive.com/feed/news/", weight: 0.6 },
+  { name: "investing_news", rss: "https://www.investing.com/rss/news_25.rss", weight: 0.5 },
+  { name: "bbc_news", rss: "http://feeds.bbci.co.uk/news/rss.xml", weight: 0.5 },
+  { name: "bbc_business", rss: "http://feeds.bbci.co.uk/news/business/rss.xml", weight: 0.5 },
+  { name: "bbc_world", rss: "http://feeds.bbci.co.uk/news/world/rss.xml", weight: 0.5 },
+  { name: "aljazeera", rss: "https://www.aljazeera.com/xml/rss/all.xml", weight: 0.5 },
+  { name: "thehill", rss: "https://thehill.com/feed/", weight: 0.5 },
+  { name: "oilprice", rss: "https://oilprice.com/rss/main", weight: 0.5 },
+  { name: "seekingalpha", rss: "https://seekingalpha.com/feed.xml", weight: 0.5 },
+  { name: "npr_politics", rss: "https://feeds.npr.org/1014/rss.xml", weight: 0.4 },
+  { name: "economist_china", rss: "https://www.economist.com/china/rss.xml", weight: 0.4 },
+  { name: "asiatimes", rss: "https://asiatimes.com/feed/", weight: 0.4 },
+  { name: "longwarjournal", rss: "https://www.longwarjournal.org/feed", weight: 0.3 },
+  { name: "crisisgroup", rss: "https://www.crisisgroup.org/rss.xml", weight: 0.3 },
 ];
 
 // topic → keywords. A headline can carry multiple topics.
