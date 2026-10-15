@@ -474,13 +474,13 @@ function asRateLimited(message) {
 /** Call Gemini. Returns { text, model }. Throws on error. */
 export async function callGemini(env, prompt, specificModel = null) {
   if (!env.GEMINI_KEY) throw new Error("GEMINI_KEY missing");
-  // A1: default to gemini-2.5-flash (verified live 2026-10-15 via models.list;
-  // gemini-2.0-flash was retired by Google and 404s). Fallbacks are real,
-  // currently-available model IDs only.
-  const primaryModel = specificModel || env.GEMINI_MODEL || "gemini-2.5-flash";
+  // A1: default to gemini-3.5-flash (verified live 2026-10-15: gemini-2.0-flash
+  // 404s as retired, gemini-2.5-flash 404s "not available to new users" for
+  // this key). Fallbacks are models that returned HTTP 200 for this key.
+  const primaryModel = specificModel || env.GEMINI_MODEL || "gemini-3.5-flash";
   const candidateModels = specificModel
     ? [specificModel]
-    : [primaryModel, "gemini-flash-latest", "gemini-3.7-flash"].filter(
+    : [primaryModel, "gemini-3.6-flash", "gemini-3-flash-preview"].filter(
         (m, i, arr) => m && arr.indexOf(m) === i
       );
   let lastErr = null;
@@ -530,10 +530,12 @@ export async function callGemini(env, prompt, specificModel = null) {
 /** Call Groq. Returns { text, model }. Throws on error. */
 export async function callGroq(env, prompt, specificModel = null) {
   if (!env.GROQ_KEY) throw new Error("GROQ_KEY missing");
-  const primaryModel = specificModel || env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  // Groq retired all llama chat models (verified 2026-10-15 via /v1/models);
+  // the working chat models are openai/gpt-oss-* and qwen/qwen3.8-27b.
+  const primaryModel = specificModel || env.GROQ_MODEL || "openai/gpt-oss-120b";
   const candidateModels = specificModel
     ? [specificModel]
-    : [primaryModel, "llama-3.3-70b-versatile", "llama-3.1-8b-instant"].filter(
+    : [primaryModel, "qwen/qwen3.8-27b", "openai/gpt-oss-20b"].filter(
         (m, i, arr) => m && arr.indexOf(m) === i
       );
 
@@ -921,7 +923,7 @@ Return JSON:
   // 1. Probe Groq models — A7: only the models production actually uses.
   if (env.GROQ_KEY) {
     results.engines.groq_models = {};
-    const groqModelsToProbe = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+    const groqModelsToProbe = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"];
     for (const m of groqModelsToProbe) {
       const start = Date.now();
       try {
@@ -949,8 +951,8 @@ Return JSON:
   if (env.GEMINI_KEY) {
     results.engines.gemini_models = {};
     const modelsToProbe = [
-      "gemini-2.5-flash",
-      "gemini-flash-latest",
+      "gemini-3.5-flash",
+      "gemini-3.6-flash",
     ];
     for (const m of modelsToProbe) {
       const start = Date.now();
