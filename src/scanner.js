@@ -839,16 +839,21 @@ export async function fetchERC20Logs(blockNum, env, budget = null, chain = "eth"
     let logsJson;
     if (chain === "bsc" || chain === "base") {
       // Public RPC — eth_getLogs
-      const rpcUrl = chain === "bsc" ? "https://bsc-dataseed.binance.org" : "https://mainnet.base.org";
-      const r = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0", id: 1, method: "eth_getLogs",
-          params: [{ fromBlock, toBlock, address: contract, topics: [TRANSFER_TOPIC] }],
-        }),
-      });
-      logsJson = await r.json();
+      try {
+        const rpcUrl = chain === "bsc" ? "https://bsc-dataseed.binance.org" : "https://mainnet.base.org";
+        const r = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+            params: [{ fromBlock, toBlock, address: contract, topics: [TRANSFER_TOPIC] }],
+          }),
+        });
+        logsJson = await r.json();
+      } catch (e) {
+        console.warn(`erc20 logs fetch failed for ${contract} on ${chain}:`, e.message);
+        continue;
+      }
     } else {
       const chainid = EVM_CHAIN_IDS[chain] || 1;
       const url = `https://api.etherscan.io/v2/api?chainid=${chainid}&module=logs&action=getLogs` +
@@ -1113,7 +1118,7 @@ export async function scanChain(env, chain, market, budget = null) {
 
       // for ETH, also pull ERC20 Transfer logs (extra RPCs, budget-bounded)
       let erc20 = [];
-      if (chain === "eth" || chain === "bsc") {
+      if (chain === "eth" || chain === "bsc" || chain === "base") {
         const logs = await fetchERC20Logs(cursor, env, budget, chain);
         erc20 = extractERC20Candidates(logs, market, chain).map((c) => ({
           ...c,
