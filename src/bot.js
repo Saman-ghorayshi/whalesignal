@@ -226,8 +226,16 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   // parse_mode Markdown is brittle when AI text contains asterisks/underscores.
   // /help and /ping below use plain text too for consistency.
   const lines = [];
-  lines.push(`🐋 WHALE ALERT — ${chain}`);
-  lines.push(`${usd} ${txTypeLabel}`);
+  // Mint radar: treasury outflows get special 🏦 labeling
+  const isMint = (whale.from_label || "").toLowerCase().includes("tether treasury") ||
+                 (whale.from_label || "").toLowerCase().includes("circle");
+  if (isMint) {
+    lines.push(`🏦 STABLECOIN MINT — ${chain}`);
+    lines.push(`${usd} fresh supply`);
+  } else {
+    lines.push(`🐋 WHALE ALERT — ${chain}`);
+    lines.push(`${usd} ${txTypeLabel}`);
+  }
   lines.push("");
   lines.push(`💰 ${amtStr} (${usd})`);
   lines.push(`📍 ${whale.chain} → ${toShort}`);
