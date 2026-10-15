@@ -115,7 +115,7 @@ export function vwap(klines) {
 export function stochRsi(closes, rsiPeriod = 14, stochPeriod = 14) {
   if (!closes || closes.length < rsiPeriod + stochPeriod) return null;
   const rsis = [];
-  for (let i = rsiPeriod; i <= closes.length; i++) {
+  for (let i = rsiPeriod + 1; i <= closes.length; i++) {
     const r = rsi(closes.slice(0, i), rsiPeriod);
     if (r == null) return null;
     rsis.push(r);
