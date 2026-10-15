@@ -506,7 +506,7 @@ test("callAI prefers AI_PROVIDER but falls back across available keys (A6)", asy
   try {
     const r = await callAI({ GROQ_KEY: "x", AI_PROVIDER: "gemini" }, "prompt");
     assert.equal(r.provider, "groq");
-    assert.equal(r.model, "llama-3.3-70b-versatile");
+    assert.equal(r.model, "openai/gpt-oss-120b");
     assert.ok(r.text.length > 0);
   } finally {
     globalThis.fetch = realFetch;
