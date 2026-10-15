@@ -14,7 +14,7 @@
  */
 
 import { isAuthorizedAdmin } from "./worker-utils.js";
-import { fetchKlines, rsi, macd, bollinger, sma, volumeZ, swingLevels, summarizeTA } from "./ta.js";
+import { fetchKlines, rsi, macd, bollinger, sma, volumeZ, swingLevels, summarizeTA, atr, vwap, stochRsi, obvTrend, fibonacci, adx, volatilityRegime } from "./ta.js";
 
 const SYMBOLS = ["BTC", "ETH", "SOL"];
 const CANDLE_KEEP_MS = 7 * 86400000;
@@ -45,6 +45,19 @@ function buildSnapshot(symbol, klines) {
   const trend = s20 != null && s50 != null
     ? (s20 > s50 * 1.005 ? "uptrend" : s20 < s50 * 0.995 ? "downtrend" : "sideways")
     : "unknown";
+  const a14 = adx(klines);
+  const vol = volatilityRegime(klines);
+  const vw = vwap(klines.slice(-24));
+  const stoch = stochRsi(closes);
+  const obvT = obvTrend(klines);
+  const fib = fibonacci(klines);
+  const atrV = atr(klines);
+  // Regime: ADX strength × volatility — "how the market is behaving"
+  const regime = a14 && a14.value >= 25
+    ? `trending_${a14.direction}`
+    : vol && vol.regime === "high_vol" ? "volatile_range"
+    : vol && vol.regime === "low_vol" ? "quiet_range"
+    : "ranging";
   return {
     symbol, price, change24h: +change24h.toFixed(2), change1h: +change1h.toFixed(2),
     rsi14: rsi14 == null ? null : +rsi14.toFixed(1),
@@ -56,6 +69,16 @@ function buildSnapshot(symbol, klines) {
     volumeZ: vZ == null ? null : +vZ.toFixed(2),
     volumeSpike: vZ != null && vZ > 2,
     support, resistance,
+    // pro layer
+    adx: a14,                                        // {value, direction}
+    atr: atrV == null ? null : +atrV.toFixed(2),
+    vwap: vw == null ? null : +vw.toFixed(2),
+    aboveVwap: vw == null ? null : price > vw,
+    stochRsi: stoch == null ? null : +stoch.toFixed(1),
+    obvTrend: obvT,
+    fib: fib ? { position: fib.position, levels: fib.levels } : null,
+    volRegime: vol,
+    regime,
     volume24hUsd: v24 > 0 ? v24 * price : null,
     series: klines.slice(-48).map((k) => ({ t: k.t, c: +k.c.toFixed(2) })),
     summary: null, // filled below

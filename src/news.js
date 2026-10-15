@@ -32,6 +32,19 @@ const SOURCES = [
   { name: "bitcoinist", rss: "https://bitcoinist.com/feed/", weight: 0.5 },
   { name: "dailyhodl", rss: "https://dailyhodl.com/feed/", weight: 0.5 },
   { name: "coinjournal", rss: "https://coinjournal.net/feed/", weight: 0.5 },
+  // Tier 3 — long tail. Lower weight; failures are just warnings.
+  { name: "thedefiant", rss: "https://thedefiant.io/feed", weight: 0.5 },
+  { name: "cryptobriefing", rss: "https://cryptobriefing.com/feed/", weight: 0.5 },
+  { name: "bitcoincom", rss: "https://news.bitcoin.com/feed/", weight: 0.5 },
+  { name: "forkast", rss: "https://forkast.news/feed/", weight: 0.5 },
+  { name: "cryptonews", rss: "https://cryptonews.com/feed/", weight: 0.4 },
+  { name: "blockonomi", rss: "https://blockonomi.com/feed/", weight: 0.4 },
+  { name: "coinbureau", rss: "https://www.coinbureau.com/feed/", weight: 0.4 },
+  { name: "coincodex", rss: "https://coincodex.com/feed/", weight: 0.4 },
+  // Tier 4 — social/aggregators (noisy; low weight, still useful for velocity)
+  { name: "reddit_bitcoin", rss: "https://www.reddit.com/r/Bitcoin/.rss", weight: 0.3 },
+  { name: "reddit_ethereum", rss: "https://www.reddit.com/r/ethereum/.rss", weight: 0.3 },
+  { name: "reddit_crypto", rss: "https://www.reddit.com/r/CryptoCurrency/.rss", weight: 0.3 },
 ];
 
 // topic → keywords. A headline can carry multiple topics.
