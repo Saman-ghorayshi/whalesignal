@@ -2,6 +2,13 @@
 // Forensic Wallet Graph & Deception / Laundering Pattern Detection Engine.
 // Analyzes money flow graphs, identifies counterparty networks, and detects
 // deceptive behavior (wash trading, peeling chains, smurfing, panic selling, smart accumulation, news reactions).
+//
+// TAXONOMY PRECEDENCE (E2): this module owns *deception* detection (wash
+// loops, peeling chains, structuring). Direction calls ("is this wallet
+// accumulating or distributing?") belong to walletBehavior() in analyst.js,
+// which is the single canonical behavior classifier fed to the LLM. The
+// behavioral_profile computed here is kept for the graph/dashboard endpoints
+// but is intentionally NOT emitted into the analyst prompt alongside it.
 
 import { shortAddr, fmtUSD } from "./worker-utils.js";
 
@@ -124,13 +131,19 @@ export function analyzeWalletPatterns(txs, targetAddress, market = null, news = 
     }
   }
 
-  // 5. News Catalyst Correlation
+  // 5. News Catalyst Correlation — word boundaries so "ban" doesn't match
+  // "urban" and "tether" doesn't match "tethered". Time-window filtering is
+  // the caller's job (headlines are pre-filtered upstream).
   const headlines = Array.isArray(news) ? news : Array.isArray(news?.headlines) ? news.headlines : [];
   const matchedCatalysts = [];
+  const kwPatterns = NEWS_CATALYST_KEYWORDS.map((kw) => ({
+    kw,
+    re: new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"),
+  }));
   for (const h of headlines) {
-    const title = String(h?.title || "").toLowerCase();
-    for (const kw of NEWS_CATALYST_KEYWORDS) {
-      if (title.includes(kw)) {
+    const title = String(h?.title || "");
+    for (const { kw, re } of kwPatterns) {
+      if (re.test(title)) {
         matchedCatalysts.push({ keyword: kw, title: h.title });
         break;
       }
@@ -190,14 +203,32 @@ export function analyzeWalletPatterns(txs, targetAddress, market = null, news = 
 
   deceptionScore = Math.min(100, deceptionScore);
 
+  // Forensic honesty: a 0/100 from a handful of transactions is absence of
+  // data, not a clean bill of health. Positive detections are still reported
+  // on small windows; only the "all clear" claim requires enough history.
+  const lowData = allTxs.length < 10;
+  const hasDetections = deceptionScore > 0;
+
+  let deceptionRisk;
+  if (hasDetections) {
+    deceptionRisk = deceptionScore >= 50 ? "high" : deceptionScore >= 25 ? "medium" : "low";
+  } else {
+    deceptionRisk = lowData ? "unknown" : "low";
+  }
+
   if (deceptionScore > 65) {
     flags.push("HIGH_DECEPTION_RISK");
-  } else if (deceptionScore === 0) {
+  } else if (deceptionScore === 0 && !lowData) {
     flags.push("ORGANIC_ONCHAIN_FLOW");
+  }
+  if (lowData && !hasDetections) {
+    flags.push("INSUFFICIENT_HISTORY");
   }
 
   // Summary human explanation
-  let intentSummary = "Standard on-chain activity without deception markers.";
+  let intentSummary = lowData && !hasDetections
+    ? "Insufficient transaction history to assess deception patterns."
+    : "Standard on-chain activity without deception markers.";
   if (washLoops.length > 0) {
     intentSummary = `High deception: Wallet exhibits wash trading behavior, circulating funds with ${washLoops[0].counterparty} to create artificial volume.`;
   } else if (isPeelingChain) {
@@ -222,7 +253,7 @@ export function analyzeWalletPatterns(txs, targetAddress, market = null, news = 
     },
     behavioral_profile: behavioralProfile,
     deception_score: deceptionScore,
-    deception_risk: deceptionScore >= 50 ? "high" : deceptionScore >= 25 ? "medium" : "low",
+    deception_risk: deceptionRisk,
     wash_loops: washLoops,
     is_peeling_chain: isPeelingChain,
     is_structuring: isStructuring,

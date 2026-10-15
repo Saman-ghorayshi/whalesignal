@@ -1,25 +1,36 @@
 // src/scanner.js
-// Cron-triggered worker (every 30s). Scans BTC + ETH blocks for whale txs,
-// writes new whales to D1, queues each one to the analyst for AI analysis.
+// Cron-triggered worker (every 1min — the Cloudflare free-tier cron floor).
+// Scans BTC + ETH blocks for whale txs, writes new whales to D1, queues
+// each one to the analyst for AI analysis.
 //
-// ALSO refreshes the market_cache in KV every 5th scan (~every 2.5 min).
+// ALSO refreshes the market_cache in KV on a TTL gate (every ~5 min).
 // RPCs cost API budget — keep them tight. NO API calls per-tx (use cached
 // price from KV instead; the original plan said to cache it then the
 // pseudocode ignored the cache — fixed here).
 //
 // Critical design choice: block catch-up is BATCHED. If the scanner was
 // down for an hour and 300 ETH blocks piled up, we will NOT try to process
-// them all in one 30s cron tick. We process up to MAX_BLOCKS_PER_SCAN and
+// them all in one 1-min cron tick. We process up to MAX_BLOCKS per tick and
 // then update last_block and return. The next tick picks up the rest.
 // This keeps us inside the Workers request envelope even after an outage.
+//
+// Second critical choice: last_block is persisted PER BLOCK (not once per
+// batch). A crash mid-batch therefore never re-processes a completed block,
+// which is what keeps the wallet-stats bumps idempotent in practice.
+//
+// Third: BTC blocks are paginated past blockstream's 25-tx page size, and
+// pagination state (tx_offset) is persisted in scanner_state so a huge
+// block spanning multiple ticks resumes instead of restarting.
 //
 // Bindings (env):
 //   DB       — D1 database
 //   KV       — KV namespace (for market_cache/others)
 //   ANALYSTQ — Queue to analyst
-//   ETHSCAN_KEY, BSCSCAN_KEY — optional etherscan keys
+//   ETHSCAN_KEY — optional etherscan key (BSCSCAN_KEY is legacy/unused)
+//   ADMIN_TOKEN — required to use the /scan and /tick HTTP endpoints
+//                 (fail-closed: endpoints 401 when unset)
 //   MIN_USD  — string, overrides default 500000
-//   MAX_BLOCKS — string, overrides default 10
+//   MAX_BLOCKS — string, overrides default 2
 
 import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor } from "./worker-utils.js";
 
@@ -40,32 +51,172 @@ const TOKENS_BY_CONTRACT = {
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
 };
 
+// ─── tunables ─────────────────────────────────────────────────────────
+
+// Confirmation depth: never trust the unconfirmed tip. A reorged "$50M
+// whale" alert is a credibility-killer; a 1-2 block lag costs nothing on a
+// 1/min cadence.
+const CONFIRMATIONS = { btc: 1, eth: 2 };
+
+// Workers allow 50 subrequests per invocation. Market+news+tip overhead is
+// ~9-12, so the scan phase gets the rest. Shared across both chains per tick.
+const SCAN_SUBREQUEST_BUDGET = 36;
+
+// Hard cap on blockstream tx pages per block fetch (25 txs/page). A block
+// can never legitimately exceed this; it bounds the pagination loop against
+// a misbehaving API. Resume-across-ticks (tx_offset) handles genuinely big
+// blocks instead.
+const MAX_TX_PAGES_PER_BLOCK = 400; // 400 × 25 = 10,000 txs
+
+/**
+ * fetch + text with a timeout. Mirrors worker-utils fetchJSON but for
+ * plain-text endpoints (blockstream /blocks/tip/height and
+ * /block-height/{n} return bare text, not JSON).
+ */
+async function fetchText(url, opts = {}) {
+  const { headers = {}, timeoutMs = 8000 } = opts;
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers, signal: ctl.signal });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} — ${body.slice(0, 200)}`);
+      err.status = res.status;
+      throw err;
+    }
+    return await res.text();
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+/**
+ * Convert a hex uint (wei, token raw units) to a decimal token amount.
+ * Uses BigInt so 256-bit values don't lose precision — parseInt() caps at
+ * 2^53, which corrupts the biggest native-ETH transfers (exactly the ones
+ * we care about). Returns NaN for malformed input; caller skips those.
+ * Pure. Exported for tests.
+ */
+export function hexToAmount(valueHex, decimals) {
+  let v;
+  try {
+    v = BigInt(valueHex ?? "0x0");
+  } catch {
+    return NaN;
+  }
+  if (v < 0n) return NaN;
+  const divisor = 10n ** BigInt(decimals);
+  const whole = v / divisor;
+  const frac = v % divisor;
+  // `whole` is exact (real token supplies fit in a double's integer range);
+  // the fractional part adds sub-unit precision.
+  return Number(whole) + Number(frac) / Number(divisor);
+}
+
+/**
+ * Parse an env override to int, falling back to the default when the value
+ * is missing, empty, or not a number. (A garbage MAX_BLOCKS used to make
+ * the scan loop silently process zero blocks every tick.)
+ * Pure. Exported for tests.
+ */
+export function parseEnvInt(raw, fallback) {
+  if (raw == null || raw === "") return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Consume one subrequest from the shared per-tick budget. A null budget
+ * means unlimited (tests / non-Workers contexts). Returns false when the
+ * budget is exhausted — caller must stop fetching and persist progress.
+ */
+function takeSubrequest(budget) {
+  if (!budget) return true;
+  if (budget.remaining <= 0) return false;
+  budget.remaining -= 1;
+  return true;
+}
+
 // ─── pure helpers (testable without env) ──────────────────────────────
 
 /**
- * Filter a decoded chain block into a list of whale tx candidates (native + ERC20).
+ * Filter a decoded chain block into BTC whale tx candidates.
  * Pure. Caller passes the cached market object + the block body.
  * Returns an array of normalized candidate objects, NOT yet filtered by min USD.
- * Each: { chain, tx_hash, from_address, to_address, amount, symbol, block_number, block_time }
+ * Each: { chain, tx_hash, from_address, to_address, amount, symbol,
+ *          block_number, block_time, usd_value, is_self_transfer }
+ *
+ * Semantics: the whale is the SPENDER. `amount` is the NET OUTFLOW — the
+ * sum of outputs paying addresses that are NOT among the inputs (i.e.
+ * change back to the sender is excluded). `from_address` is the largest
+ * input address; `to_address` is the largest external output's address.
+ * A pure self-move/consolidation (every output is change) is kept with
+ * is_self_transfer=1 and to_address="" so downstream scoring can discount
+ * it instead of hallucinating a "whale transfer". Coinbase txs are skipped.
  */
 export function extractCandidatesBTC(block, market) {
   const out = [];
   if (!block || !Array.isArray(block.tx)) return out;
   const bn = typeof block.height === "number" ? block.height : null;
-  const bt = block.time ? block.time * 1000 : null; // blockchain.info gives unix s
+  const bt = block.time ? block.time * 1000 : null; // unix s -> ms
   for (const tx of block.tx) {
-    // sum outputs (multiple vouts possible), pick largest output's address as `to`
-    const totalOut = (Array.isArray(tx.out) ? tx.out : []).reduce((s, o) => s + (o.value || 0), 0);
-    const firstIn = Array.isArray(tx.inputs) && tx.inputs[0]?.prev_out?.addr ? tx.inputs[0].prev_out.addr : "";
-    const toAddrs = (Array.isArray(tx.out) ? tx.out : []).map((o) => o.addr).filter(Boolean);
-    const toAddr = toAddrs[0] ?? "";
-    if (!tx.hash || totalOut <= 0) continue;
-    // blockchain.info amounts are in satoshis; BTC decimal 8
-    const amountBtc = totalOut / 1e8;
+    if (!tx.hash) continue;
+    const inputs = Array.isArray(tx.inputs) ? tx.inputs : [];
+    const outputs = Array.isArray(tx.out) ? tx.out : [];
+
+    // Spender set + total input value. Both providers (blockstream via
+    // prevout, blockchain.info via prev_out) carry input values; if a
+    // provider ever stops, we fall back to output totals below.
+    const spenderAddrs = new Set();
+    let totalInSat = 0;
+    let fromAddr = "";
+    let largestIn = 0;
+    for (const inp of inputs) {
+      const po = inp.prev_out || {};
+      const v = typeof po.value === "number" ? po.value : 0;
+      totalInSat += v;
+      if (po.addr) spenderAddrs.add(po.addr);
+      if (v > largestIn) { largestIn = v; fromAddr = po.addr || ""; }
+    }
+
+    // Coinbase has no real sender — skip (block reward is noise anyway).
+    if (spenderAddrs.size === 0) continue;
+
+    // Net outflow: outputs NOT going back to the spender. BTC address
+    // comparison is exact (base58check is case-sensitive; bech32 is
+    // lowercase by spec) — a change output reuses the identical string.
+    let toAddr = "";
+    let largestOut = 0;
+    let externalSat = 0;
+    let totalOutSat = 0;
+    for (const o of outputs) {
+      const v = typeof o.value === "number" ? o.value : 0;
+      totalOutSat += v;
+      if (o.addr && spenderAddrs.has(o.addr)) continue; // change
+      externalSat += v;
+      if (v > largestOut) { largestOut = v; toAddr = o.addr || ""; }
+    }
+
+    // Satoshi math is exact: 21M BTC = 2.1e15 sat < 2^53, no BigInt needed.
+    let amountSat;
+    let isSelfTransfer = 0;
+    if (externalSat > 0) {
+      amountSat = externalSat;
+    } else {
+      // All change: self-move / consolidation. Keep it visible but flagged —
+      // better than fabricating a recipient, better than silently dropping a
+      // 10k-BTC cold-wallet rotation.
+      isSelfTransfer = 1;
+      amountSat = totalInSat > 0 ? totalInSat : totalOutSat;
+    }
+    if (amountSat <= 0) continue;
+
+    const amountBtc = amountSat / 1e8;
     out.push({
       chain: "btc",
       tx_hash: tx.hash,
-      from_address: firstIn,
+      from_address: fromAddr,
       to_address: toAddr,
       amount: amountBtc,
       symbol: "BTC",
@@ -73,6 +224,7 @@ export function extractCandidatesBTC(block, market) {
       block_time: bt,
       // precompute USD here so the scan loop stays pure
       usd_value: usdValue(amountBtc, "BTC", market),
+      is_self_transfer: isSelfTransfer,
     });
   }
   return out;
@@ -89,19 +241,23 @@ export function extractCandidatesETH(block, market) {
   if (!block || !Array.isArray(block.transactions)) return out;
   for (const tx of block.transactions) {
     if (typeof tx === "string") continue; // we asked for full txs
-    const valHex = tx.value || "0x0";
-    const amount = parseInt(valHex, 16) / 1e18; // wei -> ETH
-    if (!tx.hash || amount <= 0) continue;
+    if (!tx.hash) continue;
+    if (tx.to == null) continue; // contract creation — a deployment, not a transfer
+    const amount = hexToAmount(tx.value, 18); // wei -> ETH, BigInt-exact
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const from = tx.from || "";
+    const to = tx.to || "";
     out.push({
       chain: "eth",
       tx_hash: tx.hash,
-      from_address: tx.from || "",
-      to_address: tx.to || "",
+      from_address: from,
+      to_address: to,
       amount,
       symbol: "ETH",
       block_number: parseInt(block.number, 16),
       block_time: parseInt(block.timestamp, 16) * 1000,
       usd_value: usdValue(amount, "ETH", market),
+      is_self_transfer: from && from.toLowerCase() === to.toLowerCase() ? 1 : 0,
     });
   }
   return out;
@@ -122,13 +278,10 @@ export function extractERC20Candidates(logs, market) {
     // topics are 32-byte hex words; from = bytes12..32, to likewise
     const from = "0x" + (lg.topics[1] || "").slice(26);
     const to = "0x" + (lg.topics[2] || "").slice(26);
-    let amount;
-    try {
-      amount = parseInt(lg.data || "0x0", 16);
-    } catch { continue; }
     // decimals differ per token — keep a small table
     const decimals = TOKEN_DECIMALS[sym] ?? 18;
-    amount = amount / Math.pow(10, decimals);
+    const amount = hexToAmount(lg.data, decimals); // BigInt-exact, NaN on malformed
+    if (!Number.isFinite(amount)) continue;
     out.push({
       chain: "eth",
       tx_hash: lg.transactionHash,
@@ -139,6 +292,7 @@ export function extractERC20Candidates(logs, market) {
       block_number: typeof lg.blockNumber === "string" ? parseInt(lg.blockNumber, 16) : lg.blockNumber,
       block_time: null, // filled later from the block
       usd_value: usdValue(amount, sym, market),
+      is_self_transfer: from.toLowerCase() === to.toLowerCase() ? 1 : 0,
       _contract: contract,
     });
   }
@@ -263,18 +417,26 @@ export function classifyWhales(whales, walletMap) {
 
 // ─── runtime: scan logic ──────────────────────────────────────────────
 
-/** Get last_block for a chain (or null for first run). */
+/** Get last_block (+ tx_offset, counters) for a chain (or nulls for first run). */
 async function getState(env, chain) {
-  const row = await env.DB.prepare("SELECT last_block, total_whales, errors FROM scanner_state WHERE chain = ?")
-    .bind(chain).first();
-  return row || { last_block: null, total_whales: 0, errors: 0 };
+  const row = await env.DB.prepare(
+    "SELECT last_block, total_whales, errors, tx_offset FROM scanner_state WHERE chain = ?"
+  ).bind(chain).first();
+  return row || { last_block: null, total_whales: 0, errors: 0, tx_offset: 0 };
 }
 
-/** Mark last_block + last_scan for a chain. Called AFTER the batch succeeds. */
-async function persistState(env, chain, lastBlock) {
+/**
+ * Mark last_block + last_scan for a chain and clear/advance the BTC tx
+ * pagination offset. Called AFTER EACH BLOCK succeeds (not once per batch),
+ * so a crash mid-batch never re-processes a completed block — which is
+ * what keeps the wallet-stats bumps from double-counting on retry.
+ * Also increments the lifetime total_whales counter (previously dead).
+ */
+async function persistState(env, chain, lastBlock, txOffset = 0, whalesDelta = 0) {
   await env.DB.prepare(
-    "UPDATE scanner_state SET last_block = ?, last_scan = ?, errors = 0 WHERE chain = ?"
-  ).bind(lastBlock, Date.now(), chain).run();
+    "UPDATE scanner_state SET last_block = ?, last_scan = ?, errors = 0, " +
+    "total_whales = total_whales + ?, tx_offset = ? WHERE chain = ?"
+  ).bind(lastBlock, Date.now(), whalesDelta, txOffset, chain).run();
 }
 
 /** Increment the consecutive-errors counter on a failure. */
@@ -303,8 +465,8 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
     `INSERT OR IGNORE INTO whales
        (chain, tx_hash, from_address, to_address, amount, symbol, usd_value,
         tx_type, block_number, block_time, detected_at, analysis_status,
-        interesting_score, price_at_detect)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        interesting_score, price_at_detect, is_self_transfer, contract_address)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     wh.chain, wh.tx_hash, wh.from_address, wh.to_address,
     wh.amount, wh.symbol, wh.usd_value, wh.tx_type,
@@ -312,13 +474,17 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
     Date.now(),
     shouldAnalyze ? "pending" : "skipped",
     score,
-    priceAtDetect
+    priceAtDetect,
+    wh.is_self_transfer ? 1 : 0,
+    wh._contract ?? null
   ).run();
   if (ins.meta.changes === 0) return false; // dup
 
+  // Dedupe key is (chain, tx_hash, symbol): one tx can move native ETH
+  // *and* ERC20s, and each is its own whale row.
   const row = await env.DB.prepare(
-    "SELECT id FROM whales WHERE tx_hash = ?"
-  ).bind(wh.tx_hash).first();
+    "SELECT id FROM whales WHERE chain = ? AND tx_hash = ? AND symbol = ?"
+  ).bind(wh.chain, wh.tx_hash, wh.symbol).first();
   if (!row?.id) return false;
 
   // Queue only for interesting whales — saves 50-90% of Gemini calls.
@@ -331,11 +497,13 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
   const toType = walletMap?.get(String(wh.to_address).toLowerCase())?.type || null;
   const targets = statTargets(wh.from_address, wh.to_address, fromType, toType);
   if (targets.length > 0) {
+    const now = Date.now();
     await env.DB.prepare(
       "UPDATE wallets SET last_seen = ?, last_tx_hash = ?, " +
+      "first_seen = COALESCE(first_seen, ?), " +
       "tx_count = tx_count + 1, total_volume = total_volume + ? " +
       "WHERE address IN (" + targets.map(() => "?").join(",") + ") AND chain = ?"
-    ).bind(Date.now(), wh.tx_hash, wh.usd_value, ...targets, wh.chain).run();
+    ).bind(now, wh.tx_hash, now, wh.usd_value, ...targets, wh.chain).run();
 
     // Auto-label: if a wallet crosses 3 txs, label it as 'whale'.
     // dormancy reactivate: previously dormant wallet waking up.
@@ -358,12 +526,14 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
 async function autoLabelWallets(env, targets, chain, walletMap, walletInfo) {
   for (const addr of targets) {
     const key = String(addr).toLowerCase();
-    const info = walletMap?.get(key) ?? walletInfo;
+    // Never fall back to the *from*-wallet's stats for an unknown *to*
+    // address — that used to label first-seen recipients with the sender's
+    // history. Unknown address = skip.
+    const info = walletMap?.get(key) ?? null;
     if (!info) continue;
 
     const txCount = (info.tx_count ?? 0) + 1; // +1 for the one we just inserted
     const updates = [];
-    const bindArgs = [];
 
     // crossing threshold 3 → become a whale
     if (txCount >= 3 && info.type !== "exchange" && info.type !== "whale") {
@@ -384,7 +554,6 @@ async function autoLabelWallets(env, targets, chain, walletMap, walletInfo) {
     }
 
     if (updates.length > 0) {
-      bindArgs.push(chain);
       await env.DB.prepare(
         "UPDATE wallets SET " + updates.join(", ") + " WHERE address = ? AND chain = ?"
       ).bind(addr, chain).run();
@@ -442,84 +611,135 @@ async function recentWhalesFromWallet(env, address, chain) {
   return results || [];
 }
 
-/** Fetch the latest block height for a chain. Returns an int (eth: decimal number, btc: height). */
+/**
+ * Fetch the latest block height for a chain. Returns a positive int.
+ * Throws when no provider yields a sane height — callers treat that as a
+ * failed scan (bumpErrors) instead of silently reporting success with NaN.
+ */
 export async function fetchLatestBlockHeight(env, chain) {
   if (chain === "btc") {
-    // 1. Try blockstream.info tip
+    // 1. Try blockstream.info tip (plain-text body, timeout-guarded)
     try {
-      const res = await fetch("https://blockstream.info/api/blocks/tip/height");
-      if (res.ok) {
-        const text = await res.text();
-        const h = parseInt(text.trim(), 10);
-        if (Number.isFinite(h) && h > 0) return h;
-      }
+      const text = await fetchText("https://blockstream.info/api/blocks/tip/height", { timeoutMs: 5000 });
+      const h = parseInt(text.trim(), 10);
+      if (Number.isFinite(h) && h > 0) return h;
+      throw new Error(`bad tip body: ${text.slice(0, 40)}`);
     } catch (e) {
       console.warn("[scanner:btc] blockstream tip failed:", e.message);
     }
     // 2. Try blockcypher
     try {
       const b = await fetchJSON("https://api.blockcypher.com/v1/btc/main", { timeoutMs: 5000 });
-      if (b && typeof b.height === "number") return b.height;
+      if (b && Number.isFinite(b.height) && b.height > 0) return b.height;
+      throw new Error("bad height in blockcypher response");
     } catch (e) {
       console.warn("[scanner:btc] blockcypher tip failed, trying blockchain.info:", e.message);
     }
     // 3. Fallback blockchain.info
     const j = await fetchJSON("https://blockchain.info/latestblock", { timeoutMs: 8000 });
-    return j.height;
+    const h = j?.height;
+    if (!Number.isFinite(h) || h <= 0) throw new Error(`btc tip height unavailable: ${JSON.stringify(j)?.slice(0, 120)}`);
+    return h;
   }
   if (chain === "eth") {
     const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_blockNumber${key}`
     );
-    return parseInt(j.result, 16);
+    // A rate-limited/erroring etherscan returns {result: <error string>};
+    // parseInt gives NaN, which used to silently zero-out the whole scan.
+    const h = parseInt(j?.result, 16);
+    if (!Number.isFinite(h) || h <= 0) {
+      throw new Error(`eth_blockNumber returned garbage: ${String(j?.result).slice(0, 120)}`);
+    }
+    return h;
   }
   throw new Error(`unsupported chain: ${chain}`);
 }
 
-/** Fetch a block's full transaction set for a chain. */
-export async function fetchBlock(chain, blockNum, env) {
+/**
+ * Fetch a block's full transaction set for a chain.
+ *
+ * Returns the block object PLUS pagination bookkeeping:
+ *   { ..., txComplete: bool, nextTxIndex: number }
+ * `txComplete=false` means the tx set was cut short (subrequest budget or
+ * the sanity cap) — the caller must persist nextTxIndex and resume this
+ * block next tick instead of marking it done.
+ *
+ * opts: { startTxIndex?: number, budget?: { remaining: number } }
+ */
+export async function fetchBlock(chain, blockNum, env, opts = {}) {
+  const budget = opts.budget || null;
+  const startTxIndex = opts.startTxIndex || 0;
   if (chain === "btc") {
     // 1. Try blockstream.info (reliable, open, doesn't block Cloudflare Workers)
     try {
-      const hashRes = await fetch(`https://blockstream.info/api/block-height/${blockNum}`);
-      if (hashRes.ok) {
-        const hash = (await hashRes.text()).trim();
-        const [blockHeader, txsRes] = await Promise.all([
-          fetchJSON(`https://blockstream.info/api/block/${hash}`, { timeoutMs: 6000 }),
-          fetchJSON(`https://blockstream.info/api/block/${hash}/txs`, { timeoutMs: 10000 }),
-        ]);
-        const txs = Array.isArray(txsRes) ? txsRes : [];
-        return {
-          height: blockNum,
-          time: blockHeader?.timestamp || Math.floor(Date.now() / 1000),
-          tx: txs.map(t => ({
-            hash: t.txid,
-            inputs: (t.vin || []).map(v => ({
-              prev_out: { addr: v.prevout?.scriptpubkey_address || "" }
-            })),
-            out: (t.vout || []).map(o => ({
-              addr: o.scriptpubkey_address || "",
-              value: o.value || 0
-            }))
-          }))
-        };
+      if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
+      const hash = (await fetchText(`https://blockstream.info/api/block-height/${blockNum}`, { timeoutMs: 6000 })).trim();
+      if (!/^[0-9a-f]{64}$/i.test(hash)) throw new Error(`bad block hash for height ${blockNum}`);
+
+      if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
+      const blockHeader = await fetchJSON(`https://blockstream.info/api/block/${hash}`, { timeoutMs: 6000 });
+
+      // Blockstream paginates /txs at 25 per page — the old code fetched
+      // only page 0, silently dropping the other ~99% of a full block.
+      const txs = [];
+      let index = startTxIndex;
+      let complete = true;
+      let pages = 0;
+      for (;;) {
+        if (!takeSubrequest(budget)) { complete = false; break; }
+        const page = await fetchJSON(`https://blockstream.info/api/block/${hash}/txs/${index}`, { timeoutMs: 15000 });
+        if (!Array.isArray(page) || page.length === 0) break;
+        txs.push(...page);
+        pages++;
+        if (page.length < 25) break; // last page
+        index += 25;
+        if (pages >= MAX_TX_PAGES_PER_BLOCK) { complete = false; break; }
       }
+      return {
+        height: blockNum,
+        time: blockHeader?.timestamp || Math.floor(Date.now() / 1000),
+        tx: txs.map(t => ({
+          hash: t.txid,
+          inputs: (t.vin || []).map(v => ({
+            prev_out: {
+              addr: v.prevout?.scriptpubkey_address || "",
+              value: typeof v.prevout?.value === "number" ? v.prevout.value : 0,
+            }
+          })),
+          out: (t.vout || []).map(o => ({
+            addr: o.scriptpubkey_address || "",
+            value: o.value || 0
+          }))
+        })),
+        txComplete: complete,
+        nextTxIndex: complete ? 0 : index,
+      };
     } catch (e) {
+      // Budget exhaustion is a tick-level condition, not a provider failure:
+      // falling back to blockchain.info would just burn more subrequests.
+      if (e.message === "subrequest budget exhausted") throw e;
       console.warn(`[scanner:btc] blockstream block fetch failed for ${blockNum}:`, e.message);
     }
 
-    // 2. Fallback blockchain.info rawblock by height
-    const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`);
+    // 2. Fallback blockchain.info rawblock by height (full block, one call)
+    const j = await fetchJSON(`https://blockchain.info/rawblock/${blockNum}`, { timeoutMs: 15000 });
+    j.txComplete = true;
+    j.nextTxIndex = 0;
     return j;
   }
   if (chain === "eth") {
     const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
     const hex = "0x" + Number(blockNum).toString(16);
+    if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
     const j = await fetchJSON(
       `https://api.etherscan.io/v2/api?chainid=1&module=proxy&action=eth_getBlockByNumber&tag=${hex}&boolean=true${key}`
     );
-    return j.result;
+    const block = j.result;
+    block.txComplete = true;
+    block.nextTxIndex = 0;
+    return block;
   }
   throw new Error(`unsupported chain: ${chain}`);
 }
@@ -534,14 +754,15 @@ export async function fetchBlock(chain, blockNum, env) {
  * only topic0 came back with logs from block 447767, year 2017). Scoping
  * per-contract (address=) keeps each response < 1000 and makes fromBlock/
  * toBlock actually be honoured. Cost: |TOKENS_BY_CONTRACT| calls per block
- * (currently 5) — well within 5 req/s free-tier cap.
+ * (currently 2: USDT + USDC) — well within 5 req/s free-tier cap.
  */
-export async function fetchERC20Logs(blockNum, env) {
+export async function fetchERC20Logs(blockNum, env, budget = null) {
   const key = env.ETHSCAN_KEY ? `&apikey=${env.ETHSCAN_KEY}` : "";
   const fromBlock = "0x" + Number(blockNum).toString(16);
   const toBlock = fromBlock;
   const out = [];
   for (const contract of Object.keys(TOKENS_BY_CONTRACT)) {
+    if (!takeSubrequest(budget)) break; // out of budget — return what we have
     const url = `https://api.etherscan.io/v2/api?chainid=1&module=logs&action=getLogs` +
       `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
       `&address=${contract}&topic0=${TRANSFER_TOPIC}${key}`;
@@ -630,7 +851,9 @@ export async function refreshMarketCache(env) {
     console.warn("[scanner] alternative.me fear_greed fetch failed:", e.message);
   }
 
-  const fgVal = fg?.data?.[0]?.value ? parseInt(fg.data[0].value, 10) : (prevCache?.fear_greed ?? 50);
+  // NB: a genuine "0" (extreme fear) is falsy — check for null, not truthiness.
+  const fgRaw = fg?.data?.[0]?.value;
+  const fgVal = fgRaw != null && fgRaw !== "" ? parseInt(fgRaw, 10) : (prevCache?.fear_greed ?? 50);
   const fgLabel = fg?.data?.[0]?.value_classification ?? (prevCache?.fear_greed_label ?? "Neutral");
 
   const cache = {
@@ -698,67 +921,122 @@ export async function refreshNewsCache(env) {
 }
 
 // ─── scan one chain (with batched catch-up) ──────────────────────────
+//
+// Invariants:
+// - last_block = last FULLY processed block. A block is only marked done
+//   after its inserts AND its persistState both succeeded, so a retry never
+//   re-processes a completed block (wallet stats can't double-count).
+// - Blocks younger than CONFIRMATIONS[chain] are never scanned (reorg
+//   protection): an alert from an orphaned block is worse than a late alert.
+// - BTC pagination across ticks: scanner_state.tx_offset remembers how far
+//   into a huge block's tx pages we got; the next tick resumes there.
 
-export async function scanChain(env, chain, market) {
+export async function scanChain(env, chain, market, budget = null) {
   const state = await getState(env, chain);
-  const maxBlocks = parseInt(env.MAX_BLOCKS ?? DEFAULT_MAX_BLOCKS, 10);
-  // first run: prime from latest (no processing this tick, just record where we are)
+  const maxBlocks = parseEnvInt(env.MAX_BLOCKS, DEFAULT_MAX_BLOCKS);
+  const minUsd = parseEnvInt(env.MIN_USD, DEFAULT_MIN_USD);
+  // fetchLatestBlockHeight throws on garbage (S5) — a dead API key fails
+  // the scan loudly (bumpErrors) instead of silently reporting success.
   const latest = await fetchLatestBlockHeight(env, chain);
+  // first run: prime from latest (no processing this tick, just record where we are)
   if (state.last_block == null) {
     console.log(`[scanner:${chain}] first run — priming last_block=${latest}`);
     await persistState(env, chain, latest);
     return { chain, processed: 0, newWhales: 0, primed: true };
   }
-  if (latest <= state.last_block) {
+  const conf = CONFIRMATIONS[chain] ?? 1;
+  const scanTo = latest - conf;
+  if (scanTo <= state.last_block) {
     return { chain, processed: 0, newWhales: 0, primed: false };
   }
 
   const walletMap = await loadWalletMap(env);
 
   let cursor = state.last_block + 1;
-  let lastProcessed = state.last_block;
+  let lastPersisted = state.last_block;
   let processed = 0;
   let newlyCounted = 0;
-  while (cursor <= latest && processed < maxBlocks) {
-    const block = await fetchBlock(chain, cursor, env);
-    const candidates =
-      chain === "btc"
-        ? extractCandidatesBTC(block, market)
-        : extractCandidatesETH(block, market);
+  let persistedThisTick = false;
+  while (cursor <= scanTo && processed < maxBlocks) {
+    // Resume a partially-paginated BTC block where the last tick left off.
+    const startTxIndex = processed === 0 ? (state.tx_offset || 0) : 0;
 
-    // for ETH, also pull ERC20 Transfer logs (extra RPC, bounded by 1 block)
-    let erc20 = [];
-    if (chain === "eth") {
-      const logs = await fetchERC20Logs(cursor, env);
-      erc20 = extractERC20Candidates(logs, market).map((c) => ({
-        ...c,
-        block_time: parseInt(block?.timestamp, 16) * 1000 || null,
-      }));
+    let fetched;
+    try {
+      fetched = await fetchBlock(chain, cursor, env, { startTxIndex, budget });
+    } catch (e) {
+      // Fetch failed (provider down OR subrequest budget exhausted):
+      // stop the batch here. last_block is untouched so the next tick
+      // retries this exact block — no gaps, no double counts.
+      console.warn(`[scanner:${chain}] fetchBlock(${cursor}) failed:`, e.message);
+      break;
     }
 
-    const all = [...candidates, ...erc20];
-    const whales = classifyWhales(
-      filterWhales(all, parseInt(env.MIN_USD ?? DEFAULT_MIN_USD, 10)),
-      walletMap
-    );
+    if (!fetched.txComplete) {
+      // Ran out of subrequest budget (or hit the page sanity cap) mid-
+      // pagination: remember the offset, do NOT advance last_block, and
+      // continue next tick. The block's whales are processed only once the
+      // full tx set is in hand (partial data + non-idempotent wallet bumps
+      // would corrupt stats).
+      await persistState(env, chain, lastPersisted, fetched.nextTxIndex, 0);
+      persistedThisTick = true;
+      console.log(`[scanner:${chain}] block ${cursor} partially paginated — resuming at tx index ${fetched.nextTxIndex} next tick`);
+      break;
+    }
 
-    for (const w of whales) {
-      try {
-        const fromKey = String(w.from_address).toLowerCase();
-        const walletInfo = walletMap.get(fromKey) ?? null;
-        const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
-        const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
-        if (inserted) newlyCounted++;
-      } catch (e) {
-        console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);
+    const block = fetched;
+    let blockNew = 0;
+    try {
+      const candidates =
+        chain === "btc"
+          ? extractCandidatesBTC(block, market)
+          : extractCandidatesETH(block, market);
+
+      // for ETH, also pull ERC20 Transfer logs (extra RPCs, budget-bounded)
+      let erc20 = [];
+      if (chain === "eth") {
+        const logs = await fetchERC20Logs(cursor, env, budget);
+        erc20 = extractERC20Candidates(logs, market).map((c) => ({
+          ...c,
+          block_time: parseInt(block?.timestamp, 16) * 1000 || null,
+        }));
       }
+
+      const all = [...candidates, ...erc20];
+      const whales = classifyWhales(filterWhales(all, minUsd), walletMap);
+
+      for (const w of whales) {
+        try {
+          const fromKey = String(w.from_address).toLowerCase();
+          const walletInfo = walletMap.get(fromKey) ?? null;
+          const recentSameWallet = await recentWhalesFromWallet(env, w.from_address, w.chain);
+          const inserted = await insertWhaleAndQueue(env, w, walletMap, walletInfo, recentSameWallet, market);
+          if (inserted) blockNew++;
+        } catch (e) {
+          console.warn(`[scanner:${chain}] insert failed for ${w.tx_hash}:`, e.message);
+        }
+      }
+
+      // Per-block persist: crash after this point re-scans from cursor+1,
+      // never re-processing this block's wallet-stat bumps.
+      await persistState(env, chain, cursor, 0, blockNew);
+      persistedThisTick = true;
+    } catch (e) {
+      console.warn(`[scanner:${chain}] block ${cursor} processing failed:`, e.message);
+      break;
     }
-    lastProcessed = cursor;
+    lastPersisted = cursor;
+    newlyCounted += blockNew;
     processed++;
     cursor++;
   }
 
-  await persistState(env, chain, lastProcessed);
+  if (!persistedThisTick) {
+    // Nothing new (or the batch broke before any persist) — still refresh
+    // last_scan so monitoring sees a live scanner, and reset the error
+    // counter, as a successful tick should. Offset is untouched.
+    await persistState(env, chain, lastPersisted, state.tx_offset || 0, 0);
+  }
   return { chain, processed, newWhales: newlyCounted, primed: false };
 }
 
@@ -825,10 +1103,15 @@ export default {
       }
     } catch { /* never break the scan over news cache */ }
 
+    // One subrequest budget shared by both chains for this tick: Workers
+    // allow 50 subrequests per invocation and market+news+tip overhead is
+    // ~9-12. scanChain stops fetching (persisting progress) when it's out.
+    const budget = { remaining: SCAN_SUBREQUEST_BUDGET };
+
     const results = [];
     for (const chain of ["btc", "eth"]) {
       try {
-        results.push(await scanChain(env, chain, market));
+        results.push(await scanChain(env, chain, market, budget));
       } catch (e) {
         console.error(`[scanner:${chain}] scan failed:`, e.message);
         await bumpErrors(env, chain);
@@ -842,8 +1125,17 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/scan" || url.pathname === "/tick") {
+      // Fail closed: when ADMIN_TOKEN was never set these endpoints used to
+      // be open to the internet (anyone could trigger scans and burn the
+      // API budget). Deny first, compare second.
+      if (!env.ADMIN_TOKEN) {
+        return new Response(JSON.stringify({ error: "admin not configured" }), {
+          status: 401,
+          headers: { "content-type": "application/json" }
+        });
+      }
       const auth = request.headers.get("authorization") || url.searchParams.get("token");
-      if (env.ADMIN_TOKEN && auth !== `Bearer ${env.ADMIN_TOKEN}` && auth !== env.ADMIN_TOKEN) {
+      if (auth !== `Bearer ${env.ADMIN_TOKEN}` && auth !== env.ADMIN_TOKEN) {
         return new Response(JSON.stringify({ error: "unauthorized" }), {
           status: 401,
           headers: { "content-type": "application/json" }
