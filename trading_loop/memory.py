@@ -1,9 +1,10 @@
-"""trading_loop/memory.py — FinMem L2/L3 read helpers.
+"""trading_loop/memory.py — FinMem L2/L3 read helpers + trade/signal writes.
 
-Pure read-only SQLite queries. No LLM, no side effects.
-The agent reads BOTH layers before each trade decision (FinMem pattern).
+Reads are pure SQLite queries. Writes (record_trade, mark_processed,
+close_trade, apply_migrations) are the loop's only persistence path.
 """
 
+import os
 import sqlite3
 from typing import Optional
 
@@ -50,8 +51,21 @@ def new_signals(db: sqlite3.Connection, limit: int = 100):
     return [dict(r) for r in rows]
 
 
-def mark_processed(db: sqlite3.Connection, signal_id: int):
+def mark_processed(db: sqlite3.Connection, signal_id: int, skip_reason: str = None):
+    """Mark a signal processed. skip_reason is informational only (see record_skip)."""
     db.execute("UPDATE signals SET processed = 1 WHERE id = ?", (signal_id,))
+
+
+def record_skip(db: sqlite3.Connection, signal_id: int, reason: str):
+    """Dead-letter a signal: processed=1 with a human-readable skip_reason.
+
+    Used for poison signals (corrupt JSON, LLM garbage, invalid side, ...)
+    that must NOT be retried on every future run.
+    """
+    db.execute(
+        "UPDATE signals SET processed = 1, skip_reason = ? WHERE id = ?",
+        (reason, signal_id),
+    )
 
 
 def record_trade(db: sqlite3.Connection, trade: dict):
@@ -78,3 +92,32 @@ def close_trade(db: sqlite3.Connection, trade_id: int, exit_price: float,
         "close_reason = ? WHERE id = ?",
         (now, exit_price, pnl_usd, close_reason, trade_id),
     )
+
+
+def apply_migrations(db: sqlite3.Connection, migrations_dir: str):
+    """Apply pending *.sql migrations in filename order.
+
+    Re-runs are safe: 'duplicate column' errors are swallowed, anything
+    else raises. Keeps long-lived trades.db files (GH Actions) in sync
+    with schema.sql without a migration framework.
+    """
+    if not os.path.isdir(migrations_dir):
+        return
+    for fname in sorted(os.listdir(migrations_dir)):
+        if not fname.endswith(".sql"):
+            continue
+        with open(os.path.join(migrations_dir, fname)) as f:
+            sql = f.read()
+        for chunk in sql.split(";"):
+            lines = [ln for ln in chunk.splitlines()
+                     if not ln.strip().startswith("--")]
+            stmt = "\n".join(lines).strip()
+            if not stmt:
+                continue
+            try:
+                db.execute(stmt)
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    continue  # already applied
+                raise
+    db.commit()

@@ -87,8 +87,10 @@ test("bot fetch handler: wrong path returns 404", async () => {
 test("scanner is idempotent across ticks (whales don't get re-inserted or re-queued)", async () => {
   const w = makeWorld();
   await w.harness.scheduled(scanner.default); // prime
-  await w.harness.scheduled(scanner.default); // scan block (+1) — finds 2 whales
-  assert.equal(w.ANALYSTQ.sent.length, 2, "2 sent on first real scan");
+  await w.harness.scheduled(scanner.default); // tip+1 — nothing eligible yet (confirmation depth)
+  await w.harness.scheduled(scanner.default); // tip+2 — BTC whale found (depth 1)
+  await w.harness.scheduled(scanner.default); // tip+3 — ETH whale found (depth 2)
+  assert.equal(w.ANALYSTQ.sent.length, 2, "2 sent once both whales are behind tip");
 
   // Manually mark those 2 as 'done' (simulating analyst finishing them) and clear queue.
   w.DB.prepare("UPDATE whales SET analysis_status = 'done'").run();

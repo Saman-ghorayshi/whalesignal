@@ -10,16 +10,33 @@ on:
 permissions:
   contents: write
 
+# T6: one run at a time. Every alert fires a dispatch; without this, bursts
+# of alerts spawn overlapping runs that race on the trades.db push.
+concurrency:
+  group: trade-loop
+  cancel-in-progress: false
+
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # T5: 5 min was incompatible with sequential 20-40s LLM calls x up to 20
+    # signals (+ pip install). 20 min gives headroom; the real fix is
+    # batching/parallelizing the per-signal LLM calls.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # full history: the rebase-before-push below needs it
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-trade-${{ hashFiles('.github/workflows/trade.yml') }}
 
       - run: pip install httpx hyperliquid-python-sdk eth-account
 
@@ -43,6 +60,11 @@ jobs:
         run: |
           git config user.name "whalesignal-bot"
           git config user.email "bot@whalesignal"
-          git add trades.db
+          # Rebase onto whatever landed while we were trading (T6).
+          git pull --rebase --autostash || echo "::warning::rebase failed — pushing anyway"
+          # T2: trades.db is gitignored by pattern (*.db); -f overrides.
+          # NOTE: committing sqlite to git is a stopgap. The durable fix is
+          # moving loop state to D1/R2 (already paid for) instead of git.
+          git add -f trades.db
           git commit -m "trades.db: updated by GH Actions trade loop [skip ci]" || true
-          git push
+          git push || echo "::warning::push failed — next run's rebase will pick it up"

@@ -133,15 +133,22 @@ export function rateLimited() {
 /**
  * Send a message via Telegram bot sendMessage. Returns the JSON response.
  * Throws on non-ok.
+ *
+ * parse_mode is OPT-IN ONLY and defaults to plain text (the key is omitted).
+ * LLM-generated text breaks Telegram's Markdown parser (BT3: a single `*`
+ * or `_` in AI output → 400 "can't parse entities" → retry loops), and an
+ * empty-string parse_mode is not a documented Telegram value. Callers that
+ * genuinely want Markdown must pass { parse_mode: "Markdown" } AND mdEscape()
+ * every interpolated value.
  */
 export async function tgSendMessage(botToken, chatId, text, opts = {}) {
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
   const body = {
     chat_id: chatId,
     text,
-    parse_mode: opts.parse_mode ?? "Markdown",
     disable_web_page_preview: opts.disable_web_page_preview ?? true,
   };
+  if (opts.parse_mode) body.parse_mode = opts.parse_mode; // omit = plain text
   if (opts.reply_markup) body.reply_markup = opts.reply_markup;
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), 8000);
@@ -180,4 +187,118 @@ export function fmtUSD(n) {
 export function mdEscape(s) {
   if (s == null) return "";
   return String(s).replace(/([_*`\[\](){}~>#+=|\\.!-])/g, "\\$1");
+}
+
+// ─── Telegram safety helpers (BT4, S2, BT10) ──────────────────────────
+
+/** Telegram hard limit is 4096 chars; we cap below it to leave headroom. */
+export const TG_SAFE_MAX_LEN = 4000;
+
+/**
+ * Truncate text to a Telegram-safe length, code-point-safe (no split
+ * surrogate pairs / emoji). Appends a truncation marker so readers know
+ * content was cut. BT4: without this, long AI output → Telegram 400
+ * "message is too long" → queue retry ×3 → silent alert loss.
+ */
+export function truncateTelegram(text, maxLen = TG_SAFE_MAX_LEN) {
+  const s = String(text ?? "");
+  const pts = Array.from(s); // code-point-safe: emoji count as one
+  if (pts.length <= maxLen) return s;
+  return pts.slice(0, maxLen).join("") + "\n…(truncated)";
+}
+
+/**
+ * Sanitize LLM-generated text before it is posted to a public channel (S2).
+ * Strips C0 control characters (keeping \n and \t), trims, and caps length.
+ * This is a hygiene layer, not a security boundary: the channel sends plain
+ * text (no parse_mode), so there is no markup-injection vector, but control
+ * characters and multi-KB model ramblings still don't belong in an alert.
+ */
+export function sanitizeAIText(s, maxLen = 2000) {
+  if (s == null) return "";
+  const cleaned = String(s)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .trim();
+  const pts = Array.from(cleaned);
+  if (pts.length <= maxLen) return cleaned;
+  return pts.slice(0, maxLen).join("").trimEnd() + "…";
+}
+
+/**
+ * Constant-time string comparison for secrets (webhook secret_token, etc.).
+ * Length is checked first (lengths of real secrets aren't secret).
+ * Uses crypto.subtle.timingSafeEqual where available (Workers), otherwise a
+ * manual constant-time loop so it also works under node:test.
+ */
+export function secretsEqual(a, b) {
+  const x = String(a ?? "");
+  const y = String(b ?? "");
+  const ex = new TextEncoder().encode(x);
+  const ey = new TextEncoder().encode(y);
+  if (ex.length !== ey.length) return false;
+  const tse = globalThis.crypto?.subtle?.timingSafeEqual;
+  if (typeof tse === "function") {
+    try {
+      // Workers' subtle.timingSafeEqual returns a boolean synchronously.
+      const r = tse.call(globalThis.crypto.subtle, ex, ey);
+      return r === true;
+    } catch {
+      return false;
+    }
+  }
+  let diff = 0;
+  for (let i = 0; i < ex.length; i++) diff |= ex[i] ^ ey[i];
+  return diff === 0;
+}
+
+/**
+ * KV-backed fixed-window rate limiter. Returns { ok, limited, remaining?,
+ * retryAfterSec? }. Fail-OPEN when KV is missing (tests, local dev) with a
+ * warning — production always has KV bound. Concurrent increments can race;
+ * this is a soft abuse throttle, not an accounting primitive.
+ *
+ * @param {object} env — worker env (needs env.KV)
+ * @param {string} key — bucket id, e.g. `tgcmd:12345`
+ * @param {number} maxHits — allowed hits per window
+ * @param {number} windowSec — window length in seconds
+ */
+export async function checkRateLimit(env, key, maxHits = 10, windowSec = 60) {
+  const kv = env?.KV;
+  if (!kv || typeof kv.get !== "function") {
+    console.warn("[ratelimit] KV missing — check skipped (fail open)");
+    return { ok: true, limited: false };
+  }
+  const kvKey = `ratelimit:${key}`;
+  let state = null;
+  try {
+    const raw = await kv.get(kvKey);
+    if (raw) state = JSON.parse(raw);
+  } catch {
+    state = null;
+  }
+  const now = Date.now();
+  const put = async (s) => {
+    const ttl = Math.max(1, Math.ceil(((s.resetAt || now) - now) / 1000));
+    try {
+      await kv.put(kvKey, JSON.stringify(s), { expirationTtl: Math.min(ttl, windowSec) });
+    } catch (e) {
+      console.warn("[ratelimit] KV put failed:", e.message);
+    }
+  };
+  if (!state || typeof state.count !== "number" || (state.resetAt && now >= state.resetAt)) {
+    const fresh = { count: 1, resetAt: now + windowSec * 1000 };
+    await put(fresh);
+    return { ok: true, limited: false, remaining: maxHits - 1 };
+  }
+  if (state.count >= maxHits) {
+    return {
+      ok: false,
+      limited: true,
+      retryAfterSec: Math.max(1, Math.ceil((state.resetAt - now) / 1000)),
+    };
+  }
+  state.count += 1;
+  await put(state);
+  return { ok: true, limited: false, remaining: maxHits - state.count };
 }
