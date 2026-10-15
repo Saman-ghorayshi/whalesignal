@@ -11,13 +11,14 @@
 import { isAuthorizedAdmin } from "./worker-utils.js";
 
 const WORKERS = [
-  ["scanner", "https://whalesignal-scanner.mv3sxp7x4fkv-6d9.workers.dev/"],
-  ["analyst", "https://whalesignal-analyst.mv3sxp7x4fkv-6d9.workers.dev/"],
-  ["bot", "https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev/history?limit=1"],
-  ["news", "https://whalesignal-news.mv3sxp7x4fkv-6d9.workers.dev/"],
-  ["price", "https://whalesignal-price.mv3sxp7x4fkv-6d9.workers.dev/"],
-  ["sentiment", "https://whalesignal-sentiment.mv3sxp7x4fkv-6d9.workers.dev/"],
-  ["eval", "https://whalesignal-eval.mv3sxp7x4fkv-6d9.workers.dev/"],
+  // [name, url, expectStatus] — strict: must match exactly
+  ["scanner", "https://whalesignal-scanner.mv3sxp7x4fkv-6d9.workers.dev/", 200],
+  ["analyst", "https://whalesignal-analyst.mv3sxp7x4fkv-6d9.workers.dev/", 200],
+  ["bot", "https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev/history?limit=1", 200],
+  ["news", "https://whalesignal-news.mv3sxp7x4fkv-6d9.workers.dev/", 200],
+  ["price", "https://whalesignal-price.mv3sxp7x4fkv-6d9.workers.dev/", 200],
+  ["sentiment", "https://whalesignal-sentiment.mv3sxp7x4fkv-6d9.workers.dev/", 200],
+  ["eval", "https://whalesignal-eval.mv3sxp7x4fkv-6d9.workers.dev/", 200],
 ];
 
 const FAIL_THRESHOLD = 3; // consecutive failures before alerting
@@ -54,11 +55,12 @@ export async function runHealthTick(env) {
   const results = {};
   let allOk = true;
 
-  // 1. Worker pings
-  for (const [name, url] of WORKERS) {
+  // 1. Worker pings (strict status match)
+  for (const [name, url, expect] of WORKERS) {
     const r = await checkUrl(url);
-    results[name] = r;
-    if (!r.ok) allOk = false;
+    const ok = r.status === expect;
+    results[name] = { ...r, ok, expect };
+    if (!ok) allOk = false;
   }
 
   // 2. D1 check (cheap query)
