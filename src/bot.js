@@ -416,6 +416,9 @@ export async function fetchHandler(request, env, ctx) {
   // ─── public GET /content/queue — last N content briefs ──
   // KV-first (content_briefs cache written at alert time), D1 fallback.
   if (request.method === "GET" && path === "/content/queue") {
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const rl = await checkRateLimit(env, `http:/content/queue:${ip}`, 30, 60);
+    if (rl.limited) return rateLimited();
     try {
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "5", 10) || 5, 20);
       try {
