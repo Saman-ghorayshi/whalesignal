@@ -88,18 +88,51 @@ export function swingLevels(klines, lookback = 48) {
 
 // ─── klines fetching ────────────────────────────────────────────────
 
-/** Binance public klines → normalized {t,o,h,l,c,v}. No key needed. */
-async function fetchBinance(symbol, interval = "1h", limit = 100) {
-  const pair = `${symbol.toUpperCase()}USDT`;
-  const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${interval}&limit=${limit}`;
+/**
+ * Coinbase Exchange candles → normalized {t,o,h,l,c,v}. No key needed.
+ * Reliable from datacenter IPs (unlike Binance, which often 403s workers).
+ * Returns newest-first; we reverse to oldest-first.
+ */
+async function fetchCoinbase(symbol, interval = "1h", limit = 100) {
+  const pair = `${symbol.toUpperCase()}-USD`;
+  const granularity = interval === "1h" ? 3600 : 3600;
+  const url = `https://api.exchange.coinbase.com/products/${pair}/candles?granularity=${granularity}`;
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const res = await fetch(url, {
+      signal: ctl.signal,
+      headers: { "user-agent": "WhaleSignal/1.0" },
+    });
+    if (!res.ok) throw new Error(`Coinbase HTTP ${res.status}`);
+    const j = await res.json(); // [time, low, high, open, close, volume], newest first
+    if (!Array.isArray(j) || !j.length) throw new Error("Coinbase: empty candles");
+    return j.slice(0, limit).reverse().map((k) => ({
+      t: k[0] * 1000, o: +k[3], h: +k[2], l: +k[1], c: +k[4], v: +k[5],
+    }));
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+/** Kraken OHLC → normalized. Free, no key. Second fallback. */
+async function fetchKraken(symbol, interval = "1h", limit = 100) {
+  const pairs = { BTC: "XBTUSD", ETH: "ETHUSD", SOL: "SOLUSD" };
+  const pair = pairs[symbol.toUpperCase()];
+  if (!pair) throw new Error(`Kraken: no pair for ${symbol}`);
+  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=60`;
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), 12000);
   try {
     const res = await fetch(url, { signal: ctl.signal });
-    if (!res.ok) throw new Error(`Binance HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`Kraken HTTP ${res.status}`);
     const j = await res.json();
-    return j.map((k) => ({
-      t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
+    const key = Object.keys(j.result || {}).find((k) => k !== "last");
+    const rows = (j.result && j.result[key]) || [];
+    if (!rows.length) throw new Error("Kraken: empty OHLC");
+    // [time, open, high, low, close, vwap, volume, count]
+    return rows.slice(-limit).map((k) => ({
+      t: k[0] * 1000, o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[6],
     }));
   } finally {
     clearTimeout(tid);
@@ -142,17 +175,29 @@ async function fetchCoinGecko(symbol, limit = 100) {
 }
 
 /**
- * Fetch klines, Binance first, CoinGecko fallback.
+ * Fetch klines: Coinbase → Kraken → CoinGecko.
+ * (Binance was dropped: it 403s datacenter/worker IPs too often.)
  * fetchFn is injectable for tests: (symbol, interval, limit) => klines[].
  */
 export async function fetchKlines(symbol, { interval = "1h", limit = 100, fetchFn = null } = {}) {
   if (fetchFn) return fetchFn(symbol, interval, limit);
-  try {
-    return await fetchBinance(symbol, interval, limit);
-  } catch (e) {
-    console.warn(`[ta] Binance failed for ${symbol}, trying CoinGecko:`, e.message);
-    return await fetchCoinGecko(symbol, limit);
+  const attempts = [
+    ["Coinbase", () => fetchCoinbase(symbol, interval, limit)],
+    ["Kraken", () => fetchKraken(symbol, interval, limit)],
+    ["CoinGecko", () => fetchCoinGecko(symbol, limit)],
+  ];
+  let lastErr = null;
+  for (const [name, fn] of attempts) {
+    try {
+      const klines = await fn();
+      if (klines && klines.length >= 30) return klines;
+      lastErr = new Error(`${name}: too few klines`);
+    } catch (e) {
+      console.warn(`[ta] ${name} failed for ${symbol}:`, e.message);
+      lastErr = e;
+    }
   }
+  throw lastErr || new Error("all kline sources failed");
 }
 
 // ─── snapshot ───────────────────────────────────────────────────────
