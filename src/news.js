@@ -13,14 +13,14 @@
 import { isAuthorizedAdmin } from "./worker-utils.js";
 
 /**
- * CryptoPanic aggregator — the speed layer. CryptoPanic ingests hundreds of
- * crypto outlets + social in near-real-time; one API call beats waiting on
- * 10 slow RSS feeds. Free tier, no key needed (auth_token optional).
- * Returns normalized items like fetchSource does.
+ * NOTE: CryptoPanic's free no-key endpoint now returns 410 Gone (Oct 2026).
+ * If a NEWS_TOKEN (free CryptoPanic API key) is configured, this becomes the
+ * speed layer — one call, hundreds of sources, near-real-time. Without a key
+ * it no-ops and Tier-1 RSS carries the fast tick.
  */
 async function fetchCryptoPanic(env) {
-  const auth = env.NEWS_TOKEN ? `&auth_token=${env.NEWS_TOKEN}` : "";
-  const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot${auth}`;
+  if (!env.NEWS_TOKEN) return [];
+  const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot&auth_token=${env.NEWS_TOKEN}`;
   const ctl = new AbortController();
   const tid = setTimeout(() => ctl.abort(), 10000);
   try {
@@ -37,7 +37,6 @@ async function fetchCryptoPanic(env) {
       publishedAt: p.published_at ? Date.parse(p.published_at) : now,
       summary: "",
       source: "cryptopanic",
-      // weight by source domain reputation when known, else 0.7
       weight: 0.7,
       panicVotes: { positive: p.votes?.positive || 0, negative: p.votes?.negative || 0 },
     })).filter((it) => it.title && it.url);

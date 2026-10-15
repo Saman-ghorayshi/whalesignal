@@ -909,10 +909,16 @@ export function filterNewsKeywords(items) {
  * Mirror of refreshMarketCache (caller try/catch, not internal).
  */
 export async function refreshNewsCache(env) {
-  const auth = env.NEWS_TOKEN ? `&auth_token=${env.NEWS_TOKEN}` : "";
+  // CryptoPanic's no-key endpoint returns 410 Gone since ~Oct 2026; without
+  // NEWS_TOKEN this no-ops and the news worker's D1 feed carries the slot.
+  if (!env.NEWS_TOKEN) {
+    const cache = { headlines: [], updated_at: Date.now(), source: "d1" };
+    await env.KV.put("news_cache", JSON.stringify(cache));
+    return cache;
+  }
   // filter=hot returns the most-tweeted headlines — broader signal than
-  // kind=news alone, and free-tier-permitted.
-  const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot${auth}`;
+  // kind=news alone.
+  const url = `https://cryptopanic.com/api/v1/posts/?kind=news&filter=hot&auth_token=${env.NEWS_TOKEN}`;
   const j = await fetchJSON(url, { timeoutMs: 6000 });
   const headlines = filterNewsKeywords(j?.results ?? []);
   const cache = { headlines, updated_at: Date.now() };
