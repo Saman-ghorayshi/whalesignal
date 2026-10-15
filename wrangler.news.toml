@@ -1,0 +1,29 @@
+# wrangler.news.toml
+# Worker #4: crypto news aggregator. Pulls RSS feeds every 5 minutes, tags
+# symbols, scores sentiment/importance, stores in D1 + KV cache for the analyst.
+# Deploy with:  npx wrangler deploy -c wrangler.news.toml
+#
+# Bindings:
+#   DB      D1 (news table)
+#   KV      KV (news_cache for the analyst fast path)
+
+name = "whalesignal-news"
+main = "src/news.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whalesignal-db"
+# placeholder — replaced by deploy_all.py
+database_id = "6e369b7a-a8df-4864-b8f5-7bdc171ecf3d"
+
+[[kv_namespaces]]
+binding = "KV"
+# placeholder — replaced by deploy_all.py
+id = "1b3b2a8763b0497880983d3e9d26f76a"
+
+# Secret: ADMIN_TOKEN (same value as the other workers, for /trigger)

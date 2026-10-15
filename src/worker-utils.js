@@ -171,6 +171,40 @@ export async function tgSendMessage(botToken, chatId, text, opts = {}) {
   }
 }
 
+/**
+ * Send a photo (by URL) with a caption. Used for whale alerts with a
+ * QuickChart price chart. Falls back gracefully — callers should catch and
+ * fall back to tgSendMessage when the photo send fails.
+ */
+export async function tgSendPhoto(botToken, chatId, photoUrl, caption, opts = {}) {
+  const url = `https://api.telegram.org/bot${botToken}/sendPhoto`;
+  const body = {
+    chat_id: chatId,
+    photo: photoUrl,
+    caption,
+    disable_web_page_preview: true,
+  };
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctl.signal,
+    });
+    const j = await res.json();
+    if (!j.ok) {
+      const err = new Error(`Telegram sendPhoto failed: ${j.description || "unknown"}`);
+      err.payload = j;
+      throw err;
+    }
+    return j;
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
 // ─── number formatting ────────────────────────────────────────────────
 
 /** Format an integer-ish USD value with M/B suffixes. "$33.5M" or "$1.2B". */
@@ -250,6 +284,23 @@ export function secretsEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < ex.length; i++) diff |= ex[i] ^ ey[i];
   return diff === 0;
+}
+
+/**
+ * Admin auth for diagnostic HTTP endpoints. Fail-closed: if ADMIN_TOKEN
+ * is not configured, nobody is authorized. Accepts ?key= or x-admin-key.
+ */
+export function isAuthorizedAdmin(request, env) {
+  const secret = env?.ADMIN_TOKEN;
+  if (!secret) return false;
+  let provided = null;
+  try {
+    provided = new URL(request.url).searchParams.get("key");
+  } catch { /* ignore */ }
+  if (!provided && request.headers?.get) {
+    provided = request.headers.get("x-admin-key");
+  }
+  return secretsEqual(provided || "", secret);
 }
 
 /**

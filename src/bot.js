@@ -12,7 +12,7 @@
 //   BOT_TOKEN — secret, Telegram bot token (wrangler secret put)
 //   PUBLIC_CHANNEL — string, e.g. "@whalesignalnews"
 
-import { okJson, errJson, rateLimited, tgSendMessage, fmtUSD, shortAddr, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit } from "./worker-utils.js";
+import { okJson, errJson, rateLimited, tgSendMessage, tgSendPhoto, fmtUSD, shortAddr, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit } from "./worker-utils.js";
 import { analyzeWalletPatterns, buildGraphPayload } from "./graph-analyst.js";
 
 /** CORS headers shared by all public GET/OPTIONS routes (BT11: no drift). */
@@ -244,6 +244,16 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   lines.push(`📊 Market: BTC ${btcP} (${btcChg}) | ${fg} | ETH ${ethP}`);
   lines.push(`🔮 Signal: ${sigEmoji} (confidence ${conf})`);
   if (analysis?.related_factor) lines.push(`📎 ${sanitizeAIText(analysis.related_factor, 200)}`);
+  // Whale-intelligence: why they did it + what may have triggered it + TA.
+  if (analysis?.motive && analysis.motive !== "unknown") {
+    const mc = analysis.motive_confidence != null ? ` (${Number(analysis.motive_confidence).toFixed(2)})` : "";
+    lines.push(`🎯 Likely motive: ${sanitizeAIText(motiveLabel(analysis.motive), 60)}${mc}`);
+  }
+  if (analysis?.catalyst_title) {
+    const curl = analysis.catalyst_url ? ` — ${analysis.catalyst_url}` : "";
+    lines.push(`📰 Catalyst: ${sanitizeAIText(analysis.catalyst_title, 160)}${curl}`);
+  }
+  if (analysis?.ta_summary) lines.push(`📈 TA: ${sanitizeAIText(analysis.ta_summary, 300)}`);
   lines.push(`🔍 ${explorerLink}`);
   // BT13: org drift — real repo is saman-ghorayshi/whalesignal.
   lines.push(`🌐 Money-Flow Graph: https://saman-ghorayshi.github.io/whalesignal/wallet.html?addr=${whale.from_address}&chain=${whale.chain}`);
@@ -257,6 +267,23 @@ const TX_TYPE_LABEL = {
   wallet_to_wallet: "↔ wallet to wallet",
   unknown: "wallet move",
 };
+
+// Human-readable motive labels for the public channel.
+function motiveLabel(m) {
+  const map = {
+    accumulation: "accumulation — buying the dip",
+    distribution: "distribution — preparing to sell",
+    capitulation: "capitulation — panic selling",
+    profit_taking: "profit taking into strength",
+    dry_powder: "dry powder — stablecoins ready to buy",
+    cold_storage: "moving to cold storage",
+    otc_deal: "likely OTC deal",
+    internal_ops: "internal reorganization",
+    rebalancing: "capital repositioning",
+    unknown: "unclear",
+  };
+  return map[m] || "unclear";
+}
 
 // ─── fetch (Telegram webhook) ─────────────────────────────────────────
 
@@ -993,7 +1020,7 @@ export async function queueHandler(batch, env) {
         if (body.whale_id == null) {
           console.warn("[bot] public_alert without whale_id — acking poison message");
         } else {
-          await postPublicAlert(env, body.whale_id);
+          await postPublicAlert(env, body.whale_id, body.chart_url || null);
         }
       } else {
         console.warn("[bot] unknown queue kind:", body.kind);
@@ -1006,7 +1033,7 @@ export async function queueHandler(batch, env) {
   }
 }
 
-async function postPublicAlert(env, whaleId) {
+async function postPublicAlert(env, whaleId, chartUrl = null) {
   const chatId = env.PUBLIC_CHANNEL;
 
   // BT2 — ATOMIC DELIVERED-CLAIM, FIRST, BEFORE ANY NETWORK I/O.
@@ -1028,9 +1055,10 @@ async function postPublicAlert(env, whaleId) {
     return;
   }
 
-  // Load whale + analysis
+  // Load whale + analysis (incl. whale-intelligence fields)
   const whale = await env.DB.prepare(
-    `SELECT w.*, a.headline, a.interpretation, a.signal, a.confidence, a.related_factor
+    `SELECT w.*, a.headline, a.interpretation, a.signal, a.confidence, a.related_factor,
+            a.motive, a.motive_confidence, a.catalyst_title, a.catalyst_url, a.ta_summary
      FROM whales w LEFT JOIN analysis a ON a.whale_id = w.id
      WHERE w.id = ?`
   ).bind(whaleId).first();
@@ -1052,11 +1080,28 @@ async function postPublicAlert(env, whaleId) {
     signal: whale.signal,
     confidence: whale.confidence,
     related_factor: whale.related_factor,
+    motive: whale.motive,
+    motive_confidence: whale.motive_confidence,
+    catalyst_title: whale.catalyst_title,
+    catalyst_url: whale.catalyst_url,
+    ta_summary: whale.ta_summary,
   }, market);
   if (clusterNote) text = clusterNote + "\n" + text;
 
   // BT3+BT4: plain text (parse_mode omitted), truncated to Telegram's limit.
-  await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
+  // Whale-intelligence: send the price chart as a photo when available;
+  // fall back to a text message if the photo send fails.
+  const caption = truncateTelegram(text, 1024); // Telegram photo caption limit
+  if (chartUrl) {
+    try {
+      await tgSendPhoto(env.BOT_TOKEN, chatId, chartUrl, caption);
+    } catch (e) {
+      console.warn(`[bot] sendPhoto failed, falling back to text:`, e.message);
+      await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
+    }
+  } else {
+    await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
+  }
 
   // R2 export for the Python trading loop (trading_loop.py polls this).
   // postAlertToR2 swallows its own errors (BT5) — a failed export can never
