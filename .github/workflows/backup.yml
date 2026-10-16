@@ -28,10 +28,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set -euo pipefail
           npm i -g wrangler --no-audit --no-fund 2>/dev/null
           mkdir -p backups
           DATE=$(date -u +%Y-%m-%d)
-          wrangler d1 export whalesignal-db --remote --output backups/d1-$DATE.sql 2>&1 | tail -2
+          wrangler d1 export whalesignal-db --remote --output backups/d1-$DATE.sql
+          # Fail if the backup is missing or empty (don't commit a broken backup)
+          test -s backups/d1-$DATE.sql || (echo "::error::backup file missing or empty" && exit 1)
           # keep only last 4 backups
           ls -t backups/d1-*.sql | tail -n +5 | xargs -r rm
           echo "backup_size=$(du -h backups/d1-$DATE.sql | cut -f1)" >> $GITHUB_OUTPUT

@@ -425,6 +425,12 @@ export function computeInterestingness(w, walletInfo = null, recentFromSameWalle
     score -= 10;
   }
 
+  // ── self-transfer penalty — wallet sending to itself is not a whale move ──
+  // (Audit found 1/3 of "whale volume" was self-transfers, incl. 4x $200M rotator.)
+  if (w.is_self_transfer) {
+    score -= 30;
+  }
+
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
