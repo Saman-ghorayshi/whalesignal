@@ -54,7 +54,7 @@ const TOKENS_BY_CONTRACT = {
 
 // BSC (BNB Chain) BEP-20 tokens — same mechanism, different contracts
 const BSC_TOKENS_BY_CONTRACT = {
-  "0x55d398a42c2eb92d0c9b299338aa7b8ed9f114a": "USDT",
+  "0x55d398326f99059ff775485246999027b3197955": "USDT", // Binance-Peg USDT (verified)
   "0x8ac7230481977290e4d55a9c6e547a2b9df2a54c": "USDC",
   "0x7130d40692f8b028100d12b8546c800a15e65430": "BUSD",
 };
@@ -294,8 +294,10 @@ export function extractERC20Candidates(logs, market, chain = "eth") {
     // topics are 32-byte hex words; from = bytes12..32, to likewise
     const from = "0x" + (lg.topics[1] || "").slice(26);
     const to = "0x" + (lg.topics[2] || "").slice(26);
-    // decimals differ per token — keep a small table
-    const decimals = TOKEN_DECIMALS[sym] ?? 18;
+    // decimals differ per token AND per chain (BSC stables are 18, not 6)
+    const decimals = chain === "bsc"
+      ? (BSC_TOKEN_DECIMALS[sym] ?? 18)
+      : (TOKEN_DECIMALS[sym] ?? 18);
     const amount = hexToAmount(lg.data, decimals); // BigInt-exact, NaN on malformed
     if (!Number.isFinite(amount)) continue;
     out.push({
@@ -318,6 +320,11 @@ export function extractERC20Candidates(logs, market, chain = "eth") {
 // token decimals (for converting log amounts)
 const TOKEN_DECIMALS = {
   USDT: 6, USDC: 6, DAI: 18, WBTC: 8, LINK: 18,
+};
+// BSC quirk: Binance-Peg stables use 18 decimals, unlike Ethereum's 6.
+// Using 6 would undercount by 1e12.
+const BSC_TOKEN_DECIMALS = {
+  USDT: 18, USDC: 18, BUSD: 18,
 };
 
 /** Apply the min-USD filter to a list of candidates. Pure. */
