@@ -32,7 +32,7 @@ import { fmtUSD, shortAddr, isAuthorizedAdmin } from "./worker-utils.js";
 // Re-export for backward compat (tests import it from here).
 export { isAuthorizedAdmin };
 import { analyzeWalletPatterns } from "./graph-analyst.js";
-import { getMarketSnapshot, summarizeTA, buildChartUrl } from "./ta.js";
+import { getMarketSnapshot, summarizeTA, buildChartUrl, buildProChartUrl } from "./ta.js";
 
 /**
  * Fast-path TA: read the price worker's precomputed snapshot from KV.
@@ -1108,7 +1108,25 @@ export async function analyzeOne(env, msg) {
   let chartUrl = null;
   try {
     if (ta && ta.series && ta.series.length >= 2) {
-      chartUrl = buildChartUrl(whale.symbol, ta.series, { t: whale.detected_at, usd: whale.usd_value });
+      // Pro chart: events from causal chain (world → market → whale)
+      const chartEvents = [];
+      try {
+        const chain = meta?.causal_chain ? JSON.parse(meta.causal_chain) : null;
+        const evts = chain?.events || [];
+        for (const e of evts.slice(0, 3)) {
+          if (e.t && e.label) {
+            const emoji = e.type === "news" ? "📰" : e.type === "sentiment" ? "📊" : e.type === "market" ? "📈" : "🌍";
+            chartEvents.push({ t: e.t, label: e.label.slice(0, 10), emoji });
+          }
+        }
+      } catch {}
+      chartUrl = buildProChartUrl(whale.symbol, ta.series, {
+        whale: { t: whale.detected_at, usd: whale.usd_value },
+        support: ta.support,
+        resistance: ta.resistance,
+        events: chartEvents,
+        signal: parsed.signal,
+      }) || buildChartUrl(whale.symbol, ta.series, { t: whale.detected_at, usd: whale.usd_value });
     }
   } catch (e) {
     console.warn(`[analyst:${whale_id}] chart build failed:`, e.message);
