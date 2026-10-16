@@ -1,7 +1,7 @@
 // tests/utils.test.js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shortAddr, buildWalletMap, labelFor, classifyTx, usdValue, fmtUSD, mdEscape, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit, TG_SAFE_MAX_LEN } from "../src/worker-utils.js";
+import { shortAddr, buildWalletMap, labelFor, classifyTx, usdValue, fmtUSD, mdEscape, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit, TG_SAFE_MAX_LEN, isD1LockedError, noteD1Lock, isD1SafeMode, clearD1SafeMode } from "../src/worker-utils.js";
 
 // in-memory KV stub for checkRateLimit tests
 function stubKV(initial = {}) {
@@ -163,4 +163,28 @@ test("checkRateLimit resets after the window passes", async () => {
   // Window of 0 seconds means immediate expiry on next call
   await new Promise(r => setTimeout(r, 5));
   assert.equal((await checkRateLimit(env, key2, 1, 0)).ok, true);
+});
+
+test("isD1LockedError: real D1 quota errors detected", () => {
+  assert.equal(isD1LockedError(new Error("Your account has exceeded D1's free tier daily row read limit. [code: 7500]")), true);
+  assert.equal(isD1LockedError(new Error("D1_ERROR: too many rows")), true);
+  assert.equal(isD1LockedError("quota exceeded for d1"), true);
+});
+
+test("isD1LockedError: no false positive on URLs with limit param", () => {
+  // Caught live: TRON scan error URL contained "&limit=200" and falsely
+  // engaged safe mode, shutting down all D1 work for 6h.
+  assert.equal(isD1LockedError(new Error("MockFetch: unhandled URL: https://api.trongrid.io/v1/contracts/X/events?event_name=Transfer&limit=200&order_by=block_timestamp,desc")), false);
+  assert.equal(isD1LockedError(new Error("fetch failed: rate limited by upstream")), false);
+  assert.equal(isD1LockedError(new Error("connection timeout")), false);
+});
+
+test("D1 safe mode: engage, detect, clear", async () => {
+  const env = { KV: stubKV() };
+  await clearD1SafeMode(env);
+  assert.equal(await isD1SafeMode(env), false);
+  await noteD1Lock(env);
+  assert.equal(await isD1SafeMode(env), true);
+  await clearD1SafeMode(env);
+  assert.equal(await isD1SafeMode(env), false);
 });

@@ -32,7 +32,7 @@
 //   MIN_USD  — string, overrides default 500000
 //   MAX_BLOCKS — string, overrides default 2
 
-import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor } from "./worker-utils.js";
+import { fetchJSON, classifyTx, usdValue, buildWalletMap, labelFor, isD1LockedError, noteD1Lock, isD1SafeMode } from "./worker-utils.js";
 import { scanSolana } from "./solana.js";
 
 // consts (also overrideable via env)
@@ -478,17 +478,6 @@ async function persistState(env, chain, lastBlock, txOffset = 0, whalesDelta = 0
 }
 
 /** Increment the consecutive-errors counter on a failure. */
-/**
- * Detect D1 quota/limit errors (5M row reads/day, etc.).
- * When D1 is locked, all D1 ops fail — don't waste budget retrying chains.
- */
-export function isD1LockedError(e) {
-  const msg = String(e?.message || e || "").toLowerCase();
-  return msg.includes("limit") || msg.includes("quota") ||
-         msg.includes("too many") || msg.includes("d1_error") ||
-         msg.includes("exceeded");
-}
-
 async function bumpErrors(env, chain) {
   // Upsert: ensure the row exists so consecutive failures are actually counted.
   // The old UPDATE-only version silently did nothing if the chain had never
@@ -1363,6 +1352,12 @@ export default {
   // internally decide whether to refresh market cache based on TTL, not on
   // a per-tick KV counter (a counter would burn the 1K KV writes/day cap).
   async scheduled(event, env, ctx) {
+    // D1 safe mode: if quota was hit, skip D1-heavy work this tick.
+    // Prevents error-loop burn when the free-tier limit is reached.
+    if (await isD1SafeMode(env)) {
+      console.warn("[scanner] D1 safe mode — skipping tick");
+      return { skipped: "d1_safe_mode" };
+    }
     let market = null;
     let needMarketRefresh = true;
     try {
@@ -1466,9 +1461,11 @@ export default {
         );
       } catch (e) {
         console.error(`[scanner:${chain}] scan failed:`, e.message);
-        // D1 lock: don't waste budget retrying, the whole DB is down
+        // D1 lock: don't waste budget retrying, the whole DB is down.
+        // Engage safe mode so ALL workers back off, not just this tick.
         if (isD1LockedError(e)) {
-          console.error("[scanner] D1 locked — skipping remaining chains this tick");
+          console.error("[scanner] D1 locked — engaging safe mode, skipping remaining chains");
+          await noteD1Lock(env);
           results.push({ chain, error: "d1_locked" });
           break;
         }

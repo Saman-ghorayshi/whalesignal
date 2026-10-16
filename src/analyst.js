@@ -28,7 +28,7 @@
 //   - Template analysis handles the obvious cases with zero AI cost; whales
 //     with interesting_score >= 90 always escalate to the LLM.
 
-import { fmtUSD, shortAddr, isAuthorizedAdmin } from "./worker-utils.js";
+import { fmtUSD, shortAddr, isAuthorizedAdmin , isD1SafeMode, noteD1Lock, isD1LockedError } from "./worker-utils.js";
 // Re-export for backward compat (tests import it from here).
 export { isAuthorizedAdmin };
 import { analyzeWalletPatterns } from "./graph-analyst.js";
@@ -1378,6 +1378,11 @@ export default {
   // Retry poller: picks up whales where queue send failed (status='queue_failed').
   // Runs hourly via cron. Self-healing for transient queue outages.
   async scheduled(event, env, ctx) {
+    // D1 safe mode: skip D1-heavy work when quota is hit.
+    if (await isD1SafeMode(env)) {
+      console.warn("[analyst] D1 safe mode — skipping tick");
+      return { skipped: "d1_safe_mode" };
+    }
     try {
       const rows = await env.DB.prepare(
         "SELECT id, chain FROM whales WHERE analysis_status = 'queue_failed' LIMIT 20"

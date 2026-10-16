@@ -10,7 +10,7 @@
  * No API keys needed — RSS is free. Add/remove sources in SOURCES.
  */
 
-import { isAuthorizedAdmin } from "./worker-utils.js";
+import { isAuthorizedAdmin, isD1LockedError, noteD1Lock, isD1SafeMode } from "./worker-utils.js";
 
 /**
  * NOTE: CryptoPanic's free no-key endpoint now returns 410 Gone (Oct 2026).
@@ -367,7 +367,10 @@ async function saveSourceMeta(env, updates) {
   );
   for (let i = 0; i < stmts.length; i += 50) {
     try { await env.DB.batch(stmts.slice(i, i + 50)); }
-    catch (e) { console.warn("[news] meta batch failed:", e.message); }
+    catch (e) {
+      console.warn("[news] meta batch failed:", e.message);
+      if (isD1LockedError(e)) await noteD1Lock(env);
+    }
   }
 }
 
@@ -531,6 +534,11 @@ export async function getRelevantNews(env, { symbol, detectedAt, windowMs = 12 *
 
 export default {
   async scheduled(event, env, ctx) {
+    // D1 safe mode: skip D1-heavy aggregation when quota is hit.
+    if (await isD1SafeMode(env)) {
+      console.warn("[news] D1 safe mode — skipping tick");
+      return { skipped: "d1_safe_mode" };
+    }
     // Single 2-min cron; per-source intervals + ETags + backoff inside
     // runAggregation decide what actually gets fetched each tick.
     // Typical tick: ~5-8 fetches (not 47) — kind to CF limits and to sites.

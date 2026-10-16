@@ -18,7 +18,7 @@
  * Neutral signals are recorded but never scored (no direction = no bet).
  */
 
-import { isAuthorizedAdmin } from "./worker-utils.js";
+import { isAuthorizedAdmin , isD1SafeMode, noteD1Lock, isD1LockedError } from "./worker-utils.js";
 
 const HORIZONS = [
   { key: "1h", ms: 3600000, noisePct: 0.3, ocol: "outcome_1h", pcol: "horizon_1h_price", rcol: "horizon_1h_return" },
@@ -157,6 +157,11 @@ async function buildLeaderboard(env) {
 
 export default {
   async scheduled(event, env, ctx) {
+    // D1 safe mode: skip D1-heavy work when quota is hit.
+    if (await isD1SafeMode(env)) {
+      console.warn("[eval] D1 safe mode — skipping tick");
+      return { skipped: "d1_safe_mode" };
+    }
     ctx.waitUntil(runEvalTick(env));
   },
   async fetch(request, env) {
