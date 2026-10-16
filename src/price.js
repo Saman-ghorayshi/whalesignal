@@ -13,7 +13,7 @@
  * Price sources (no keys): Coinbase Exchange → Kraken → CoinGecko.
  */
 
-import { isAuthorizedAdmin } from "./worker-utils.js";
+import { isAuthorizedAdmin , isD1SafeMode, noteD1Lock, isD1LockedError } from "./worker-utils.js";
 import { fetchKlines, rsi, macd, bollinger, sma, volumeZ, swingLevels, summarizeTA, atr, vwap, stochRsi, obvTrend, fibonacci, adx, volatilityRegime } from "./ta.js";
 
 const SYMBOLS = ["BTC", "ETH", "SOL"];
@@ -197,6 +197,11 @@ export async function runPriceTick(env) {
 
 export default {
   async scheduled(event, env, ctx) {
+    // D1 safe mode: skip D1-heavy work when quota is hit.
+    if (await isD1SafeMode(env)) {
+      console.warn("[price] D1 safe mode — skipping tick");
+      return { skipped: "d1_safe_mode" };
+    }
     ctx.waitUntil(runPriceTick(env));
   },
   async fetch(request, env) {

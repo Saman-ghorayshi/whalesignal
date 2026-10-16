@@ -11,7 +11,7 @@
  * path). No API keys needed.
  */
 
-import { isAuthorizedAdmin } from "./worker-utils.js";
+import { isAuthorizedAdmin , isD1SafeMode, noteD1Lock, isD1LockedError } from "./worker-utils.js";
 
 async function fetchFearGreed() {
   const ctl = new AbortController();
@@ -218,6 +218,11 @@ export async function runSentimentTick(env) {
 
 export default {
   async scheduled(event, env, ctx) {
+    // D1 safe mode: skip D1-heavy work when quota is hit.
+    if (await isD1SafeMode(env)) {
+      console.warn("[sentiment] D1 safe mode — skipping tick");
+      return { skipped: "d1_safe_mode" };
+    }
     ctx.waitUntil(runSentimentTick(env));
   },
   async fetch(request, env) {

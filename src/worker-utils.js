@@ -348,3 +348,58 @@ export async function checkRateLimit(env, key, maxHits = 10, windowSec = 60) {
   _rlStore.set(rlKey, state);
   return { ok: true, limited: false, remaining: maxHits - state.count };
 }
+
+/**
+ * D1 safe-mode guard — prevents burn-loop when the free-tier quota is hit.
+ *
+ * How it works:
+ * - When any worker catches a D1 quota/lock error, it calls noteD1Lock(env).
+ * - noteD1Lock sets a KV flag `d1_safe_mode` with 6h TTL.
+ * - Workers call isD1SafeMode(env) before heavy D1 work; if set, they skip
+ *   the D1 work for this tick (log + return) instead of hammering a locked DB.
+ * - The flag auto-expires; workers resume on next tick after expiry.
+ * - In-memory cache per isolate avoids a KV read on every check.
+ */
+let _d1SafeCache = { value: false, at: 0 };
+const D1_SAFE_TTL_MS = 6 * 3600 * 1000;
+const D1_SAFE_CACHE_MS = 60000;
+
+export function isD1LockedError(e) {
+  const msg = String(e?.message || e || "").toLowerCase();
+  // Tight matching: a naive `includes("limit")` false-positives on URLs like
+  // "?limit=200" in unrelated fetch errors (caught live: TRON scan engaged
+  // safe mode because the TronGrid URL contained "&limit=200").
+  // Real D1 quota errors look like: "exceeded D1's free tier daily row read
+  // limit ... [code: 7500]".
+  if (msg.includes("code: 7500")) return true;
+  if (msg.includes("d1_error")) return true;
+  if (msg.includes("d1") && msg.includes("exceeded")) return true;
+  if (msg.includes("row read limit") || msg.includes("daily row")) return true;
+  if (msg.includes("quota exceeded")) return true;
+  return false;
+}
+
+export async function noteD1Lock(env) {
+  try {
+    await env.KV.put("d1_safe_mode", String(Date.now()), { expirationTtl: 6 * 3600 });
+  } catch {}
+  _d1SafeCache = { value: true, at: Date.now() };
+  console.warn("[d1] safe mode ENGAGED — quota/lock detected, D1 work paused 6h");
+}
+
+export async function isD1SafeMode(env) {
+  if (Date.now() - _d1SafeCache.at < D1_SAFE_CACHE_MS) return _d1SafeCache.value;
+  try {
+    const raw = await env.KV.get("d1_safe_mode");
+    const locked = !!raw && (Date.now() - parseInt(raw, 10)) < D1_SAFE_TTL_MS;
+    _d1SafeCache = { value: locked, at: Date.now() };
+    return locked;
+  } catch {
+    return _d1SafeCache.value;
+  }
+}
+
+export async function clearD1SafeMode(env) {
+  try { await env.KV.delete("d1_safe_mode"); } catch {}
+  _d1SafeCache = { value: false, at: Date.now() };
+}

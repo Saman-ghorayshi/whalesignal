@@ -12,7 +12,7 @@
 //   BOT_TOKEN — secret, Telegram bot token (wrangler secret put)
 //   PUBLIC_CHANNEL — string, e.g. "@whalesignalnews"
 
-import { okJson, errJson, rateLimited, tgSendMessage, tgSendPhoto, fmtUSD, shortAddr, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit } from "./worker-utils.js";
+import { okJson, errJson, rateLimited, tgSendMessage, tgSendPhoto, fmtUSD, shortAddr, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit, isD1LockedError, noteD1Lock, isD1SafeMode } from "./worker-utils.js";
 import * as intel from "./intel.js";
 import { analyzeWalletPatterns, buildGraphPayload } from "./graph-analyst.js";
 import { buildContentBrief } from "./content.js";
@@ -367,8 +367,27 @@ export async function fetchHandler(request, env, ctx) {
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
     const rl = await checkRateLimit(env, `http:/intel:${ip}`, 30, 60);
     if (rl.limited) return rateLimited();
+    // D1 safe mode: serve stale cache or 503.
+    if (await isD1SafeMode(env)) {
+      try {
+        const view0 = url.searchParams.get("view") || "overview";
+        const cached0 = await env.KV.get(`intel_cache:${view0}`);
+        if (cached0) return jsonResponse({ ...JSON.parse(cached0), stale: true });
+      } catch {}
+      return jsonResponse({ ok: false, reason: "d1_safe_mode", retry_after: 3600 }, 503);
+    }
     try {
       const view = url.searchParams.get("view") || "overview";
+      // KV cache (5 min): intel views do full-table GROUP BY aggregations.
+      // Without this, each view burns thousands of D1 rows per hit.
+      const cacheKey = `intel_cache:${view}`;
+      try {
+        const cached = await env.KV.get(cacheKey);
+        if (cached) {
+          const c = JSON.parse(cached);
+          if (Date.now() - (c.cached_at || 0) < 300000) return jsonResponse({ ok: true, view, data: c.data, cached: true });
+        }
+      } catch {}
       let data;
       switch (view) {
         case "flows": data = await intel.exchangeFlows(env); break;
@@ -393,8 +412,10 @@ export async function fetchHandler(request, env, ctx) {
         case "overview":
         default: data = await intel.systemOverview(env); break;
       }
+      try { await env.KV.put(cacheKey, JSON.stringify({ cached_at: Date.now(), data }), { expirationTtl: 360 }); } catch {}
       return jsonResponse({ ok: true, view, data });
     } catch (e) {
+      if (isD1LockedError(e)) await noteD1Lock(env);
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
   }
@@ -404,16 +425,36 @@ export async function fetchHandler(request, env, ctx) {
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
     const rl = await checkRateLimit(env, `http:/stats:${ip}`, 30, 60);
     if (rl.limited) return rateLimited();
+    // D1 safe mode: serve stale cache instead of hammering a locked DB.
+    if (await isD1SafeMode(env)) {
+      try {
+        const cached = await env.KV.get("stats_cache");
+        if (cached) return jsonResponse({ ...JSON.parse(cached), stale: true });
+      } catch {}
+      return jsonResponse({ ok: false, reason: "d1_safe_mode", retry_after: 3600 }, 503);
+    }
     try {
+      // KV cache (5 min): /stats does 3 full-table aggregations per hit.
+      // Without this, every dashboard poll burns thousands of D1 rows.
+      try {
+        const cached = await env.KV.get("stats_cache");
+        if (cached) {
+          const c = JSON.parse(cached);
+          if (Date.now() - (c.cached_at || 0) < 300000) return jsonResponse(c.payload);
+        }
+      } catch {}
       const stats = await statsRows(env);
       const bySymbol = await statsBySymbol(env);
       const hourly = await statsHourly(env);
       let market = null;
       try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
       const payload = renderStatsJSON(stats, bySymbol, hourly, market);
+      // Cache for 5 min so dashboard polls don't burn D1.
+      try { await env.KV.put("stats_cache", JSON.stringify({ cached_at: Date.now(), payload }), { expirationTtl: 360 }); } catch {}
       // BT11: use the shared helper so CORS/Cache-Control can't drift.
       return jsonResponse(payload, 200, { "Cache-Control": "public, max-age=60" });
     } catch (e) {
+      if (isD1LockedError(e)) await noteD1Lock(env);
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
   }
