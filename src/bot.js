@@ -230,9 +230,18 @@ export function formatAlert(whale, analysis, market, opts = {}) {
   // parse_mode Markdown is brittle when AI text contains asterisks/underscores.
   // /help and /ping below use plain text too for consistency.
   const lines = [];
-  // Mint radar: treasury outflows get special 🏦 labeling
-  const isMint = (whale.from_label || "").toLowerCase().includes("tether treasury") ||
-                 (whale.from_label || "").toLowerCase().includes("circle");
+  // Mint radar: treasury outflows get special 🏦 labeling.
+  // Checks from_address directly (from_label is not populated in the DB).
+  // Tether Treasury (ETH): 0xc6cde7c39eb2f0f0095f41570af89efc2c1ea828
+  // Tether Treasury (TRON): TKHuVq1oKVruCGLvqVexFs6dawKv6fQgFs
+  const TREASURIES = new Set([
+    "0xc6cde7c39eb2f0f0095f41570af89efc2c1ea828", // Tether Treasury (ETH) — EVM lowercase
+    "TKHuVq1oKVruCGLvqVexFs6dawKv6fQgFs", // Tether Treasury (TRON) — case-sensitive
+  ]);
+  const fromAddr = String(whale.from_address || "");
+  // EVM: compare lowercase; TRON/Solana: exact match (case-sensitive)
+  const isMint = TREASURIES.has(fromAddr) ||
+    (["eth", "bsc", "base"].includes(whale.chain) && TREASURIES.has(fromAddr.toLowerCase()));
   if (isMint) {
     lines.push(`🏦 STABLECOIN MINT — ${chain}`);
     lines.push(`${usd} fresh supply`);
