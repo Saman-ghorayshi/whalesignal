@@ -65,6 +65,17 @@ export function classifyMotive(p) {
     return { motive: "dry_powder", confidence: 0.6, reasons: [...reasons, "stablecoin to exchange"] };
   }
 
+  // Stablecoin supply events — highest-signal tx_types from the mint radar.
+  if (txType === "mint") {
+    return { motive: "fresh_supply", confidence: 0.85, reasons: [...reasons, "new stablecoins minted = fresh buying power entering market"] };
+  }
+  if (txType === "burn") {
+    return { motive: "supply_contraction", confidence: 0.85, reasons: [...reasons, "stablecoins burned = supply leaving market"] };
+  }
+  if (txType === "treasury_deploy") {
+    return { motive: "treasury_ops", confidence: 0.7, reasons: [...reasons, "treasury distributing supply"] };
+  }
+
   switch (txType) {
     case "exchange_inflow": {
       if (fear && (oversold || downtrend)) {
