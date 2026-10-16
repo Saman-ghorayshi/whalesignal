@@ -75,12 +75,18 @@ export async function runHealthTick(env) {
     allOk = false;
   }
 
-  // 3. KV check
+  // 3. KV check (every 30min only — saves ~240 writes/day)
   try {
-    await env.KV.put("health_ping", String(now), { expirationTtl: 600 });
-    const v = await env.KV.get("health_ping");
-    results.kv = { ok: v === String(now) };
-    if (v !== String(now)) allOk = false;
+    const lastKvCheck = parseInt((await env.KV.get("health_kvcheck_at")) || "0", 10) || 0;
+    if (now - lastKvCheck > 1800000) {
+      await env.KV.put("health_ping", String(now), { expirationTtl: 600 });
+      await env.KV.put("health_kvcheck_at", String(now), { expirationTtl: 3600 });
+      const v = await env.KV.get("health_ping");
+      results.kv = { ok: v === String(now) };
+      if (v !== String(now)) allOk = false;
+    } else {
+      results.kv = { ok: true, cached: true };
+    }
   } catch (e) {
     results.kv = { ok: false, error: e.message.slice(0, 100) };
     allOk = false;
@@ -109,10 +115,17 @@ export async function runHealthTick(env) {
     if (wasDown) {
       await sendTelegram(env, "✅ WhaleSignal: all systems recovered.");
     }
-    try { await env.KV.put("health_fails", "0", { expirationTtl: 3600 }); } catch {}
-    try {
-      await env.KV.put("health_status", JSON.stringify({ ok: true, at: now, results }), { expirationTtl: 600 });
-    } catch {}
+    // Only write when state changes (saves ~280 writes/day)
+    if (fails !== 0) {
+      try { await env.KV.put("health_fails", "0", { expirationTtl: 3600 }); } catch {}
+    }
+    const prevStatus = await env.KV.get("health_status").catch(() => null);
+    const wasOk = prevStatus ? JSON.parse(prevStatus).ok : null;
+    if (wasOk !== true) {
+      try {
+        await env.KV.put("health_status", JSON.stringify({ ok: true, at: now }), { expirationTtl: 600 });
+      } catch {}
+    }
   } else {
     fails++;
     try { await env.KV.put("health_fails", String(fails), { expirationTtl: 3600 }); } catch {}

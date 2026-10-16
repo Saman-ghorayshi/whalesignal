@@ -1234,16 +1234,26 @@ async function postPublicAlert(env, whaleId, chartUrl = null) {
   // BT3+BT4: plain text (parse_mode omitted), truncated to Telegram's limit.
   // Whale-intelligence: send the price chart as a photo when available;
   // fall back to a text message if the photo send fails.
+  // Enterprise: if Telegram send fails, RELEASE the delivered claim so the
+  // queue retry can re-attempt. At-least-once > at-most-once for alerts.
   const caption = truncateTelegram(text, 1024); // Telegram photo caption limit
-  if (chartUrl) {
-    try {
-      await tgSendPhoto(env.BOT_TOKEN, chatId, chartUrl, caption);
-    } catch (e) {
-      console.warn(`[bot] sendPhoto failed, falling back to text:`, e.message);
+  try {
+    if (chartUrl) {
+      try {
+        await tgSendPhoto(env.BOT_TOKEN, chatId, chartUrl, caption);
+      } catch (e) {
+        console.warn(`[bot] sendPhoto failed, falling back to text:`, e.message);
+        await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
+      }
+    } else {
       await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
     }
-  } else {
-    await tgSendMessage(env.BOT_TOKEN, chatId, truncateTelegram(text));
+  } catch (e) {
+    // Telegram is down — release claim so retry can re-deliver
+    console.error(`[bot] Telegram send failed for whale ${whaleId}, releasing claim:`, e.message);
+    await env.DB.prepare("DELETE FROM delivered WHERE whale_id = ? AND chat_id = ?")
+      .bind(whaleId, chatId).run().catch(() => {});
+    throw e; // → m.retry()
   }
 
   // Content studio: cache the brief in KV so /content/queue works even

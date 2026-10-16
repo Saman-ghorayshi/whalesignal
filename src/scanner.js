@@ -456,6 +456,17 @@ async function persistState(env, chain, lastBlock, txOffset = 0, whalesDelta = 0
 }
 
 /** Increment the consecutive-errors counter on a failure. */
+/**
+ * Detect D1 quota/limit errors (5M row reads/day, etc.).
+ * When D1 is locked, all D1 ops fail — don't waste budget retrying chains.
+ */
+export function isD1LockedError(e) {
+  const msg = String(e?.message || e || "").toLowerCase();
+  return msg.includes("limit") || msg.includes("quota") ||
+         msg.includes("too many") || msg.includes("d1_error") ||
+         msg.includes("exceeded");
+}
+
 async function bumpErrors(env, chain) {
   await env.DB.prepare("UPDATE scanner_state SET errors = errors + 1 WHERE chain = ?")
     .bind(chain).run();
