@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WhaleSignal Monitor</title>
+<style>
+body{font-family:system-ui;background:#0a0e14;color:#e6e6e6;margin:0;padding:16px}
+h1{font-size:20px;margin:0 0 16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.card{background:#11161d;border:1px solid #1e2836;border-radius:8px;padding:12px}
+.card h3{margin:0 0 8px;font-size:14px;color:#8b9bb4}
+.ok{color:#3fb950}.warn{color:#d29922}.err{color:#f85149}
+.row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}
+button{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:8px 16px;margin:0 0 16px;cursor:pointer}
+#updated{color:#8b9bb4;font-size:12px}
+</style></head><body>
+<h1>🐋 WhaleSignal Monitor</h1>
+<button onclick="load()">Refresh</button> <span id="updated"></span>
+<div class="grid">
+<div class="card"><h3>Chain Health</h3><div id="health">…</div></div>
+<div class="card"><h3>System Overview</h3><div id="overview">…</div></div>
+<div class="card"><h3>API Status</h3><div id="status">…</div></div>
+<div class="card"><h3>Top Movers (24h)</h3><div id="movers">…</div></div>
+</div>
+<script>
+const API="https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev";
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+async function load(){
+  document.getElementById('updated').textContent='loading…';
+  try{
+    const [h,o,s,m]=await Promise.all([
+      fetch(API+"/intel?view=health").then(r=>r.json()),
+      fetch(API+"/intel?view=overview").then(r=>r.json()),
+      fetch(API+"/intel?view=status").then(r=>r.json()),
+      fetch(API+"/intel?view=movers").then(r=>r.json()),
+    ]);
+    document.getElementById('health').innerHTML=(h.data||[]).map(c=>
+      `<div class="row"><span>${esc(c.chain)}</span><span class="${c.status==='healthy'?'ok':c.status==='stale'?'warn':'err'}">${esc(c.status)}${c.errors?` (${c.errors}e)`:''}</span></div>`).join('');
+    const ov=o.data||{};
+    document.getElementById('overview').innerHTML=
+      `<div class="row"><span>Chains</span><span>${(ov.chains||[]).length}</span></div>`+
+      `<div class="row"><span>Stablecoin net</span><span>$${((ov.stablecoin_supply||{}).net_supply_change||0).toLocaleString()}</span></div>`;
+    document.getElementById('status').innerHTML=(s.data||[]).map(a=>
+      `<div class="row"><span>${esc(a.name)}</span><span class="${a.status==='ok'?'ok':'warn'}">${esc(a.status)}</span></div>`).join('');
+    document.getElementById('movers').innerHTML=(m.data||[]).slice(0,5).map(w=>
+      `<div class="row"><span>${esc(w.chain)} ${esc(w.symbol)}</span><span>$${Math.round(w.usd_value/1e6)}M</span></div>`).join('');
+    document.getElementById('updated').textContent='updated '+new Date().toLocaleTimeString();
+  }catch(e){document.getElementById('updated').textContent='error: '+e.message}
+}
+load();setInterval(load,60000);
+</script></body></html>
