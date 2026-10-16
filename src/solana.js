@@ -77,7 +77,8 @@ export function parseSolanaTx(tx, solPrice) {
 
   const addrOf = (i) => {
     const k = keys[i];
-    return (typeof k === "string" ? k : k?.pubkey || "").toLowerCase();
+    // Solana addresses are base58 case-SENSITIVE — never lowercase
+    return typeof k === "string" ? k : k?.pubkey || "";
   };
 
   // Native SOL: balance deltas
@@ -109,12 +110,12 @@ export function parseSolanaTx(tx, solPrice) {
   const postT = meta.postTokenBalances || [];
   const byAcct = new Map();
   for (const b of preT) {
-    if (b.mint?.toLowerCase() === USDC_MINT.toLowerCase()) {
+    if (b.mint === USDC_MINT) {
       byAcct.set(b.accountIndex, { pre: Number(b.uiTokenAmount?.uiAmount || 0), owner: b.owner });
     }
   }
   for (const b of postT) {
-    if (b.mint?.toLowerCase() === USDC_MINT.toLowerCase()) {
+    if (b.mint === USDC_MINT) {
       const e = byAcct.get(b.accountIndex) || { pre: 0 };
       e.post = Number(b.uiTokenAmount?.uiAmount || 0);
       byAcct.set(b.accountIndex, e);
@@ -132,8 +133,8 @@ export function parseSolanaTx(tx, solPrice) {
         symbol: "USDC",
         amount: Math.abs(delta),
         usd_value: Math.abs(delta),
-        from_address: (e.owner || "").toLowerCase(),
-        to_address: toOwner.toLowerCase(),
+        from_address: e.owner || "",
+        to_address: toOwner,
       });
     }
   }

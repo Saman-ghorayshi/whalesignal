@@ -29,7 +29,9 @@ const NEWS_CATALYST_KEYWORDS = [
  * @returns {object} forensic analysis and deception metrics
  */
 export function analyzeWalletPatterns(txs, targetAddress, market = null, news = null) {
-  const target = String(targetAddress || "").toLowerCase();
+  // Addresses are stored consistently per chain (EVM lowercase, Solana case-preserved).
+  // Do NOT lowercase here — breaks Solana base58.
+  const target = String(targetAddress || "");
   const allTxs = Array.isArray(txs) ? txs : [];
 
   let totalInflowUSD = 0;
@@ -46,8 +48,8 @@ export function analyzeWalletPatterns(txs, targetAddress, market = null, news = 
 
   // 1. Process flows and counterparties
   for (const t of allTxs) {
-    const from = String(t.from_address || "").toLowerCase();
-    const to = String(t.to_address || "").toLowerCase();
+    const from = String(t.from_address || "");
+    const to = String(t.to_address || "");
     const usd = Number(t.usd_value) || 0;
     const isSender = from === target;
     const otherAddr = isSender ? to : from;

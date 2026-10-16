@@ -495,7 +495,11 @@ async function insertWhaleAndQueue(env, wh, walletMap, walletInfo, recentSameWal
         interesting_score, price_at_detect, is_self_transfer, contract_address)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
-    wh.chain, wh.tx_hash, wh.from_address, wh.to_address,
+    wh.chain, wh.tx_hash,
+    // Normalize EVM addresses to lowercase (checksum format varies by RPC).
+    // Solana/Tron are case-sensitive — never touch them.
+    ["eth", "bsc", "base"].includes(wh.chain) ? String(wh.from_address || "").toLowerCase() : wh.from_address,
+    ["eth", "bsc", "base"].includes(wh.chain) ? String(wh.to_address || "").toLowerCase() : wh.to_address,
     wh.amount, wh.symbol, wh.usd_value, wh.tx_type,
     wh.block_number ?? null, wh.block_time ?? null,
     Date.now(),
