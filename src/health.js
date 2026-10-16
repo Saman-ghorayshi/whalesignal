@@ -113,7 +113,7 @@ export async function runHealthTick(env) {
 
   if (allOk) {
     if (wasDown) {
-      await sendTelegram(env, "✅ WhaleSignal: all systems recovered.");
+      await sendTelegram(env, "📡 SONAR: all systems recovered.");
     }
     // Only write when state changes (saves ~280 writes/day)
     if (fails !== 0) {
@@ -133,7 +133,7 @@ export async function runHealthTick(env) {
     console.warn(`[health] failures (${fails}/${FAIL_THRESHOLD}): ${bad.join(", ")}`);
     if (fails === FAIL_THRESHOLD) {
       await sendTelegram(env,
-        `🚨 WhaleSignal health alert: ${bad.join(", ")} failing (${fails}x). Check workers.`);
+        `🚨 SONAR health alert: ${bad.join(", ")} failing (${fails}x). Check workers.`);
     }
     try {
       await env.KV.put("health_status", JSON.stringify({ ok: false, at: now, results }), { expirationTtl: 600 });
