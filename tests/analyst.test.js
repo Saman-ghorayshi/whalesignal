@@ -302,8 +302,10 @@ function makeFakeEnv({ whale, wallets = [], market = null, failSend = false, key
   }
   function run(sql, args) {
     if (sql.includes("INSERT INTO analysis")) {
-      const [whale_id, headline, interpretation, signal, confidence, related_factor, created_at, ai_provider, ai_model] = args;
-      db.analysis.set(whale_id, { whale_id, headline, interpretation, signal, confidence, related_factor, created_at, ai_provider, ai_model });
+      const [whale_id, headline, interpretation, signal, confidence, related_factor, created_at, ai_provider, ai_model,
+             motive, motive_confidence, catalyst_title, catalyst_url, ta_summary, causal_chain, regime] = args;
+      db.analysis.set(whale_id, { whale_id, headline, interpretation, signal, confidence, related_factor, created_at,
+        ai_provider, ai_model, motive, motive_confidence, catalyst_title, catalyst_url, ta_summary, causal_chain, regime });
       return { meta: { changes: 1 } };
     }
     if (sql.includes("SET analysis_status = 'analyzed'")) { db.whales.get(args[0]).analysis_status = "analyzed"; return { meta: { changes: 1 } }; }
