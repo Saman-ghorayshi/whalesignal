@@ -451,16 +451,18 @@ test("analyzeOne: cached analysis skips the LLM entirely (D3)", async () => {
 test("analyzeOne: interesting_score >= 90 escalates past templates to the LLM", async () => {
   const { analyzeOne } = await import("../src/analyst.js");
   // exchange_inflow + fear would match the bearish template — but score 95
-  // escalates to the LLM. With no AI keys the LLM fails, proving the
-  // template was skipped.
+  // escalates to the LLM. With no AI keys the rule-based fallback kicks in
+  // (enterprise: never go dark).
   const { env, db } = makeFakeEnv({
     whale: { ...BASE_WHALE, interesting_score: 95 },
     market: FEAR_MARKET,
   });
   const r = await analyzeOne(env, { whale_id: 1 });
-  assert.equal(r.ok, false, "no AI keys → template was skipped, LLM failed");
-  assert.match(r.error, /No AI provider available/);
-  assert.equal(db.whales.get(1).analysis_status, "failed");
+  assert.equal(r.ok, true, "no AI keys → rule-based fallback succeeds");
+  assert.equal(db.whales.get(1).analysis_status, "done");
+  // Fallback is marked honestly via ai_provider
+  const analysis = db.analysis.get(1);
+  assert.equal(analysis?.ai_provider, "rule-based");
 });
 
 test("analyzeOne: exchange_internal is exempt from LLM escalation", async () => {
