@@ -186,9 +186,15 @@ export async function scanSolana(env, market, budget = null) {
     processed++;
 
     const fresh = [];
+    let foundLast = !w.last_sig; // first run: no last_sig
     for (const s of sigs) {
-      if (s.signature === w.last_sig) break;
+      if (s.signature === w.last_sig) { foundLast = true; break; }
       fresh.push(s);
+    }
+    // Pagination gap: more than 10 new txs — the oldest ones are missed.
+    // Log it; don't silently drop. (Very active wallets only.)
+    if (!foundLast && w.last_sig && sigs.length >= 10) {
+      console.warn(`[solana] ${w.address.slice(0, 8)}: >10 new txs, some may be missed (last_sig not in batch)`);
     }
     const newest = sigs[0]?.signature || w.last_sig;
     try {
