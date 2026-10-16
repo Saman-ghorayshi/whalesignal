@@ -868,12 +868,8 @@ export async function fetchBlock(chain, blockNum, env, opts = {}) {
   if (chain === "base") {
     const hex = "0x" + Number(blockNum).toString(16);
     if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
-    const r = await fetch("https://mainnet.base.org", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [hex, true] }),
-    });
-    const j = await r.json();
+    const j = await fetchWithFailover(BASE_RPCS,
+      { jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [hex, true] });
     const block = j.result;
     if (!block) throw new Error(`base block ${blockNum} not found`);
     block.txComplete = true;
@@ -883,12 +879,8 @@ export async function fetchBlock(chain, blockNum, env, opts = {}) {
   if (chain === "bsc") {
     const hex = "0x" + Number(blockNum).toString(16);
     if (!takeSubrequest(budget)) throw new Error("subrequest budget exhausted");
-    const r = await fetch("https://bsc-dataseed.binance.org", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [hex, true] }),
-    });
-    const j = await r.json();
+    const j = await fetchWithFailover(BSC_RPCS,
+      { jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [hex, true] });
     const block = j.result;
     if (!block) throw new Error(`bsc block ${blockNum} not found`);
     block.txComplete = true;
@@ -920,18 +912,13 @@ export async function fetchERC20Logs(blockNum, env, budget = null, chain = "eth"
     if (!takeSubrequest(budget)) break; // out of budget — return what we have
     let logsJson;
     if (chain === "bsc" || chain === "base") {
-      // Public RPC — eth_getLogs
+      // Public RPC — eth_getLogs with failover (single RPC was a SPOF)
       try {
-        const rpcUrl = chain === "bsc" ? "https://bsc-dataseed.binance.org" : "https://mainnet.base.org";
-        const r = await fetch(rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0", id: 1, method: "eth_getLogs",
-            params: [{ fromBlock, toBlock, address: contract, topics: [TRANSFER_TOPIC] }],
-          }),
+        const rpcs = chain === "bsc" ? BSC_RPCS : BASE_RPCS;
+        logsJson = await fetchWithFailover(rpcs, {
+          jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+          params: [{ fromBlock, toBlock, address: contract, topics: [TRANSFER_TOPIC] }],
         });
-        logsJson = await r.json();
       } catch (e) {
         console.warn(`erc20 logs fetch failed for ${contract} on ${chain}:`, e.message);
         continue;
@@ -973,20 +960,25 @@ export async function refreshMarketCache(env) {
   let ethChange = prevCache?.eth?.change_24h ?? null;
   let bnbPrice = prevCache?.bnb?.price ?? null;
   let bnbChange = prevCache?.bnb?.change_24h ?? null;
+  let solPrice = prevCache?.sol?.price ?? null;
+  let solChange = prevCache?.sol?.change_24h ?? null;
 
   // 1. Primary: Coinbase spot (reliable from Cloudflare datacenter IPs, no rate limits)
   try {
-    const [btcRes, ethRes, bnbRes] = await Promise.all([
+    const [btcRes, ethRes, bnbRes, solRes] = await Promise.all([
       fetchJSON("https://api.coinbase.com/v2/prices/BTC-USD/spot", { timeoutMs: 4000 }),
       fetchJSON("https://api.coinbase.com/v2/prices/ETH-USD/spot", { timeoutMs: 4000 }),
       fetchJSON("https://api.coinbase.com/v2/prices/BNB-USD/spot", { timeoutMs: 4000 }),
+      fetchJSON("https://api.coinbase.com/v2/prices/SOL-USD/spot", { timeoutMs: 4000 }),
     ]);
     const bp = parseFloat(btcRes?.data?.amount);
     const ep = parseFloat(ethRes?.data?.amount);
     const np = parseFloat(bnbRes?.data?.amount);
+    const sp = parseFloat(solRes?.data?.amount);
     if (Number.isFinite(bp) && bp > 0) btcPrice = bp;
     if (Number.isFinite(ep) && ep > 0) ethPrice = ep;
     if (Number.isFinite(np) && np > 0) bnbPrice = np;
+    if (Number.isFinite(sp) && sp > 0) solPrice = sp;
   } catch (e) {
     console.warn("[scanner] coinbase spot fetch failed:", e.message);
   }
@@ -1059,6 +1051,7 @@ export async function refreshMarketCache(env) {
     btc: { price: btcPrice, change_24h: btcChange },
     eth: { price: ethPrice, change_24h: ethChange },
     bnb: { price: bnbPrice, change_24h: bnbChange },
+    sol: { price: solPrice, change_24h: solChange },
     usdt: { price: 1, change_24h: 0 },
     usdc: { price: 1, change_24h: 0 },
     wbtc: { price: btcPrice, change_24h: btcChange },

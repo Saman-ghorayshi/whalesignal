@@ -302,6 +302,14 @@ export function buildPrompt(whale, market, history, news, patterns = null, label
   const ethPrice = m.eth?.price
     ? `$${m.eth.price.toLocaleString()} (${m.eth.change_24h?.toFixed(1) ?? 0}%)`
     : "unknown";
+  // Chain-specific prices — the old code only showed BTC/ETH, leaving BSC/Base/Solana
+  // whales without their native asset context.
+  const bnbPrice = m.bnb?.price
+    ? `$${m.bnb.price.toLocaleString()} (${m.bnb.change_24h?.toFixed(1) ?? 0}%)`
+    : "unknown";
+  const solPrice = m.sol?.price
+    ? `$${m.sol.price.toLocaleString()} (${m.sol.change_24h?.toFixed(1) ?? 0}%)`
+    : "unknown";
 
   const subjectAddr = subject || subjectAddress(whale);
   const hist = (history || []).slice(0, 5).map((h, i) =>
@@ -398,6 +406,8 @@ STRUCTURED FACTS:
 - Market sentiment: ${regime === "fear" ? "Fear" : regime === "greed" ? "Greed" : regime === "neutral" ? "Neutral" : "unknown"} (${fgValue})
 - BTC price: ${btcPrice}
 - ETH price: ${ethPrice}
+- BNB price: ${bnbPrice}
+- SOL price: ${solPrice}
 - Exchange involvement: ${whale.tx_type === "wallet_to_wallet" ? "no" : "yes"}
 - Prior similar events in wallet history: ${history?.length || 0} transactions
 ${forensicBlock}
