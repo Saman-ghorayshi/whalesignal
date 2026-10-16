@@ -1218,8 +1218,9 @@ export function extractCandidatesTRON(events) {
     if (raw == null) continue;
     const amount = Number(raw) / 10 ** TRON_USDT_DECIMALS;
     if (!Number.isFinite(amount) || amount <= 0) continue;
-    const from = String(r.from || "").toLowerCase();
-    const to = String(r.to || "").toLowerCase();
+    // TRON addresses are base58check case-SENSITIVE — never lowercase
+    const from = String(r.from || "");
+    const to = String(r.to || "");
     if (!from || !to) continue;
     out.push({
       chain: "tron",
