@@ -13,6 +13,7 @@
 //   PUBLIC_CHANNEL — string, e.g. "@whalesignalnews"
 
 import { okJson, errJson, rateLimited, tgSendMessage, tgSendPhoto, fmtUSD, shortAddr, truncateTelegram, sanitizeAIText, secretsEqual, checkRateLimit } from "./worker-utils.js";
+import * as intel from "./intel.js";
 import { analyzeWalletPatterns, buildGraphPayload } from "./graph-analyst.js";
 import { buildContentBrief } from "./content.js";
 
@@ -355,6 +356,44 @@ export async function fetchHandler(request, env, ctx) {
       try { market = JSON.parse(await env.KV.get("market_cache") || "null"); } catch {}
       const payload = renderLatestJSON(rows, market);
       return jsonResponse(payload);
+    } catch (e) {
+      return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
+    }
+  }
+
+  // ─── public GET /intel — 20 whale intelligence features ────
+  // ?view=flows|health|movers|supply|patterns|accuracy|heatmap|dormant|concentration|chains|velocity|news|stable|weekday|balances|gas|backtest|correlation|overview|status
+  if (request.method === "GET" && path === "/intel") {
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const rl = await checkRateLimit(env, `http:/intel:${ip}`, 30, 60);
+    if (rl.limited) return rateLimited();
+    try {
+      const view = url.searchParams.get("view") || "overview";
+      let data;
+      switch (view) {
+        case "flows": data = await intel.exchangeFlows(env); break;
+        case "health": data = await intel.chainHealth(env); break;
+        case "movers": data = await intel.topMovers(env); break;
+        case "supply": data = await intel.stablecoinSupply(env); break;
+        case "patterns": data = await intel.whalePatterns(env); break;
+        case "accuracy": data = await intel.signalAccuracy(env); break;
+        case "heatmap": data = await intel.whaleHeatmap(env); break;
+        case "dormant": data = await intel.dormantWhales(env); break;
+        case "concentration": data = await intel.whaleConcentration(env); break;
+        case "chains": data = await intel.chainComparison(env); break;
+        case "velocity": data = await intel.alertVelocity(env); break;
+        case "news": data = await intel.newsWhaleCorrelation(env); break;
+        case "stable": data = await intel.stablecoinVelocity(env); break;
+        case "weekday": data = await intel.weekdayPatterns(env); break;
+        case "balances": data = await intel.exchangeBalances(env); break;
+        case "gas": data = await intel.gasTracker(env); break;
+        case "backtest": data = await intel.backtestSummary(env); break;
+        case "correlation": data = await intel.whalePriceCorrelation(env); break;
+        case "status": data = await intel.apiStatus(env); break;
+        case "overview":
+        default: data = await intel.systemOverview(env); break;
+      }
+      return jsonResponse({ ok: true, view, data });
     } catch (e) {
       return jsonResponse({ ok: false, reason: "db_error", error: e.message }, 500);
     }
