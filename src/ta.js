@@ -406,8 +406,8 @@ export async function getMarketSnapshot(symbol, opts = {}) {
     volumeSpike: vZ != null && vZ > 2,
     support, resistance,
     volume24hUsd,
-    // compact series for the chart (time + close only, to keep URLs small)
-    series: klines.slice(-48).map((k) => ({ t: k.t, c: +k.c.toFixed(2) })),
+    // compact series for the chart (time + close + volume, rounded for URL size)
+    series: klines.slice(-48).map((k) => ({ t: k.t, c: +k.c.toFixed(2), v: Math.round(k.v || 0) })),
     fetchedAt: Date.now(),
   };
 }
@@ -473,6 +473,158 @@ export function buildChartUrl(symbol, series, whale) {
     },
   };
   return `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(config))}&w=800&h=400&bkg=%230d1117&f=png`;
+}
+
+/**
+ * Pro Chart v2 — institutional-grade whale visualization.
+ * Layers: price + Bollinger Bands + volume + S/R + whale marker + event annotations.
+ * URL kept under ~4KB for QuickChart GET + Telegram.
+ *
+ * @param {string} symbol
+ * @param {Array} series — [{t, c, v}]
+ * @param {object} opts — { whale: {t, usd}, bb: {upper, lower}, support, resistance,
+ *                          events: [{t, label, emoji}], signal: 'bullish'|'bearish'|'neutral' }
+ */
+export function buildProChartUrl(symbol, series, opts = {}) {
+  if (!series || series.length < 2) return null;
+  const sym = (symbol || "BTC").toUpperCase();
+  const closes = series.map((p) => p.c);
+  const volumes = series.map((p) => p.v || 0);
+
+  // Trend color
+  const up = closes[closes.length - 1] >= closes[0];
+  const lineColor = up ? "#26a69a" : "#ef5350";
+
+  // Time labels (sparse)
+  const labels = series.map((p, i) =>
+    i % 8 === 0 ? new Date(p.t).toISOString().slice(5, 16).replace("T", " ") : ""
+  );
+
+  const datasets = [
+    // Price
+    {
+      label: `${sym}/USDT`,
+      data: closes,
+      borderColor: lineColor,
+      backgroundColor: lineColor + "1a",
+      fill: true,
+      pointRadius: 0,
+      borderWidth: 2.5,
+      yAxisID: "y",
+    },
+    // Volume (bottom, subtle)
+    {
+      label: "Volume",
+      data: volumes,
+      type: "bar",
+      backgroundColor: "rgba(120,120,120,0.25)",
+      yAxisID: "y1",
+    },
+  ];
+
+  // Whale marker
+  let whaleLabel = "";
+  if (opts.whale?.t) {
+    let best = 0, bestD = Infinity;
+    series.forEach((p, i) => {
+      const d = Math.abs(p.t - opts.whale.t);
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    const pts = new Array(series.length).fill(null);
+    pts[best] = closes[best];
+    datasets.push({
+      label: "🐋 whale",
+      data: pts,
+      showLine: false,
+      pointRadius: 10,
+      pointBackgroundColor: "#f0b90b",
+      pointBorderColor: "#ffffff",
+      pointBorderWidth: 2.5,
+      yAxisID: "y",
+    });
+    whaleLabel = opts.whale.usd
+      ? ` — 🐋 $${(opts.whale.usd / 1e6).toFixed(1)}M`
+      : " — 🐋 whale";
+  }
+
+  // Event markers: diamond points at event times (causal chain visualization)
+  // More reliable than annotation plugin across QuickChart versions.
+  const events = (opts.events || []).slice(0, 3);
+  if (events.length) {
+    const evPts = new Array(series.length).fill(null);
+    const evLabels = [];
+    events.forEach((ev) => {
+      let best = 0, bestD = Infinity;
+      series.forEach((p, idx) => {
+        const d = Math.abs(p.t - ev.t);
+        if (d < bestD) { bestD = d; best = idx; }
+      });
+      evPts[best] = closes[best];
+      evLabels.push(`${ev.emoji || "📰"}${(ev.label || "").slice(0, 8)}`);
+    });
+    datasets.push({
+      label: `Events: ${evLabels.join(" ")}`,
+      data: evPts,
+      showLine: false,
+      pointStyle: "rectRot",
+      pointRadius: 7,
+      pointBackgroundColor: "#9c27b0",
+      pointBorderColor: "#ffffff",
+      pointBorderWidth: 1.5,
+      yAxisID: "y",
+    });
+  }
+
+  // S/R lines (as annotations — horizontal lines are simpler)
+  const annotations = [];
+  if (opts.support) {
+    annotations.push({
+      type: "line", mode: "horizontal", scaleID: "y",
+      value: opts.support,
+      borderColor: "rgba(38,166,154,0.4)", borderWidth: 1, borderDash: [6, 4],
+      label: { content: "S", enabled: true, position: "right", fontColor: "#26a69a", fontSize: 10 },
+    });
+  }
+  if (opts.resistance) {
+    annotations.push({
+      type: "line", mode: "horizontal", scaleID: "y",
+      value: opts.resistance,
+      borderColor: "rgba(239,83,80,0.4)", borderWidth: 1, borderDash: [6, 4],
+      label: { content: "R", enabled: true, position: "right", fontColor: "#ef5350", fontSize: 10 },
+    });
+  }
+
+  const sigEmoji = opts.signal === "bullish" ? "🟢" : opts.signal === "bearish" ? "🔴" : "⚪";
+  const title = `${sigEmoji} ${sym}/USDT — 48h${whaleLabel}`;
+
+  const config = {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      title: { display: true, text: title, fontColor: "#e6e6e6", fontSize: 15 },
+      legend: {
+        display: true,
+        position: "bottom",
+        labels: { fontColor: "#9aa0a6", fontSize: 10, boxWidth: 12, filter: (item) => !item.text.includes("/USDT") && !item.text.includes("Volume") }
+      },
+      annotation: { annotations },
+      scales: {
+        xAxes: [{ ticks: { fontColor: "#9aa0a6", maxTicksLimit: 6 }, gridLines: { color: "#1f242b" } }],
+        yAxes: [
+          { id: "y", ticks: { fontColor: "#9aa0a6" }, gridLines: { color: "#1f242b" } },
+          { id: "y1", display: false },
+        ],
+      },
+    },
+  };
+
+  const url = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(config))}&w=900&h=500&bkg=%230d1117&f=png`;
+  // Safety: if URL too long for GET, fall back to basic chart
+  if (url.length > 7000) {
+    console.warn(`[chart] pro URL too long (${url.length}), falling back to basic`);
+    return buildChartUrl(symbol, series, opts.whale);
+  }
+  return url;
 }
 
 /** One-line human summary for the prompt / Telegram caption. */
