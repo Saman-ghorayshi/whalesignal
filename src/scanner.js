@@ -683,6 +683,45 @@ async function recentWhalesFromWallet(env, address, chain) {
  * Throws when no provider yields a sane height — callers treat that as a
  * failed scan (bumpErrors) instead of silently reporting success with NaN.
  */
+/**
+ * Fetch with failover across multiple free RPC endpoints.
+ * Tries each in order, returns first success. Keeps us free-tier friendly
+ * by not hammering a single endpoint.
+ */
+async function fetchWithFailover(rpcs, payload, timeoutMs = 8000) {
+  let lastErr = null;
+  for (const rpc of rpcs) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      const r = await fetch(rpc, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      const j = await r.json();
+      if (j?.result) return j;
+      lastErr = new Error(`empty result from ${rpc}`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("all RPCs failed");
+}
+
+const BASE_RPCS = [
+  "https://mainnet.base.org",
+  "https://base.publicnode.com",
+  "https://1rpc.io/base",
+];
+const BSC_RPCS = [
+  "https://bsc-dataseed.binance.org",
+  "https://bsc-dataseed1.defibit.io",
+  "https://bsc.publicnode.com",
+];
+
 export async function fetchLatestBlockHeight(env, chain) {
   if (chain === "btc") {
     // 1. Try blockstream.info tip (plain-text body, timeout-guarded)
@@ -720,13 +759,9 @@ export async function fetchLatestBlockHeight(env, chain) {
     return h;
   }
   if (chain === "base") {
-    // Etherscan V2 free doesn't cover Base — use public Base RPC
-    const r = await fetch("https://mainnet.base.org", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
-    });
-    const j = await r.json();
+    // Etherscan V2 free doesn't cover Base — use public Base RPC with failover
+    const j = await fetchWithFailover(BASE_RPCS,
+      { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] });
     const h = parseInt(j?.result, 16);
     if (!Number.isFinite(h) || h <= 0) {
       throw new Error(`base blockNumber returned garbage: ${String(j?.result).slice(0, 120)}`);
@@ -734,13 +769,9 @@ export async function fetchLatestBlockHeight(env, chain) {
     return h;
   }
   if (chain === "bsc") {
-    // Etherscan V2 free doesn't cover BSC — use public BSC RPC
-    const r = await fetch("https://bsc-dataseed.binance.org", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
-    });
-    const j = await r.json();
+    // Etherscan V2 free doesn't cover BSC — use public BSC RPC with failover
+    const j = await fetchWithFailover(BSC_RPCS,
+      { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] });
     const h = parseInt(j?.result, 16);
     if (!Number.isFinite(h) || h <= 0) {
       throw new Error(`bsc blockNumber returned garbage: ${String(j?.result).slice(0, 120)}`);
