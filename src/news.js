@@ -305,7 +305,16 @@ async function fetchSource(src, meta = {}) {
       return { items: [], notModified: true, etag: meta.etag, lastModified: meta.last_modified };
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Size guard: reject feeds > 2MB (prevents memory exhaustion from
+    // compromised/hijacked feeds)
+    const cl = res.headers.get("content-length");
+    if (cl && parseInt(cl, 10) > 2 * 1024 * 1024) {
+      throw new Error(`feed too large: ${cl} bytes`);
+    }
     const xml = await res.text();
+    if (xml.length > 2 * 1024 * 1024) {
+      throw new Error(`feed too large: ${xml.length} chars`);
+    }
     return {
       items: parseRss(xml).map((it) => ({ ...it, source: src.name, weight: src.weight })),
       notModified: false,

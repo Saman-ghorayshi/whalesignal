@@ -433,6 +433,51 @@ CRITICAL FORMAT RULES (the output is parsed by code, not read by a human):
  * Parse the LLM response into a structured analysis. Pure. Failures return null.
  * Gemini returns text: try to extract a JSON object even if wrapped in ```json fences.
  */
+/**
+ * Rule-based fallback when all AI providers fail.
+ * Uses motive classifier + TA to generate a basic (lower-confidence) analysis.
+ * Never returns null for valid inputs — the system stays up.
+ */
+export function buildFallbackAnalysis(whale, motivePre, taBlock, catalystPick) {
+  if (!whale) return null;
+  const motive = motivePre?.motive || "unknown";
+  const mConf = motivePre?.confidence || 0.5;
+
+  // Map motive to signal
+  const bullishMotives = new Set(["accumulation", "buy_the_dip", "dry_powder", "cold_storage_in"]);
+  const bearishMotives = new Set(["distribution", "capitulation", "profit_taking", "exchange_inflow"]);
+  let signal = "neutral";
+  if (bullishMotives.has(motive)) signal = "bullish";
+  else if (bearishMotives.has(motive)) signal = "bearish";
+
+  // Confidence: capped at 0.6 for fallback (honest about limitations)
+  const confidence = Math.min(0.6, mConf * 0.8);
+
+  const sym = whale.symbol || "crypto";
+  const usd = whale.usd_value || 0;
+  const usdStr = usd >= 1e9 ? `$${(usd/1e9).toFixed(2)}B` : usd >= 1e6 ? `$${(usd/1e6).toFixed(1)}M` : `$${Math.round(usd/1000)}K`;
+
+  const headline = `${usdStr} ${sym} whale move: ${motive.replace(/_/g, " ")}`;
+  const interpretation = `A ${usdStr} ${sym} transfer was detected with motive classified as ${motive.replace(/_/g, " ")} ` +
+    `(confidence ${(mConf*100).toFixed(0)}%). ` +
+    (catalystPick ? `Possible catalyst: ${catalystPick.title}. ` : "") +
+    `AI analysis unavailable — this is a rule-based assessment. ` +
+    `Signal: ${signal} (confidence ${(confidence*100).toFixed(0)}%).`;
+
+  return {
+    signal,
+    confidence,
+    headline: headline.slice(0, 200),
+    interpretation: interpretation.slice(0, 800),
+    motive,
+    motive_confidence: mConf,
+    catalyst: catalystPick?.title || null,
+    catalyst_url: catalystPick?.url || null,
+    ta_summary: typeof taBlock === "string" ? taBlock.slice(0, 500) : null,
+    fallback: true,
+  };
+}
+
 export function parseAnalysis(text) {
   if (!text) return null;
   if (typeof text === "object") {
@@ -973,17 +1018,31 @@ export async function analyzeOne(env, msg) {
         sentiment: sentimentCache, chainBlock: chainPromptBlock(chain),
       });
       let result;
+      let usedFallback = false;
       try {
         result = await callAI(env, prompt);
       } catch (e) {
         if (e.code === "RATE_LIMITED") throw e; // → m.retry(); budget recovers
-        console.error(`[analyst:${whale_id}] analysis failed:`, e.message);
-        await markFailed(env, whale_id);
-        return { ok: false, error: e.message };
+        console.error(`[analyst:${whale_id}] AI failed, using rule-based fallback:`, e.message);
+        // Enterprise: never go dark. Rule-based fallback uses motive classifier
+        // + TA + signal logic. Lower confidence, but better than silence.
+        const fallback = buildFallbackAnalysis(whale, motivePre, taSummary, catalystPick);
+        if (fallback) {
+          parsed = fallback;
+          usedFallback = true;
+          aiMeta = { provider: "rule-based", model: "fallback-v1" };
+          source = "fallback";
+        } else {
+          await markFailed(env, whale_id);
+          return { ok: false, error: e.message };
+        }
       }
-      aiMeta = { provider: result.provider, model: result.model };
-      source = result.provider;
-      parsed = parseAnalysis(result.text);
+      // If fallback was used, parsed is already set — skip AI parsing
+      if (!usedFallback) {
+        aiMeta = { provider: result.provider, model: result.model };
+        source = result.provider;
+        parsed = parseAnalysis(result.text);
+      }
       if (!parsed) {
         console.error(`[analyst:${whale_id}] AI response was not parseable JSON; provider=${result.provider} model=${result.model}; raw head: ${(result.text || "").slice(0, 300)}`);
         await markFailed(env, whale_id);

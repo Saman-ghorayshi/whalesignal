@@ -202,6 +202,10 @@ export function formatAlert(whale, analysis, market, opts = {}) {
     : "https://etherscan.io/tx/");
   const explorerLink = `${explorerBase}${whale.tx_hash}`;
 
+  // Transparency: mark rule-based fallback analyses so users know
+  // AI was unavailable. Honest about limitations.
+  const fallbackNote = analysis?.fallback ? "\n⚠️ Rule-based assessment (AI unavailable)" : "";
+
   // S2: headline/interpretation are LLM-generated (untrusted). Strip control
   // characters and cap length before they reach the public channel. The
   // channel sends plain text (no parse_mode), so there is no markup vector,
@@ -245,6 +249,7 @@ export function formatAlert(whale, analysis, market, opts = {}) {
     lines.push("🧠 AI Analysis:");
     if (headline) lines.push(headline);
     if (interpretation) lines.push(interpretation);
+    if (fallbackNote) lines.push(fallbackNote);
     lines.push("");
   } else {
     lines.push("🧠 AI Analysis: (pending)");
