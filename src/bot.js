@@ -401,6 +401,9 @@ export async function fetchHandler(request, env, ctx) {
 
   // ─── public GET /stats — aggregate statistics for the stats page ────
   if (request.method === "GET" && path === "/stats") {
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const rl = await checkRateLimit(env, `http:/stats:${ip}`, 30, 60);
+    if (rl.limited) return rateLimited();
     try {
       const stats = await statsRows(env);
       const bySymbol = await statsBySymbol(env);
@@ -417,6 +420,9 @@ export async function fetchHandler(request, env, ctx) {
 
   // ─── public GET /history — paginated, filterable whale history ──────
   if (request.method === "GET" && path === "/history") {
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const rl = await checkRateLimit(env, `http:/history:${ip}`, 30, 60);
+    if (rl.limited) return rateLimited();
     try {
       const opts = {
         page: url.searchParams.get("page") || 1,

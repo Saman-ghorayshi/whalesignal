@@ -1473,6 +1473,12 @@ export default {
         );
       } catch (e) {
         console.error(`[scanner:${chain}] scan failed:`, e.message);
+        // D1 lock: don't waste budget retrying, the whole DB is down
+        if (isD1LockedError(e)) {
+          console.error("[scanner] D1 locked — skipping remaining chains this tick");
+          results.push({ chain, error: "d1_locked" });
+          break;
+        }
         await bumpErrors(env, chain);
         results.push({ chain, error: e.message });
       }
