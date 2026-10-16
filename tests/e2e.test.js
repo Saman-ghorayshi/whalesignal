@@ -41,7 +41,7 @@ test("fullPipeline: scanner→analyst→bot posts one alert", async () => {
   assert.equal(r.telegramSent.length, 2, "exactly 2 Telegram messages sent");
   for (const t of r.telegramSent) {
     assert.equal(t.chat_id, "@whalesignal_test", "routed to the right channel");
-    assert.ok(t.text.includes("WHALE ALERT"), "alert body present");
+    assert.ok(t.text.includes("SONAR PING"), "alert body present");
     assert.ok(t.text.includes("Market:"), "market footer present");
   }
 

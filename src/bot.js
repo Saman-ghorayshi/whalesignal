@@ -247,7 +247,7 @@ export function formatAlert(whale, analysis, market, opts = {}) {
     lines.push(`🏦 STABLECOIN MINT — ${chain}`);
     lines.push(`${usd} fresh supply`);
   } else {
-    lines.push(`🐋 WHALE ALERT — ${chain}`);
+    lines.push(`📡 SONAR PING — ${chain}`);
     lines.push(`${usd} ${txTypeLabel}`);
   }
   lines.push("");
@@ -770,7 +770,7 @@ export async function fetchHandler(request, env, ctx) {
     try {
       if (cmd === "/ping") {
         replySoon(ctx, tgSendMessage(env.BOT_TOKEN, chatId,
-          `🐋 WhaleSignal is alive. Ping received from ${from} at ${new Date().toISOString()}.`));
+          `📡 SONAR is alive. Ping received from ${from} at ${new Date().toISOString()}.`));
         return okJson({ ok: true, handled: "ping" });
       }
       if (cmd === "/help" || cmd === "/start") {
@@ -801,7 +801,7 @@ export async function fetchHandler(request, env, ctx) {
         const payload = renderStatsJSON(stats, bySymbol, hourly, market);
         // BT3: plain text (no Markdown). The old reply used *bold* markers
         // while the channel deliberately sends no parse_mode — one convention.
-        const reply = `📊 WhaleSignal Intelligence Stats\n\n` +
+        const reply = `📡 SONAR Intelligence Stats\n\n` +
           `• 24h Volume: ${fmtUSD(payload.total_volume)}\n` +
           `• Whales Tracked: ${payload.count_24h}\n` +
           `• Largest Move: ${fmtUSD(payload.largest_transfer)}\n` +
@@ -843,7 +843,7 @@ export async function fetchHandler(request, env, ctx) {
         const p = analyzeWalletPatterns(txs || [], cleanAddr, market, news);
         const riskEmoji = p.deception_risk === "high" ? "🚨 HIGH RISK" : p.deception_risk === "medium" ? "⚠️ MEDIUM RISK" : "✅ LOW RISK";
         const reply = [
-          `🕵️ WhaleSignal Forensic Report`,
+          `🕵️ SONAR Forensic Report`,
           `• Address: ${cleanAddr}`,
           `• Risk Level: ${riskEmoji} (Score: ${p.deception_score}/100)`,
           `• Profile: ${p.behavioral_profile}`,
@@ -884,7 +884,7 @@ export async function fetchHandler(request, env, ctx) {
   return okJson({ ok: true, handled: "noop" });
 }
 
-const HELP_TEXT = `🐋 WhaleSignal — AI whale alerts
+const HELP_TEXT = `📡 SONAR — AI whale intelligence
 
 Commands:
   /ping          — health check
@@ -893,7 +893,8 @@ Commands:
   /stats         — 24h market intelligence & signal stats
   /check <addr>  — forensic wallet deception & money-flow report
 
-We post AI-enhanced whale alerts to our channel.
+We hear what the market can't see. AI-tracked whales across 6 chains.
+Find us: @sonarcrypto
 Got a suggestion? Reply to this message.`;
 
 // ─── /latest helper (shared by DM /latest and GET /latest route) ───────
@@ -929,7 +930,7 @@ export function renderLatestReply(rows, market = null) {
     const emoji = sig === "bullish" ? "🟢" : sig === "bearish" ? "🔴" : "⚪";
     return `${emoji} ${fmtUSD(w.usd_value)} ${w.symbol} ${w.chain} — ${w.headline || "(no headline)"}\n  ${shortAddr(w.from_address)} → ${shortAddr(w.to_address)}`;
   });
-  return ["🐋 Latest whale moves:", "", ...blocks].join("\n");
+  return ["📡 Latest sonar pings:", "", ...blocks].join("\n");
 }
 
 /** Build the public GET /latest JSON payload from the shared query. */

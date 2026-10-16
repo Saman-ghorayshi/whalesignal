@@ -111,7 +111,7 @@ test("DM /stats works: reuses GET-route helpers, plain text, real accuracy rate"
     assert.equal(captured.length, 1, "one Telegram send");
     const body = captured[0].body;
     assert.ok(!("parse_mode" in body), "no parse_mode key (plain text, BT3)");
-    assert.match(body.text, /WhaleSignal Intelligence Stats/);
+    assert.match(body.text, /SONAR Intelligence Stats/);
     assert.match(body.text, /Signal Accuracy: 67%/); // 4/6, via accuracy.rate not rate_pct
     assert.ok(!body.text.includes("*"), "no Markdown asterisks in plain-text reply");
     assert.ok(!body.text.includes("undefined"), "no undefined fields");
@@ -482,7 +482,7 @@ const MARKET = {
 test("formatAlert renders the canonical phase-1 alert block", () => {
   const out = formatAlert(WHALE, ANALYSIS, MARKET);
   // Header
-  assert.match(out, /🐋 WHALE ALERT — ETH/);
+  assert.match(out, /📡 SONAR PING — ETH/);
   assert.match(out, /\$16\.75M → exchange \(likely sell\)/);
   // body
   assert.match(out, /250 WBTC \(\$16\.75M\)/);
@@ -505,7 +505,7 @@ test("formatAlert uses mempool.space URL for BTC (blockchain.com/tx 404s)", () =
   const btcWhale = { ...WHALE, chain: "btc", symbol: "BTC" };
   const out = formatAlert(btcWhale, ANALYSIS, MARKET);
   assert.match(out, /mempool\.space\/tx\/0xabc123def4567890abcdef/);
-  assert.match(out, /🐋 WHALE ALERT — BTC/);
+  assert.match(out, /📡 SONAR PING — BTC/);
 });
 
 test("formatAlert sanitizes LLM text: strips control chars, caps length", () => {

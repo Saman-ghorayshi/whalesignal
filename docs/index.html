@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>WhaleSignal — AI Whale Intelligence</title>
+<title>SONAR — AI Whale Intelligence</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🐋</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,510;14..32,590&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -104,7 +104,7 @@ footer a:hover{color:var(--t2)}
 </style>
 </head>
 <body>
-<header><div class="hdr"><span class="logo"><i>🐋</i> WhaleSignal</span><div class="hdr-r"><span class="dot live" id="dot"></span><span class="t" id="dotTxt">live</span></div></div></header>
+<header><div class="hdr"><span class="logo"><i>🐋</i> SONAR</span><div class="hdr-r"><span class="dot live" id="dot"></span><span class="t" id="dotTxt">live</span></div></div></header>
 
 <div class="con">
 <section class="hero">
@@ -119,7 +119,7 @@ footer a:hover{color:var(--t2)}
 <div id="alerts"><div class="none"><span class="e">🐋</span><p>Waiting for the next whale move. Scanner is scanning BTC + ETH blocks every minute.</p></div></div>
 
 <footer>
-<div><a href="https://github.com/saman-ghorayshi/whalesignal" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/saman-ghorayshi/whalesignal/blob/master/PLAN.md" target="_blank">Plan</a> &nbsp;·&nbsp; <a href="https://github.com/saman-ghorayshi/whalesignal/blob/master/PLAN_trading_loop.md" target="_blank">Trading loop</a></div>
+<div><a href="https://github.com/saman-ghorayshi/sonar" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="stats.html">Stats</a> &nbsp;·&nbsp; <a href="history.html">History</a> &nbsp;·&nbsp; <a href="https://github.com/saman-ghorayshi/sonar/blob/master/PLAN.md" target="_blank">Plan</a> &nbsp;·&nbsp; <a href="https://github.com/saman-ghorayshi/sonar/blob/master/PLAN_trading_loop.md" target="_blank">Trading loop</a></div>
 <div class="ft-mono">builder: saman-ghorayshi &nbsp;|&nbsp; no price prediction &nbsp;|&nbsp; scanner + analyst + bot</div>
 </footer>
 </div>
@@ -128,11 +128,11 @@ footer a:hover{color:var(--t2)}
 const urlParams = new URLSearchParams(window.location.search);
 // BT13: the API base is configurable, never a hardcoded account URL (the old
 // one embedded a Cloudflare account id and rotted on redeploy). Order:
-// ?api= query param → window.WHALESIGNAL_API (set in an earlier <script> or
+// ?api= query param → window.SONAR_API (set in an earlier <script> or
 // your Pages build) → localhost dev default → placeholder that renders a
 // setup hint instead of silently failing.
 const PLACEHOLDER_API = 'https://whalesignal-bot.<your-account>.workers.dev';
-const BASE_API = urlParams.get('api') || window.WHALESIGNAL_API || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8787' : PLACEHOLDER_API);
+const BASE_API = urlParams.get('api') || window.SONAR_API || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8787' : PLACEHOLDER_API);
 const API = `${BASE_API}/latest?limit=6`;
 const POLL_S = 30;
 let tid;
@@ -193,7 +193,7 @@ async function poll(){
     document.getElementById('dot').className='dot stale';
     document.getElementById('dotTxt').textContent='offline';
     const hint = BASE_API.includes('<your-account>')
-      ? '<div class="err">API not configured. Add <b>?api=https://your-worker.workers.dev</b> to the URL, or set <b>window.WHALESIGNAL_API</b>.</div>'
+      ? '<div class="err">API not configured. Add <b>?api=https://your-worker.workers.dev</b> to the URL, or set <b>window.SONAR_API</b>.</div>'
       : '<div class="err">Could not reach scanner. The worker may be sleeping.</div>';
     document.getElementById('alerts').innerHTML=hint;
   }
