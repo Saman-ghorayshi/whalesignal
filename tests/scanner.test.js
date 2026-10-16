@@ -435,6 +435,26 @@ function makeFakeEnv(seed = {}) {
           if (sql.includes("UPDATE wallets SET") && sql.includes("WHERE address = ?")) {
             return { success: true, meta: { changes: 0 } }; // autoLabelWallets: not asserted here
           }
+          if (sql.includes("INSERT INTO scanner_state") && sql.includes("ON CONFLICT")) {
+            // persistState/bumpErrors upsert — track in fake state
+            const chain = this._binds[0];
+            if (!state.scanner_state) state.scanner_state = {};
+            if (sql.includes("errors = errors + 1")) {
+              const s = state.scanner_state[chain] || { errors: 0 };
+              s.errors = (s.errors || 0) + 1;
+              state.scanner_state[chain] = s;
+            } else {
+              const prev = state.scanner_state[chain] || { total_whales: 0 };
+              state.scanner_state[chain] = {
+                last_block: this._binds[1],
+                last_scan: this._binds[2],
+                errors: 0,
+                total_whales: (prev.total_whales || 0) + (this._binds[3] || 0),
+                tx_offset: this._binds[4] || 0,
+              };
+            }
+            return { success: true, meta: { changes: 1 } };
+          }
           throw new Error("fakeDB run(): unhandled SQL: " + sql.slice(0, 80));
         },
       };

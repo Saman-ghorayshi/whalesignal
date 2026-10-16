@@ -462,10 +462,19 @@ async function getState(env, chain) {
  * Also increments the lifetime total_whales counter (previously dead).
  */
 async function persistState(env, chain, lastBlock, txOffset = 0, whalesDelta = 0) {
+  // Upsert: INSERT if the row doesn't exist (first run), UPDATE otherwise.
+  // The old UPDATE-only version silently did nothing on first run if
+  // fetchLatestBlockHeight threw before persistState was called.
   await env.DB.prepare(
-    "UPDATE scanner_state SET last_block = ?, last_scan = ?, errors = 0, " +
-    "total_whales = total_whales + ?, tx_offset = ? WHERE chain = ?"
-  ).bind(lastBlock, Date.now(), whalesDelta, txOffset, chain).run();
+    `INSERT INTO scanner_state (chain, last_block, last_scan, errors, total_whales, tx_offset)
+     VALUES (?, ?, ?, 0, ?, ?)
+     ON CONFLICT(chain) DO UPDATE SET
+       last_block = excluded.last_block,
+       last_scan = excluded.last_scan,
+       errors = 0,
+       total_whales = total_whales + excluded.total_whales,
+       tx_offset = excluded.tx_offset`
+  ).bind(chain, lastBlock, Date.now(), whalesDelta, txOffset).run();
 }
 
 /** Increment the consecutive-errors counter on a failure. */
@@ -481,8 +490,14 @@ export function isD1LockedError(e) {
 }
 
 async function bumpErrors(env, chain) {
-  await env.DB.prepare("UPDATE scanner_state SET errors = errors + 1 WHERE chain = ?")
-    .bind(chain).run();
+  // Upsert: ensure the row exists so consecutive failures are actually counted.
+  // The old UPDATE-only version silently did nothing if the chain had never
+  // been primed (e.g. BSC/Base/Solana failing on first run).
+  await env.DB.prepare(
+    `INSERT INTO scanner_state (chain, last_block, last_scan, errors, total_whales, tx_offset)
+     VALUES (?, NULL, ?, 1, 0, 0)
+     ON CONFLICT(chain) DO UPDATE SET errors = errors + 1, last_scan = excluded.last_scan`
+  ).bind(chain, Date.now()).run();
 }
 
 /**
@@ -1407,7 +1422,7 @@ export default {
       // Circuit breaker: if a chain has 5+ consecutive errors, back off
       // exponentially (don't waste budget on a dead RPC every tick).
       try {
-        const st = await getScannerState(env, chain);
+        const st = await getState(env, chain);
         if ((st.errors || 0) >= 5) {
           const backoffMin = Math.min(60, Math.pow(2, (st.errors || 5) - 5) * 5);
           const lastScan = st.last_scan || 0;
