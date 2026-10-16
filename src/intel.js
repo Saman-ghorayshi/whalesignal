@@ -319,18 +319,26 @@ export async function gasTracker(env) {
 
 // 18. Backtest — would following signals have worked? (from eval data)
 export async function backtestSummary(env) {
-  const { results } = await env.DB.prepare(`
-    SELECT horizon, COUNT(*) as n,
-           SUM(CASE WHEN outcome = 'hit' THEN 1 ELSE 0 END) as hits
-    FROM predictions WHERE outcome IS NOT NULL
-    GROUP BY horizon
-  `).all();
-  return (results || []).map(r => ({
-    horizon: r.horizon,
-    n: r.n,
-    hits: r.hits || 0,
-    win_rate: r.n > 0 ? Math.round((r.hits || 0) / r.n * 1000) / 10 : null,
-  }));
+  // Predictions table has separate outcome columns per horizon (outcome, outcome_1h, outcome_6h)
+  const horizons = [
+    { key: "1h", col: "outcome_1h" },
+    { key: "6h", col: "outcome_6h" },
+    { key: "24h", col: "outcome" },
+  ];
+  const out = [];
+  for (const h of horizons) {
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) as n, SUM(CASE WHEN ${h.col} = 'hit' THEN 1 ELSE 0 END) as hits
+       FROM predictions WHERE ${h.col} IS NOT NULL`
+    ).first();
+    out.push({
+      horizon: h.key,
+      n: row?.n || 0,
+      hits: row?.hits || 0,
+      win_rate: row?.n > 0 ? Math.round((row.hits || 0) / row.n * 1000) / 10 : null,
+    });
+  }
+  return out;
 }
 
 // 19. Whale→price correlation — do inflows precede drops?
