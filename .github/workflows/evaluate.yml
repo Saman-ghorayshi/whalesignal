@@ -23,10 +23,10 @@ jobs:
 
       - name: Evaluate predictions
         env:
-          WS_API: https://whalesignal-bot.mv3sxp7x4fkv-6d9.workers.dev
+          WS_EVAL_API: https://whalesignal-eval.mv3sxp7x4fkv-6d9.workers.dev
         run: |
           python tools/evaluate_predictions.py \
-            --api "$WS_API" \
+            --api "$WS_EVAL_API" \
             --output docs/data/evaluations
 
       - name: Commit evaluations
@@ -35,4 +35,4 @@ jobs:
           git config user.email "bot@whalesignal"
           git add docs/data/evaluations/
           git commit -m "predictions: evaluated $(date -u +%Y-%m-%d) [skip ci]" || true
-          git push
+          git push || true

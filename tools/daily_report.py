@@ -18,17 +18,36 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
-from urllib.error import URLError
+from urllib.error import URLError, HTTPError
 
 
-def fetch_json(url: str) -> dict:
-    """Fetch JSON from a URL, return parsed dict."""
+def fetch_json(url: str, retries: int = 3, retry_delay: float = 2.0) -> dict:
+    """Fetch JSON from a URL with retries, return parsed dict."""
     req = Request(url, headers={"User-Agent": "whalesignal-daily-report/1.0"})
-    with urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode())
+    last_err = None
+    for attempt in range(retries):
+        try:
+            with urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+        except HTTPError as e:
+            last_err = e
+            if e.code >= 500 and attempt < retries - 1:
+                time.sleep(retry_delay * (attempt + 1))
+                continue
+            raise
+        except (URLError, OSError) as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(retry_delay * (attempt + 1))
+                continue
+            raise
+    if last_err:
+        raise last_err
+    return {}
 
 
 def fmt_usd(n) -> str:
@@ -122,7 +141,19 @@ def main():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     print(f"[daily_report] fetching stats from {args.api}/stats for {date_str}")
 
-    data = fetch_json(f"{args.api}/stats")
+    try:
+        data = fetch_json(f"{args.api}/stats")
+    except HTTPError as e:
+        print(f"[daily_report] API returned HTTP {e.code} ({e.reason}). D1 safe mode or maintenance active. Skipping daily report.", file=sys.stderr)
+        return
+    except (URLError, OSError) as e:
+        print(f"[daily_report] API endpoint {args.api}/stats unreachable ({e}). Skipping daily report.", file=sys.stderr)
+        return
+
+    if not isinstance(data, dict) or data.get("ok") is False:
+        reason = data.get("reason", "unknown") if isinstance(data, dict) else "invalid response"
+        print(f"[daily_report] stats endpoint unavailable ({reason}). Skipping daily report.")
+        return
 
     # Write JSON report
     out_dir = Path(args.output)
