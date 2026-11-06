@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="100%" height="100%">
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06080d"/>
+      <stop offset="50%" stop-color="#090d16"/>
+      <stop offset="100%" stop-color="#05070a"/>
+    </linearGradient>
+
+    <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7170ff"/>
+      <stop offset="40%" stop-color="#a78bfa"/>
+      <stop offset="70%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#22c55e"/>
+    </linearGradient>
+
+    <linearGradient id="whaleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#7170ff"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+
+    <radialGradient id="glowGlow" cx="20%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#7170ff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#7170ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="glowGreen" cx="80%" cy="60%" r="45%">
+      <stop offset="0%" stop-color="#22c55e" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Grid Pattern -->
+    <pattern id="radarGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255, 255, 255, 0.03)" stroke-width="1"/>
+      <circle cx="40" cy="40" r="1.5" fill="rgba(113, 112, 255, 0.15)"/>
+    </pattern>
+
+    <filter id="neonBlur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background Layer -->
+  <rect width="1200" height="360" fill="url(#bgGrad)"/>
+  <rect width="1200" height="360" fill="url(#radarGrid)"/>
+  <rect width="1200" height="360" fill="url(#glowGlow)"/>
+  <rect width="1200" height="360" fill="url(#glowGreen)"/>
+
+  <!-- Tech Radar Rings (Right Side) -->
+  <g transform="translate(980, 180)" opacity="0.6">
+    <circle r="140" fill="none" stroke="rgba(113, 112, 255, 0.1)" stroke-width="1.5" stroke-dasharray="4 6"/>
+    <circle r="100" fill="none" stroke="rgba(56, 189, 248, 0.15)" stroke-width="1"/>
+    <circle r="60" fill="none" stroke="rgba(34, 197, 94, 0.2)" stroke-width="1.5"/>
+    <circle r="6" fill="#22c55e"/>
+    <circle r="16" fill="none" stroke="#22c55e" stroke-width="1" opacity="0.5"/>
+    <!-- Blip pulse -->
+    <line x1="-150" y1="0" x2="150" y2="0" stroke="rgba(113, 112, 255, 0.08)" stroke-width="1"/>
+    <line x1="0" y1="-150" x2="0" y2="150" stroke="rgba(113, 112, 255, 0.08)" stroke-width="1"/>
+    
+    <!-- Floating Blips -->
+    <circle cx="45" cy="-35" r="4" fill="#38bdf8" filter="url(#neonBlur)"/>
+    <text x="54" y="-32" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto" font-size="10" fill="#94a3b8">BTC +2,450</text>
+
+    <circle cx="-50" cy="40" r="3.5" fill="#f59e0b" filter="url(#neonBlur)"/>
+    <text x="-95" y="44" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto" font-size="10" fill="#94a3b8">ETH $8.4M</text>
+
+    <circle cx="70" cy="50" r="3" fill="#22c55e" filter="url(#neonBlur)"/>
+    <text x="80" y="54" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto" font-size="10" fill="#22c55e">SOL Accum</text>
+  </g>
+
+  <!-- Left Side: Icon & Brand -->
+  <g transform="translate(60, 55)">
+    <!-- Whale Emblem Icon -->
+    <g transform="translate(0, 8)">
+      <rect width="76" height="76" rx="18" fill="#0f1422" stroke="rgba(113, 112, 255, 0.3)" stroke-width="1.5"/>
+      <!-- Glowing Stylized Whale -->
+      <path d="M 22 46 C 20 32, 34 22, 48 24 C 58 26, 62 34, 62 42 C 60 48, 52 52, 42 52 C 34 52, 24 50, 22 46 Z" fill="url(#whaleGrad)"/>
+      <circle cx="32" cy="34" r="2.5" fill="#ffffff"/>
+      <!-- Spout dots -->
+      <circle cx="34" cy="18" r="1.5" fill="#38bdf8" opacity="0.8"/>
+      <circle cx="38" cy="14" r="2" fill="#38bdf8"/>
+      <circle cx="43" cy="17" r="1.5" fill="#38bdf8" opacity="0.7"/>
+      <!-- Tail flukes -->
+      <path d="M 22 46 C 16 44, 12 40, 10 36 C 14 42, 14 46, 10 50 C 14 48, 18 48, 22 46 Z" fill="url(#whaleGrad)"/>
+    </g>
+
+    <!-- Main Title -->
+    <text x="96" y="52" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" font-size="44" font-weight="800" letter-spacing="-1.2" fill="url(#brandGrad)">
+      WHALESIGNAL <tspan font-size="28" font-weight="600" fill="#94a3b8">SONAR</tspan>
+    </text>
+
+    <!-- Subtitle / Tagline -->
+    <text x="96" y="80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" font-size="16" font-weight="500" fill="#94a3b8" letter-spacing="-0.2">
+      Autonomous Multi-Chain On-Chain Whale Intelligence &amp; Dialectic Trade Loop
+    </text>
+
+    <!-- Live Telemetry Badges in Hero -->
+    <g transform="translate(0, 120)">
+      <!-- Badge 1: Chains -->
+      <g transform="translate(0, 0)">
+        <rect width="180" height="34" rx="8" fill="rgba(255, 255, 255, 0.03)" stroke="rgba(255, 255, 255, 0.08)"/>
+        <circle cx="16" cy="17" r="4" fill="#f7931a"/>
+        <text x="28" y="22" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="600" fill="#e2e8f0">BTC • ETH • SOL • TRON</text>
+      </g>
+
+      <!-- Badge 2: Architecture -->
+      <g transform="translate(192, 0)">
+        <rect width="210" height="34" rx="8" fill="rgba(255, 255, 255, 0.03)" stroke="rgba(255, 255, 255, 0.08)"/>
+        <circle cx="16" cy="17" r="4" fill="#f59e0b"/>
+        <text x="28" y="22" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="600" fill="#e2e8f0">8 Cloudflare Workers (D1 + KV)</text>
+      </g>
+
+      <!-- Badge 3: AI Engine -->
+      <g transform="translate(414, 0)">
+        <rect width="190" height="34" rx="8" fill="rgba(255, 255, 255, 0.03)" stroke="rgba(255, 255, 255, 0.08)"/>
+        <circle cx="16" cy="17" r="4" fill="#a855f7"/>
+        <text x="28" y="22" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="600" fill="#e2e8f0">Gemini 2.0 Flash Reasoning</text>
+      </g>
+
+      <!-- Badge 4: Test Suite -->
+      <g transform="translate(616, 0)">
+        <rect width="154" height="34" rx="8" fill="rgba(34, 197, 94, 0.06)" stroke="rgba(34, 197, 94, 0.25)"/>
+        <circle cx="16" cy="17" r="4" fill="#22c55e"/>
+        <text x="28" y="22" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="12" font-weight="700" fill="#22c55e">259 Tests Passing</text>
+      </g>
+    </g>
+
+    <!-- Metrics Cards Row -->
+    <g transform="translate(0, 180)">
+      <!-- Metric 1: Tracked Volume -->
+      <g transform="translate(0, 0)">
+        <rect width="210" height="58" rx="10" fill="#0c101a" stroke="rgba(255, 255, 255, 0.06)"/>
+        <text x="16" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter" font-size="10" font-weight="700" fill="#64748b" text-transform="uppercase" letter-spacing="0.5">TRACKED ON-CHAIN FLOW</text>
+        <text x="16" y="47" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="20" font-weight="700" fill="#f8fafc">$1.48B+ <tspan font-size="11" font-weight="500" fill="#22c55e">24h Vol</tspan></text>
+      </g>
+
+      <!-- Metric 2: Reasoning Latency -->
+      <g transform="translate(225, 0)">
+        <rect width="210" height="58" rx="10" fill="#0c101a" stroke="rgba(255, 255, 255, 0.06)"/>
+        <text x="16" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter" font-size="10" font-weight="700" fill="#64748b" text-transform="uppercase" letter-spacing="0.5">AI REASONING LATENCY</text>
+        <text x="16" y="47" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="20" font-weight="700" fill="#f8fafc">&lt; 3.8s <tspan font-size="11" font-weight="500" fill="#38bdf8">Gemini E2E</tspan></text>
+      </g>
+
+      <!-- Metric 3: Indicator Stack -->
+      <g transform="translate(450, 0)">
+        <rect width="210" height="58" rx="10" fill="#0c101a" stroke="rgba(255, 255, 255, 0.06)"/>
+        <text x="16" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter" font-size="10" font-weight="700" fill="#64748b" text-transform="uppercase" letter-spacing="0.5">TECHNICAL ANALYSIS</text>
+        <text x="16" y="47" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="20" font-weight="700" fill="#f8fafc">RSI / MACD / BB <tspan font-size="11" font-weight="500" fill="#a78bfa">Z-Score</tspan></text>
+      </g>
+
+      <!-- Metric 4: Trade Loop Base -->
+      <g transform="translate(675, 0)">
+        <rect width="210" height="58" rx="10" fill="#0c101a" stroke="rgba(255, 255, 255, 0.06)"/>
+        <text x="16" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter" font-size="10" font-weight="700" fill="#64748b" text-transform="uppercase" letter-spacing="0.5">RESEARCH GROUNDING</text>
+        <text x="16" y="47" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="20" font-weight="700" fill="#f8fafc">NeurIPS &amp; ICLR <tspan font-size="11" font-weight="500" fill="#f59e0b">FinCon</tspan></text>
+      </g>
+    </g>
+  </g>
+</svg>
