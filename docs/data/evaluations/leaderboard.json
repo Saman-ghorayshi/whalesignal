@@ -1,4 +1,177 @@
 {
-  "ok": false,
-  "error": "not built yet"
+  "updated_at": 1794031679332,
+  "total": 20,
+  "by_horizon": {
+    "1h": {
+      "n": 20,
+      "hits": 2,
+      "acc": 0.333
+    },
+    "6h": {
+      "n": 20,
+      "hits": 0,
+      "acc": 0
+    },
+    "24h": {
+      "n": 20,
+      "hits": 9,
+      "acc": 0.9
+    }
+  },
+  "by_motive": {
+    "distribution": {
+      "n": 14,
+      "hits": 11,
+      "acc": 0.786
+    },
+    "otc_deal": {
+      "n": 2,
+      "hits": 0,
+      "acc": 0
+    },
+    "cold_storage": {
+      "n": 1,
+      "hits": 0,
+      "acc": 0
+    }
+  },
+  "by_confidence": {
+    "high": {
+      "n": 15,
+      "hits": 10,
+      "acc": 0.667
+    },
+    "mid": {
+      "n": 2,
+      "hits": 1,
+      "acc": 0.5
+    },
+    "low": {
+      "n": 0,
+      "hits": 0,
+      "acc": null
+    }
+  },
+  "recent": [
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": -0.89
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -1.7
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": 0.17
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": 0.33
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -1.66
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -1.66
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -1.66
+    },
+    {
+      "signal": "bearish",
+      "motive": "otc_deal",
+      "o": "flat",
+      "ret": 0.16
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": 1.19
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": 1.19
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": 0.32
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "flat",
+      "ret": 0.69
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "flat",
+      "ret": 0.7
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "miss",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": -1.32
+    }
+  ]
 }
