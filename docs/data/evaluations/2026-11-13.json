@@ -1,0 +1,182 @@
+{
+  "updated_at": 1794550079692,
+  "total": 29,
+  "by_horizon": {
+    "1h": {
+      "n": 29,
+      "hits": 3,
+      "acc": 0.333
+    },
+    "6h": {
+      "n": 29,
+      "hits": 2,
+      "acc": 0.4
+    },
+    "24h": {
+      "n": 29,
+      "hits": 9,
+      "acc": 0.9
+    }
+  },
+  "by_motive": {
+    "distribution": {
+      "n": 17,
+      "hits": 14,
+      "acc": 0.824
+    },
+    "otc_deal": {
+      "n": 2,
+      "hits": 0,
+      "acc": 0
+    },
+    "accumulation": {
+      "n": 2,
+      "hits": 0,
+      "acc": 0
+    },
+    "cold_storage": {
+      "n": 3,
+      "hits": 0,
+      "acc": 0
+    }
+  },
+  "by_confidence": {
+    "high": {
+      "n": 22,
+      "hits": 13,
+      "acc": 0.591
+    },
+    "mid": {
+      "n": 2,
+      "hits": 1,
+      "acc": 0.5
+    },
+    "low": {
+      "n": 0,
+      "hits": 0,
+      "acc": null
+    }
+  },
+  "recent": [
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": 1.19
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": 0.32
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "flat",
+      "ret": 0.69
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "flat",
+      "ret": 0.7
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "hit",
+      "ret": -2.2
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "miss",
+      "ret": -2.2
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": -1.32
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "flat",
+      "ret": -0.26
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "flat",
+      "ret": -0.26
+    },
+    {
+      "signal": "bearish",
+      "motive": "otc_deal",
+      "o": "flat",
+      "ret": -0.28
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": -0.78
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": -0.78
+    },
+    {
+      "signal": "bullish",
+      "motive": "accumulation",
+      "o": "flat",
+      "ret": -0.32
+    },
+    {
+      "signal": "bullish",
+      "motive": "cold_storage",
+      "o": "flat",
+      "ret": -0.51
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": -0.51
+    },
+    {
+      "signal": "bearish",
+      "motive": "distribution",
+      "o": "flat",
+      "ret": -1.12
+    }
+  ]
+}
